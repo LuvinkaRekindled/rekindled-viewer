@@ -2,7 +2,7 @@
  * @file rkvkformat.h
  * @brief F2.2: typed descriptions of textures and pixel data, and the one place that decodes the viewer's GL enum numbers.
  *
- * The viewer keeps GL enum numbers as constants (LLImageTex's formats, LLTexUnit's filter and wrap modes ...). They are turned into the types below once, where the producer
+ * The viewer keeps GL enum numbers as constants (RKImageTex's formats, LLTexUnit's filter and wrap modes ...). They are turned into the types below once, where the producer
  * writes a record (rkvktex.h, rkvktarget.h), so neither the command stream nor the worker carries a GL number for textures.
  *
  * Compiled only with -DUSE_VULKAN=ON.
@@ -17,7 +17,7 @@
 #include "rkrenderformat.h"
 #include "rkrenderstate.h"
 
-namespace LLVkFormat
+namespace RKVkFormat
 {
     // ---- dimensionality (the values are the slot classes of the texture slot table) ----
     enum Dim : U8 { DIM_2D = 0, DIM_CUBE = 1, DIM_CUBE_ARRAY = 2, DIM_2D_ARRAY = 3, DIM_3D = 4, DIM_MS = 5, DIM_OTHER = 7 };
@@ -108,7 +108,7 @@ namespace LLVkFormat
     inline Setting setWrapT(TextureWrap w) { Setting s; s.mParam = P_WRAP_T; s.mValue = (U8)w; return s; }
     inline Setting setWrapR(TextureWrap w) { Setting s; s.mParam = P_WRAP_R; s.mValue = (U8)w; return s; }
     inline Setting setCompareMode(bool on) { Setting s; s.mParam = P_COMPARE_MODE; s.mValue = on ? 1 : 0; return s; }
-    inline Setting setCompareFunc(LLRenderState::CompareOp f) { Setting s; s.mParam = P_COMPARE_FUNC; s.mValue = (U8)f; return s; }
+    inline Setting setCompareFunc(RKRenderState::CompareOp f) { Setting s; s.mParam = P_COMPARE_FUNC; s.mValue = (U8)f; return s; }
     inline Setting setAnisotropy(F32 a) { Setting s; s.mParam = P_ANISOTROPY; s.mFloat = a; return s; }
     inline Setting setBaseLevel(S32 l) { Setting s; s.mParam = P_BASE_LEVEL; s.mInt = l; return s; }
     inline Setting setMaxLevel(S32 l) { Setting s; s.mParam = P_MAX_LEVEL; s.mInt = l; return s; }

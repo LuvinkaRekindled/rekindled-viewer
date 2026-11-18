@@ -23,12 +23,12 @@
 #include <memory>
 #include <cmath>
 
-namespace LLVkFsr
+namespace RKVkFsr
 {
 
-using namespace LLVk;       // the loaded Vulkan entry points live there
+using namespace RKVk;       // the loaded Vulkan entry points live there
 
-VkImageLayout inputLayout(const LLVk::Image&)
+VkImageLayout inputLayout(const RKVk::Image&)
 {
     return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;       // (the depth image too: it is only sampled; the backend is told COMPUTE_READ for every input)
 }
@@ -67,7 +67,7 @@ bool init(VkInstance, VkPhysicalDevice, VkDevice)
 }
 bool ready() { return false; }
 void shutdown() {}
-bool evaluate(VkCommandBuffer, const LLVkUpscale::Params&) { return false; }
+bool evaluate(VkCommandBuffer, const RKVkUpscale::Params&) { return false; }
 
 #else
 
@@ -168,7 +168,7 @@ void reap()
 }
 
 // a context serves a request when it was made for at least these sizes and is not much bigger (within 1.6 times the pixels: a context made for a hi-res snapshot is not used for the window)
-bool fits(const Ctx& c, U32 flags, const LLVkUpscale::Params& p)
+bool fits(const Ctx& c, U32 flags, const RKVkUpscale::Params& p)
 {
     if (c.mFlags != flags || p.mRenderWidth > c.mMaxRenderW || p.mRenderHeight > c.mMaxRenderH || p.mOutputWidth > c.mMaxOutW || p.mOutputHeight > c.mMaxOutH)
     {
@@ -180,7 +180,7 @@ bool fits(const Ctx& c, U32 flags, const LLVkUpscale::Params& p)
 }
 
 // the context for this request: one that fits, or a new one (the oldest other context is pushed out when there are too many); null when it could not be made
-Ctx* context_for(U32 flags, const LLVkUpscale::Params& p)
+Ctx* context_for(U32 flags, const RKVkUpscale::Params& p)
 {
     reap();
     for (size_t i = 0; i < gContexts.size(); ++i)
@@ -271,7 +271,7 @@ Ctx* context_for(U32 flags, const LLVkUpscale::Params& p)
     return gContexts[gCurrent];
 }
 
-FfxResource resource_of(const LLVk::Image& image, bool write, const wchar_t* name)
+FfxResource resource_of(const RKVk::Image& image, bool write, const wchar_t* name)
 {
     VkImageCreateInfo info = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
     info.imageType = VK_IMAGE_TYPE_2D;
@@ -338,7 +338,7 @@ void shutdown()
     gReady = false;
 }
 
-bool evaluate(VkCommandBuffer cmd, const LLVkUpscale::Params& p)
+bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
 {
     if (!gReady || !p.mColor || !p.mDepth || !p.mMotion || !p.mOutput)
     {

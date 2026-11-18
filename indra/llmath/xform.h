@@ -49,7 +49,7 @@ constexpr F32 OS_MIN_PRIM_SCALE = 0.001f;
 constexpr F32 OS_MAX_PRIM_SCALE = 65536.f;  // something very high but not near FLT_MAX
 // <AW: opensim-limits>
 // <FS> PLAN-avatars.md stage C: the local position, rotation and scale of a joint's xform as one slot of the avatar's flat array (the array is where they live; the xform's own fields are not used while the slot is set)
-struct LLXformLocals
+struct RKXformLocals
 {
     LLVector3    mPos;
     LLQuaternion mRot;
@@ -79,7 +79,7 @@ protected:
     U32           mChanged;
 
     bool          mScaleChildOffset;
-    LLXformLocals*      mLocals = nullptr;      // <FS> stage C: when set, the local position, rotation and scale are this slot's (the setters and getters follow it)
+    RKXformLocals*      mLocals = nullptr;      // <FS> stage C: when set, the local position, rotation and scale are this slot's (the setters and getters follow it)
     const LLVector3*    mViewWorldPos = nullptr;
     const LLQuaternion* mViewWorldRot = nullptr;
 
@@ -161,8 +161,8 @@ public:
     const LLQuaternion& getWorldRotation() const    { return mViewWorldRot ? *mViewWorldRot : mWorldRotation; }
     const LLVector3&    getWorldPosition() const    { return mViewWorldPos ? *mViewWorldPos : mWorldPosition; }
     // <FS> PLAN-avatars.md stage C: a joint's xform while the joint is a view of the avatar's flat world array: the world position and rotation are the array's slot (set by the avatar's pass, cleared by LLJoint::touch)
-    void                setLocals(LLXformLocals* slot) { mLocals = slot; }      // (the caller copies the values over first)
-    LLXformLocals*      getLocals() const { return mLocals; }
+    void                setLocals(RKXformLocals* slot) { mLocals = slot; }      // (the caller copies the values over first)
+    RKXformLocals*      getLocals() const { return mLocals; }
     void                releaseLocals() { if (mLocals) { mPosition = mLocals->mPos; mRotation = mLocals->mRot; mScale = mLocals->mScale; mLocals = nullptr; } }      // (the fields get the last values back)
     void                setWorldView(const LLVector3* pos, const LLQuaternion* rot) { mViewWorldPos = pos; mViewWorldRot = rot; }
 };

@@ -1,12 +1,12 @@
 // velocity_debug.frag: the debug view of a motion target: red/green = pixels moved in x/y (full at 4 pixels), blue = the alpha flag (avatar pixels in the avatar velocity target).
 // A line for line translation of "Avatar Velocity Debug" (deferred/avatarVelocityDebugF.glsl); pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float show_flag;     // 1: blue = the alpha flag (the avatar target); 0: the target has no alpha; 2: the world pass's motion target (see main)
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
 };

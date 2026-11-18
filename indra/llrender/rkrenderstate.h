@@ -2,7 +2,7 @@
  * @file rkrenderstate.h
  * @brief F3.2: the render state vocabulary of the pass code: typed values and scoped guards (no GL, no Vulkan in this header).
  *
- * The state itself is the producer's block (rkvkstate.h, LLVkState::Block). A guard saves the block's field when it is made, changes it when the
+ * The state itself is the producer's block (rkvkstate.h, RKVkState::Block). A guard saves the block's field when it is made, changes it when the
  * requested value differs (after gRender.flush(): pending immediate-mode vertices belong to the old state) and puts the saved value back when it
  * goes out of scope. There is no second copy of "what the state is" (LLGLState's map, LLGLDepthTest's statics): the block is the only truth, so a
  * path that set the state some other way (a render target, LLRender::setScissor ...) cannot leave a stale value for a guard to restore.
@@ -24,7 +24,7 @@
 #include "stdtypes.h"
 #include <string>
 
-namespace LLRenderState
+namespace RKRenderState
 {
 
 enum class CullFace : U8 { None, Back, Front, FrontAndBack };           // None: leave the face as it is
@@ -55,7 +55,7 @@ U32 exchange(Kind kind, U32 value, const char* file = nullptr, int line = 0);   
 extern bool sWhy;                                                                           // LL_VK_STATE_WHY=1: which writers cause the CMD_STATE records (top 15 per 600 frames in the log)
 extern bool sInGuard;
 void noteWriter(const char* file, int line, int kind);                                      // kind: Kind value, -1 any
-void noteDirect(const char* what);                                                          // a direct LLVkState setter
+void noteDirect(const char* what);                                                          // a direct RKVkState setter
 void leave(Kind kind, U32 saved, U32 set, const char* file, int line);                      // check (when sGuardCheck), then put 'saved' back if the guard changed anything
 
 void whyEmit(const std::string& diff);                                                      // rkvkstate: a CMD_STATE record is written

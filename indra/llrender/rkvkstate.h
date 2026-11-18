@@ -23,14 +23,14 @@
 
 #include <string>
 
-namespace LLVkState
+namespace RKVkState
 {
     // everything a draw reads that is not a program, a texture, a buffer or a target: one plain struct, written as a record when it changes
     struct Block
     {
-        LLVk::RasterState mRaster;
-        LLVk::DepthStencilState mDepth;     // mDepthTest / mDepthWrite as the viewer set them (the worker still ANDs the test with 'the target has depth')
-        LLVk::BlendState mBlend;            // mWriteMask is the colour write mask
+        RKVk::RasterState mRaster;
+        RKVk::DepthStencilState mDepth;     // mDepthTest / mDepthWrite as the viewer set them (the worker still ANDs the test with 'the target has depth')
+        RKVk::BlendState mBlend;            // mWriteMask is the colour write mask
         S32 mViewport[4];
         S32 mScissor[4];
         bool mDepthMask;                    // the depth write mask as the viewer set it (mDepth.mDepthWrite is mask AND test); clears and glGet answers read it
@@ -51,18 +51,18 @@ namespace LLVkState
     void setPolygonOffsetFill(bool on);
     void setDepthClamp(bool on);
     void setDepthReadOnly(bool on);
-    void setBlendFunc(LLRenderState::BlendFactor src_rgb, LLRenderState::BlendFactor dst_rgb, LLRenderState::BlendFactor src_a, LLRenderState::BlendFactor dst_a);
+    void setBlendFunc(RKRenderState::BlendFactor src_rgb, RKRenderState::BlendFactor dst_rgb, RKRenderState::BlendFactor src_a, RKRenderState::BlendFactor dst_a);
     void setDepthMask(bool flag);
     void setColorMask(bool r, bool g, bool b, bool a);
     void setPolygonOffset(F32 factor, F32 units);
     void setLineWidth(F32 width);
     void setStencilMask(U32 mask);
     // typed values (rkrenderstate.h)
-    void setCullFace(LLRenderState::CullFace face);                       // None: no change
-    void setPolygonMode(LLRenderState::PolygonMode mode);
-    void setDepthFunc(LLRenderState::CompareOp op);
-    void setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask);
-    void setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass);
+    void setCullFace(RKRenderState::CullFace face);                       // None: no change
+    void setPolygonMode(RKRenderState::PolygonMode mode);
+    void setDepthFunc(RKRenderState::CompareOp op);
+    void setStencilFunc(RKRenderState::CompareOp op, S32 ref, U32 mask);
+    void setStencilOp(RKRenderState::StencilOp sfail, RKRenderState::StencilOp dpfail, RKRenderState::StencilOp dppass);
     void setViewport(S32 x, S32 y, S32 w, S32 h);
     void setScissor(S32 x, S32 y, S32 w, S32 h);
     // a setter call arrived on a thread other than the main producer: it is not written to the context (the old path still sees it)
@@ -92,7 +92,7 @@ namespace LLVkState
     const Block* received();
 
     // worker side: what the renderer's native state structs are for a block (the same result the old sync_draw_state computes from the GL values)
-    void toRenderer(const Block& b, bool has_depth, LLVk::RasterState& rs, LLVk::DepthStencilState& ds, LLVk::BlendState& bs);
+    void toRenderer(const Block& b, bool has_depth, RKVk::RasterState& rs, RKVk::DepthStencilState& ds, RKVk::BlendState& bs);
 
     // counters since the last call (for the phases log): blocks written, calls made, calls ignored because they came from another thread
     std::string statsReport();

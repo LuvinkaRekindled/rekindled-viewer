@@ -100,7 +100,7 @@ void LLSimInfo::setLandForSaleImage (LLUUID image_id)
     // Fetch the image
     if (mMapImageID.notNull())
     {
-        mOverlayImage = LLViewerTextureManager::getFetchedTexture(mMapImageID, FTT_DEFAULT, MIPMAP_TRUE, LLBaseTexture::BOOST_MAP, LLViewerTexture::LOD_TEXTURE);
+        mOverlayImage = LLViewerTextureManager::getFetchedTexture(mMapImageID, FTT_DEFAULT, MIPMAP_TRUE, RKBaseTexture::BOOST_MAP, LLViewerTexture::LOD_TEXTURE);
 // <FS:CR> Aurora Sim
         mOverlayImage->forceImmediateUpdate();
 // </FS:CR> Aurora Sim
@@ -117,13 +117,13 @@ LLPointer<LLViewerFetchedTexture> LLSimInfo::getLandForSaleImage ()
     if (mOverlayImage.isNull() && mMapImageID.notNull())
     {
         // Fetch the image if it hasn't been done yet (unlikely but...)
-        mOverlayImage = LLViewerTextureManager::getFetchedTexture(mMapImageID, FTT_DEFAULT, MIPMAP_TRUE, LLBaseTexture::BOOST_MAP, LLViewerTexture::LOD_TEXTURE);
+        mOverlayImage = LLViewerTextureManager::getFetchedTexture(mMapImageID, FTT_DEFAULT, MIPMAP_TRUE, RKBaseTexture::BOOST_MAP, LLViewerTexture::LOD_TEXTURE);
         mOverlayImage->setAddressMode(LLTexUnit::TAM_CLAMP);
     }
     if (!mOverlayImage.isNull())
     {
         // Boost the fetch level when we try to access that image
-        mOverlayImage->setBoostLevel(LLBaseTexture::BOOST_MAP);
+        mOverlayImage->setBoostLevel(RKBaseTexture::BOOST_MAP);
     }
     return mOverlayImage;
 }

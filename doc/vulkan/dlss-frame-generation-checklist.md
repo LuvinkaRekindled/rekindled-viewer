@@ -26,7 +26,7 @@ Status: parked idea, not started. What exists today is DLSS **super resolution**
 
 ## 2. What we already have that carries over
 
-- NGX init, extension discovery, device creation hook, thread-safe replay of NGX calls on the mirror thread (`rkvkdlss.cpp`, `LLVkMirror::upscale`, `Renderer::recordExternal`).
+- NGX init, extension discovery, device creation hook, thread-safe replay of NGX calls on the mirror thread (`rkvkdlss.cpp`, `RKVkMirror::upscale`, `Renderer::recordExternal`).
 - DLSS-SR already needs render-size depth, motion vectors, jitter and a reset flag: **FG takes the same depth and motion vector resources** the guide says
   ("if an upscaler is in use, give FG the same depth and motion vectors that went to the upscaler").
 - Unjittered view-projection for this frame and the last (`LLPipeline::mViewProjCur/Prev`), jitter, render and output sizes, the "texture needs storage usage" hook.

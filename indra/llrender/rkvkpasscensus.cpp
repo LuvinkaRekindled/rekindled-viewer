@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 
-namespace LLVkPassCensus
+namespace RKVkPassCensus
 {
 bool sOn = false;
 int sMode = 1;
@@ -107,7 +107,7 @@ void endPass()
     {
         // the counters are per frame (reset at the frame's end): a smaller value than before is a new frame
         U64 now[6];
-        LLVkWorker::refusals(now);
+        RKVkWorker::refusals(now);
         for (int k = 0; k < 6; ++k)
         {
             gCur.mRefused[k] += now[k] >= gRefusedLast[k] ? now[k] - gRefusedLast[k] : now[k];
@@ -130,7 +130,7 @@ void endPass()
         key += gCur.mDraws || gCur.mPackets ? " | " : " | (no draws) ";
         if (gCur.mDraws || gCur.mPackets)
         {
-            LLVk::Renderer& r = LLVk::Renderer::instance();
+            RKVk::Renderer& r = RKVk::Renderer::instance();
             key += r.describeTarget();
         }
     }
@@ -417,12 +417,12 @@ void zone(const char* name, bool begin)
 void opDone(U16 op, U32 packet_kind, U64 ticks)
 {
     ++gCur.mRecords;
-    if (op == LLVkAsync::CMD_DRAW || op == LLVkAsync::CMD_DRAW_SCRATCH)
+    if (op == RKVkAsync::CMD_DRAW || op == RKVkAsync::CMD_DRAW_SCRATCH)
     {
         ++gCur.mDraws;
         gCur.mTicks[0] += ticks;
     }
-    else if (op == LLVkAsync::CMD_SHADOW_PACKETS)
+    else if (op == RKVkAsync::CMD_SHADOW_PACKETS)
     {
         ++gCur.mPackets;
         if (packet_kind < NKIND) ++gCur.mKinds[packet_kind];
@@ -532,6 +532,6 @@ void geoDrawSeen()
     if (gPrepareFrame != sFrame) ++gGeoStale;
 }
 
-} // namespace LLVkPassCensus
+} // namespace RKVkPassCensus
 
 #endif // LL_VULKAN

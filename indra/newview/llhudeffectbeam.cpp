@@ -264,7 +264,7 @@ void LLHUDEffectBeam::render()
         return;
     }
 
-    LLRenderPresetPipelineAlpha gls_pipeline_alpha;
+    RKRenderPresetPipelineAlpha gls_pipeline_alpha;
     gRender.getTexUnit(0)->bindWhite();
 
 
@@ -317,11 +317,11 @@ void LLHUDEffectBeam::render()
         coloru.mV[3] = (U8)alpha;
         gRender.color4ubv(coloru.mV);
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale, scale, scale);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, pos_agent.mV[0], pos_agent.mV[1], pos_agent.mV[2]);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, scale, scale, scale);
         gSphere.render();
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 }
 

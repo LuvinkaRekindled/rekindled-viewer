@@ -91,7 +91,7 @@ U32 LLViewerJointAttachment::drawShape( F32 pixelArea, bool first_pass, bool is_
 {
     if (LLVOAvatar::sShowAttachmentPoints)
     {
-        LLRenderState::CullScope cull_face(false);
+        RKRenderState::CullScope cull_face(false);
 
         gRender.color4f(1.f, 1.f, 1.f, 1.f);
         gRender.begin(LLRender::TRIANGLES);
@@ -371,7 +371,7 @@ void LLViewerJointAttachment::setAttachmentVisibility(bool visible)
         {
             attached_obj->mDrawable->getSpatialBridge()->mDrawableType = 0;
         }
-        LLCullShadow::touchBridge(attached_obj->mDrawable->getSpatialBridge());       // <FS> stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the rows of the bridge's groups name its render type
+        RKCullShadow::touchBridge(attached_obj->mDrawable->getSpatialBridge());       // <FS> stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the rows of the bridge's groups name its render type
     }
 }
 

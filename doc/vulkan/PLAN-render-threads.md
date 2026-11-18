@@ -22,7 +22,7 @@ Why more threads do not simply speed up the draw path: the worker replays the ma
 3. **Remaining plain passes** (lighting full-screen quads, UI, probes) are small; leave.
 
 ## Stage R2: a job pool and independent work off the serial worker
-Pool of the size above (`LLVk::Jobs`, std threads, no viewer dependencies). First jobs, each judged by worker ms:
+Pool of the size above (`RKVk::Jobs`, std threads, no viewer dependencies). First jobs, each judged by worker ms:
 - ray scene preparation (candidate scan, instance and table assembly, expiry), started when the frame's shadow packets are in and finished before `rtScene` records: about 1.5-2 ms/frame;
 - shadow packet table building, chunked per record (about 1-1.5 ms);
 - compute-skin job tables and avatar scheduling for the ray scene;

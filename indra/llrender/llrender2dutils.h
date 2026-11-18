@@ -171,8 +171,8 @@ private:
 };
 
 
-extern LLShaderProgram gSolidColorProgram;
-extern LLShaderProgram gUIProgram;
+extern RKShaderProgram gSolidColorProgram;
+extern RKShaderProgram gUIProgram;
 
 #endif // LL_RENDER2DUTILS_H
 

@@ -202,7 +202,7 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
 
     // Depth translation, so that floating text appears 'in-world'
     // and is correctly occluded.
-    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, 0.f,0.f,sCurDepth);
+    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, 0.f,0.f,sCurDepth);
 
     S32 chars_drawn = 0;
     S32 i;
@@ -341,7 +341,7 @@ S32 LLFontGL::render(const LLWString &wstr, S32 begin_offset, F32 x, F32 y, cons
             }
 
             bitmap_entry = next_bitmap_entry;
-            LLImageTex* font_image = font_bitmap_cache->getImageGL(bitmap_entry.first, bitmap_entry.second);
+            RKImageTex* font_image = font_bitmap_cache->getImageGL(bitmap_entry.first, bitmap_entry.second);
             gRender.getTexUnit(0)->bind(font_image);
 
             // For some reason it's not enough to compare by bitmap_entry.

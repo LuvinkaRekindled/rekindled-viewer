@@ -43,7 +43,7 @@
 
 //#pragma optimize("", off)
 
-using namespace LLImageTexMemory;
+using namespace RKImageTexMemory;
 
 // MUST match order of OpenGL face-layers
 TextureTarget LLCubeMapArray::sTargets[6] =
@@ -131,7 +131,7 @@ LLCubeMapArray::LLCubeMapArray(LLCubeMapArray& lhs, U32 width, U32 count) : mTex
         scaled_image->clear(0, 0, 0, 0);
         for (U32 i = 0; i < min_count * 6; ++i)
         {
-            LLVkTex::subImage3D(mImage->getTexName(), TextureTarget::CubeArray, 0, 0, 0, i, mWidth, mWidth, 1, components, ComponentType::U8, scaled_image->getData());
+            RKVkTex::subImage3D(mImage->getTexName(), TextureTarget::CubeArray, 0, 0, 0, i, mWidth, mWidth, 1, components, ComponentType::U8, scaled_image->getData());
         }
     }
 }
@@ -148,9 +148,9 @@ void LLCubeMapArray::allocate(U32 resolution, U32 components, U32 count, bool us
 
     mHDR = hdr;
 
-    LLImageTex::generateTextures(1, &texname);
+    RKImageTex::generateTextures(1, &texname);
 
-    mImage = new LLImageTex(resolution, resolution, components, use_mips);
+    mImage = new RKImageTex(resolution, resolution, components, use_mips);
     mImage->setTexName(texname);
     mImage->setTarget(sTargets[0], LLTexUnit::TT_CUBE_MAP_ARRAY);
 
@@ -169,7 +169,7 @@ void LLCubeMapArray::allocate(U32 resolution, U32 components, U32 count, bool us
     U32 mip_resolution = resolution;
     while (mip_resolution >= 1)
     {
-        LLVkTex::image3D(texname, TextureTarget::CubeArray, mip, format, mip_resolution, mip_resolution, count * 6,
+        RKVkTex::image3D(texname, TextureTarget::CubeArray, mip, format, mip_resolution, mip_resolution, count * 6,
             PixelFormat::RGBA, ComponentType::U8, nullptr);
 
         if (!use_mips)

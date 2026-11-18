@@ -633,8 +633,8 @@ static void settings_to_globals()
     LLRender::sGLCoreProfile = gSavedSettings.getBOOL("RenderGLContextCoreProfile");
 #endif
     LLRender::sNsightDebugSupport = gSavedSettings.getBOOL("RenderNsightDebugSupport");
-    LLImageTex::sGlobalUseAnisotropic    = gSavedSettings.getBOOL("RenderAnisotropic");
-    LLImageTex::sCompressTextures        = gSavedSettings.getBOOL("RenderCompressTextures");
+    RKImageTex::sGlobalUseAnisotropic    = gSavedSettings.getBOOL("RenderAnisotropic");
+    RKImageTex::sCompressTextures        = gSavedSettings.getBOOL("RenderCompressTextures");
     LLVOVolume::sLODFactor              = llclamp(gSavedSettings.getF32("RenderVolumeLODFactor"), 0.01f, MAX_LOD_FACTOR);
     LLVOVolume::sDistanceFactor         = 1.f-LLVOVolume::sLODFactor * 0.1f;
     LLVolumeImplFlexible::sUpdateFactor = gSavedSettings.getF32("RenderFlexTimeFactor");
@@ -1270,7 +1270,7 @@ bool LLAppViewer::init()
     gRenderActive = true;
     // <FS> when Vulkan cannot start the user is told why (rkvkbridge.cpp ensureReady) and the viewer leaves without the old video driver text or the fatal error flow; the exec marker goes so that the
     // next start is not taken for a crash
-    LLVkBridge::setStartupFailureHandler([]()
+    RKVkBridge::setStartupFailureHandler([]()
     {
         LL_WARNS("InitInfo") << "Vulkan could not be started: quitting" << LL_ENDL;
         LLAppViewer::instance()->removeMarkerFiles();
@@ -1947,7 +1947,7 @@ bool LLAppViewer::doFrame()
                 pingMainloopTimeout("Main:Display");
                 gRenderActive = true;
 
-                LLVkBridge::holdFrame(true); // <FS> the mirror frame spans display() and the probe update / snapshots below
+                RKVkBridge::holdFrame(true); // <FS> the mirror frame spans display() and the probe update / snapshots below
                 {
                     LL_CPU_ZONE("main loop: display()");
                     display();
@@ -1971,7 +1971,7 @@ bool LLAppViewer::doFrame()
                     FSFloaterPrimfeed::update(); // <FS:Beq/> Primfeed support
                     // <FS> rt-debug.txt snaptest=N: a snapshot as the exit takes it, again for every change of N above 0 (the VkSnap timing lines say what it cost; for same-session A/Bs of the exit snapshot)
                     static S32 snap_test_done = 0;
-                    const S32 snap_test = LLVkBridge::rtSnapTest();
+                    const S32 snap_test = RKVkBridge::rtSnapTest();
                     if (snap_test > 0 && snap_test != snap_test_done && gViewerWindow)
                     {
                         snap_test_done = snap_test;
@@ -1981,9 +1981,9 @@ bool LLAppViewer::doFrame()
                     // </FS>
                     gRenderActive = false;
                 }
-                LLVkBridge::holdFrame(false); // <FS>
-                LLVkBridge::endFrame(); // <FS>
-                LLCpuZoneScope::frame(); // <FS>
+                RKVkBridge::holdFrame(false); // <FS>
+                RKVkBridge::endFrame(); // <FS>
+                RKCpuZoneScope::frame(); // <FS>
                 apply_dev_settings(); // <FS>
 
                 if (LLViewerStatsRecorder::instanceExists())
@@ -2204,8 +2204,8 @@ void LLAppViewer::flushLFSIO()
 
 bool LLAppViewer::cleanup()
 {
-    LLShaderProgram::dumpProgramCensus(); // <FS> LL_VK_PROGRAM_CENSUS=1 (shader cleanup, stage 4): what the run loaded and bound, while the programs are still there
-    LLVkBridge::stopAsync(); // <FS> the Vulkan mirror thread must be done before anything is torn down
+    RKShaderProgram::dumpProgramCensus(); // <FS> LL_VK_PROGRAM_CENSUS=1 (shader cleanup, stage 4): what the run loaded and bound, while the programs are still there
+    RKVkBridge::stopAsync(); // <FS> the Vulkan mirror thread must be done before anything is torn down
 
 #if LL_VELOPACK
     // Apply any pending Velopack update before shutdown
@@ -2218,8 +2218,8 @@ bool LLAppViewer::cleanup()
 #endif
 
     // <FS> C2.4d: avatars parked in the retire list are destroyed now and no more are parked: their destructors need the systems that the cleanup below shuts down
-    LLRetireList::stopKind(3);
-    LLRetireList::stopKind(4);       // <FS> C3.5: the vertex buffers too (their destructors release GPU buffers: before the renderer is shut down)
+    RKRetireList::stopKind(3);
+    RKRetireList::stopKind(4);       // <FS> C3.5: the vertex buffers too (their destructors release GPU buffers: before the renderer is shut down)
 
     //ditch LLVOAvatarSelf instance
     gAgentAvatarp = NULL;
@@ -2725,7 +2725,7 @@ bool LLAppViewer::cleanup()
 
     LL_INFOS() << "Cleaning up Media and Textures" << LL_ENDL;
 
-    LLTexRetire::shutdown();        // <FS> C2.2: the retire list is emptied and stops parking: from here a texture whose last reference goes is deleted at once, as before
+    RKTexRetire::shutdown();        // <FS> C2.2: the retire list is emptied and stops parking: from here a texture whose last reference goes is deleted at once, as before
 
     //Note:
     //SUBSYSTEM_CLEANUP(LLViewerMedia) has to be put before gTextureList.shutdown()
@@ -4129,7 +4129,7 @@ bool LLAppViewer::initWindow()
     LL_INFOS("AppInit") << "gPipeline Initialized" << LL_ENDL;
     if (const char* pool_selftest = getenv("LL_VK_POOL_SELFTEST"))
     {
-        LLForkJoinPool::selfTest((unsigned)std::max(atoi(pool_selftest), 1));       // (GPU-LIFETIMES.md step 4: a stress test of the pool and a trial of the phase check, nothing without the variable)
+        RKForkJoinPool::selfTest((unsigned)std::max(atoi(pool_selftest), 1));       // (GPU-LIFETIMES.md step 4: a stress test of the pool and a trial of the phase check, nothing without the variable)
     }
 
     gViewerWindow->initRenderDefaults();
@@ -6167,7 +6167,7 @@ void LLAppViewer::idle()
 
     static LLCachedControl<U32> downscale_method(gSavedSettings, "RenderDownScaleMethod");
     gDeviceCaps.mDownScaleMethod = downscale_method;
-    { LL_CPU_ZONE("idle: LLImageTex::updateClass"); LLImageTex::updateClass(); }
+    { LL_CPU_ZONE("idle: RKImageTex::updateClass"); RKImageTex::updateClass(); }
 
     // Service the WorkQueue we use for replies from worker threads.
     // Use function statics for the timeslice setting so we only have to fetch
@@ -6587,7 +6587,7 @@ void LLAppViewer::idle()
         if (gAudiop)
         {
             {
-                LLAudioStallTimer stall("audio_update_volume/listener/wind (before idle)");
+                RKAudioStallTimer stall("audio_update_volume/listener/wind (before idle)");
                 LL_CPU_ZONE("audio: volume/listener/wind");
                 audio_update_volume(false);
                 audio_update_listener();

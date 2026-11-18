@@ -14,7 +14,7 @@ How a generation shows: `BufferInfo::mEpoch` (other contents altogether: respeci
 | packet record lookups (`cache_generation` in the packet builders) | `Buf*` found by name | `sPacketBufferGeneration` | ok |
 | draw bindings (`BindingKey`, `RDraw`) | made at the draw from the current table; the index buffer by name looked up at the draw | none needed | ok |
 | ray scene debug probe (`ProbeBlas`) | epochs kept | epochs | ok |
-| viewer scene fragments (`LLSceneFragment`, served items) | `LLDrawInfo` pointers | `mSerial` against `group->mDrawMapSerial` | ok by design; not changed |
+| viewer scene fragments (`RKSceneFragment`, served items) | `LLDrawInfo` pointers | `mSerial` against `group->mDrawMapSerial` | ok by design; not changed |
 
 ## Second pass (same day)
 

@@ -181,7 +181,7 @@ void display_startup()
     { LL_CPU_ZONE("display: updateResources"); gPipeline.updateResources(); }
 
     // <FS> Vulkan mirror frame (does nothing unless LL_VK_MIRROR is set)
-    LLVkBridge::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
+    RKVkBridge::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
 
     // Written as branch to appease GCC which doesn't like different
     // pointer types across ternary ops
@@ -191,7 +191,7 @@ void display_startup()
     LLTexUnit::sWhiteTexture = LLViewerFetchedTexture::sWhiteImagep->getTexName();
     }
 
-    LLRenderPresetDefault gls_default;
+    RKRenderPresetDefault gls_default;
 
     // Required for HTML update in login screen
     static S32 frame_count = 0;
@@ -208,7 +208,7 @@ void display_startup()
 
 
     gRender.clearBuffers(ClearBits::Depth | ClearBits::Color); // | ClearBits::Stencil);
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gPipeline.disableLights();
 
     if (gViewerWindow)
@@ -220,7 +220,7 @@ void display_startup()
     LLVertexBuffer::unbind();
 
 
-    LLVkBridge::endFrame(); // <FS>
+    RKVkBridge::endFrame(); // <FS>
     if (gViewerWindow && gViewerWindow->getWindow())
     gViewerWindow->getWindow()->swapBuffers();
 
@@ -509,13 +509,13 @@ static void update_tp_display(bool minimized)
 }
 
 // Paint the display!
-U32 gEarlySortResorts = 0;     // <FS> frames in which the early sort had to be redone (see LLBuilderGuard); logged with the texture list line
+U32 gEarlySortResorts = 0;     // <FS> frames in which the early sort had to be redone (see RKBuilderGuard); logged with the texture list line
 
 void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 {
     // <FS> per-zone GPU timing in the log (only does anything while FSGpuZoneTimers is on).
     // Done first, before any zone of this frame opens, so the previous frame is complete.
-    LLGpuZoneTimer::onFrameEnd();
+    RKGpuZoneTimer::onFrameEnd();
 
     // <FS> A/B of the early sort inside one run (LL_VK_EARLY_SORT=alt: 60 frames on, 60 off): the interval between two display() calls, summed per mode of the frame it ended
     static int sFrameMode = -1;
@@ -540,7 +540,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     // <FS> Vulkan mirror frame (does nothing unless LL_VK_MIRROR is set)
     if (gViewerWindow)
     {
-        LLVkBridge::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
+        RKVkBridge::beginFrame(gViewerWindow->getWindowWidthRaw(), gViewerWindow->getWindowHeightRaw());
     }
 
 
@@ -557,7 +557,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Resize Window");
         gRender.flush();
         gRender.clearBuffers(ClearBits::Color);
-        LLVkBridge::endFrame(); // <FS>
+        RKVkBridge::endFrame(); // <FS>
         gViewerWindow->getWindow()->swapBuffers();
         LLPipeline::refreshCachedSettings();
         gPipeline.resizeScreenTexture();
@@ -579,8 +579,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         for_snapshot = false;
     }
 
-    LLRenderPresetDefault gls_default;
-    LLRenderState::DepthScope gls_depth(true, true, LLRenderState::CompareOp::LessEqual);
+    RKRenderPresetDefault gls_default;
+    RKRenderState::DepthScope gls_depth(true, true, RKRenderState::CompareOp::LessEqual);
 
     LLVertexBuffer::unbind();
 
@@ -636,7 +636,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 F32 max_image_decode_time = 0.050f * gFrameIntervalSeconds.value();          // 50 ms/second decode time
                 max_image_decode_time     = llclamp(max_image_decode_time, 0.002f, 0.005f);  // min 2ms/frame, max 5ms/frame)
                 { LL_CPU_ZONE("display: gTextureList.updateImages"); gTextureList.updateImages(max_image_decode_time); }
-                LLImageTex::flushDirtyTexOptions(); // <FS> the sampler options that changed are sent here, not by whichever bind comes first
+                RKImageTex::flushDirtyTexOptions(); // <FS> the sampler options that changed are sent here, not by whichever bind comes first
             }
 
             {
@@ -697,7 +697,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
     if (gShaderProfileFrame)
     {
-        LLShaderProgram::initProfile();
+        RKShaderProgram::initProfile();
     }
 
     //LLGLState::verify(false);
@@ -709,7 +709,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:TextureStats");
 
-    LLImageTex::updateStats(gFrameTimeSeconds);
+    RKImageTex::updateStats(gFrameTimeSeconds);
 
     static LLCachedControl<S32> avatar_name_tag_mode(gSavedSettings, "AvatarNameTagMode", 1);
     static LLCachedControl<S32> name_tag_show_group_titles(gSavedSettings, "GroupTitlesTagMode", 2 /*all group tags*/);
@@ -971,7 +971,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         static LLCullResult result;
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
         LLPipeline::sUnderWaterRender = LLViewerCamera::getInstance()->cameraUnderWater();
-        LLBuilderGuard::sMainMapLive = false;
+        RKBuilderGuard::sMainMapLive = false;
         {
             LL_CPU_ZONE("display: updateCull");
             gPipeline.updateCull(*LLViewerCamera::getInstance(), result);
@@ -985,7 +985,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         static const bool early_env_enabled = !(early_env && early_env[0] == '0');
         static LLCachedControl<bool> early_sort_setting(gSavedSettings, "FSEarlySort", true);        // live: Debug Settings
         static LLCachedControl<bool> async_builders_setting(gSavedSettings, "FSAsyncBuilders", true);
-        LLAsyncPool::sRunInline = !async_builders_setting;
+        RKAsyncPool::sRunInline = !async_builders_setting;
         const bool early_sort = early_env_enabled && early_sort_setting && !for_snapshot && gFrameCount > 1 && (!early_alternate || ((gFrameCount / 60) % 2) == 1);
         sFrameMode = early_sort ? 1 : 0;
         unsigned early_epoch = 0;
@@ -993,8 +993,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LL_CPU_ZONE("display: stateSort (early)");
             gPipeline.stateSort(camera, result, true);
-            early_epoch = LLBuilderGuard::sEpoch.load();
-            LLBuilderGuard::sMainMapLive = true;        // from here a change to a group of the main view is noticed (see LLBuilderGuard)
+            early_epoch = RKBuilderGuard::sEpoch.load();
+            RKBuilderGuard::sMainMapLive = true;        // from here a change to a group of the main view is noticed (see RKBuilderGuard)
         }
 
 
@@ -1032,8 +1032,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
                 set_current_projection(proj);
                 set_current_modelview(mod);
-                LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj));
-                LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(mod));
+                RKRenderMatrix::load(RKRenderMatrix::Kind::Projection, glm::value_ptr(proj));
+                RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, glm::value_ptr(mod));
                 gViewerWindow->setup3DViewport();
 
             }
@@ -1067,7 +1067,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 F32 max_image_decode_time = 0.050f*gFrameIntervalSeconds.value(); // 50 ms/second decode time
                 max_image_decode_time = llclamp(max_image_decode_time, 0.002f, 0.005f ); // min 2ms/frame, max 5ms/frame)
                 { LL_CPU_ZONE("display: gTextureList.updateImages"); gTextureList.updateImages(max_image_decode_time); }
-                LLImageTex::flushDirtyTexOptions(); // <FS> the sampler options that changed are sent here, not by whichever bind comes first
+                RKImageTex::flushDirtyTexOptions(); // <FS> the sampler options that changed are sent here, not by whichever bind comes first
             }
 
             {
@@ -1090,7 +1090,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("display - 4")
             LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
-            if (early_sort && LLBuilderGuard::sEpoch.load() == early_epoch)
+            if (early_sort && RKBuilderGuard::sEpoch.load() == early_epoch)
             {
                 gPipeline.refillPools(result);
             }
@@ -1102,7 +1102,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 {
                     LL_INFOS("VkBuilder") << "early sort: a group of the main view changed after the sort (" << gEarlySortResorts << " frames so far): sorting again" << LL_ENDL;
                 }
-                LLBuilderGuard::sMainMapLive = false;
+                RKBuilderGuard::sMainMapLive = false;
                 gPipeline.dropOcclusionMarks(result);       // the groups marked for a query by the first cull would never be queried again
                 LL_CPU_ZONE("display: cull + stateSort (again)");
                 LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
@@ -1375,7 +1375,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 LL_CPU_ZONE("display: renderGeomDeferred");
                 gPipeline.renderGeomDeferred(*LLViewerCamera::getInstance(), true);
             }
-            LLBuilderGuard::sMainMapLive = false;
+            RKBuilderGuard::sMainMapLive = false;
         }
 
         {
@@ -1457,7 +1457,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         gShaderProfileFrame = false;
         boost::json::value stats{ boost::json::object_kind };
         getProfileStatsContext(stats.as_object());
-        LLShaderProgram::finishProfile(stats);
+        RKShaderProgram::finishProfile(stats);
 
         auto report_name = getProfileStatsFilename();
         std::ofstream outf(report_name);
@@ -1552,8 +1552,8 @@ void display_cube_face()
 
     bool rebuild = false;
 
-    LLRenderPresetDefault gls_default;
-    LLRenderState::DepthScope gls_depth(true, true, LLRenderState::CompareOp::LessEqual);
+    RKRenderPresetDefault gls_default;
+    RKRenderState::DepthScope gls_depth(true, true, RKRenderState::CompareOp::LessEqual);
 
     LLVertexBuffer::unbind();
 
@@ -1645,8 +1645,8 @@ void display_cube_face()
 void render_hud_attachments()
 {
     LLPerfStats::RecordSceneTime T ( LLPerfStats::StatType_t::RENDER_HUDS); // render time capture - Primary contributor to HUDs (though these end up in render batches)
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
     glm::mat4 current_proj = get_current_projection();
     glm::mat4 current_mod = get_current_modelview();
@@ -1749,8 +1749,8 @@ void render_hud_attachments()
         LLPipeline::sUseOcclusion = use_occlusion;
         LLPipeline::sRenderingHUDs = false;
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
     set_current_projection(current_proj);
     set_current_modelview(current_mod);
@@ -1842,10 +1842,10 @@ bool setup_hud_matrices(const LLRect& screen_region)
     if (!result) return result;
 
     // set up transform to keep HUD objects in front of camera
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(proj));
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Projection, glm::value_ptr(proj));
     set_current_projection(proj);
 
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(model));
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, glm::value_ptr(model));
     set_current_modelview(model);
     return true;
 }
@@ -1860,18 +1860,18 @@ void render_ui(F32 zoom_factor, int subfield)
 
     if (!gSnapshot)
     {
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderLastModelView);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, gRenderLastModelView);
         set_current_modelview(glm::make_mat4(gRenderLastModelView));
     }
 
     if(LLSceneMonitor::getInstance()->needsUpdate())
     {
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         gViewerWindow->setup2DRender();
         LLSceneMonitor::getInstance()->compare();
         gViewerWindow->setup3DRender();
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 
     // apply gamma correction and post effects
@@ -1882,7 +1882,7 @@ void render_ui(F32 zoom_factor, int subfield)
 
     // <FS> DLSS: from here on everything is drawn straight into the full-size window, after the upscale. It must not carry the camera jitter of the scene (nothing
     // averages it out any more, so billboards such as the voice dot, beams and selection outlines would vibrate by up to a pixel).
-    LLUnjitteredScope unjittered_ui;
+    RKUnjitteredScope unjittered_ui;
 
     {
 
@@ -1898,8 +1898,8 @@ void render_ui(F32 zoom_factor, int subfield)
         { LL_CPU_ZONE("display: render_hud_attachments"); render_hud_attachments(); }
 
 
-        LLRenderPresetDefault gls_default;
-        LLRenderPresetUIDefault gls_ui;
+        RKRenderPresetDefault gls_default;
+        RKRenderPresetUIDefault gls_ui;
         {
             gPipeline.disableLights();
         }
@@ -1945,7 +1945,7 @@ void render_ui(F32 zoom_factor, int subfield)
     if (!gSnapshot)
     {
         set_current_modelview(saved_view);
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 }
 
@@ -1957,8 +1957,8 @@ void swap()
     if (gDisplaySwapBuffers)
     {
         RenderPass::frameEnd(); // <FS> F3.5a: a render target still bound at the end of the frame (LL_VK_PASS_CHECK=1)
-        LLRenderMatrix::checkFrameEnd(); // <FS> F3.3: matrix stacks that are not empty at the end of the frame (LL_VK_MATRIX_GUARD_CHECK=1)
-        LLVkBridge::presentFrame(); // <FS>
+        RKRenderMatrix::checkFrameEnd(); // <FS> F3.3: matrix stacks that are not empty at the end of the frame (LL_VK_MATRIX_GUARD_CHECK=1)
+        RKVkBridge::presentFrame(); // <FS>
         gViewerWindow->getWindow()->swapBuffers();
     }
     gDisplaySwapBuffers = true;
@@ -2017,7 +2017,7 @@ void renderCoordinateAxes()
 
 void draw_axes()
 {
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bindWhite();
     // A vertical white line at origin
     LLVector3 v = gAgent.getPositionAgent();
@@ -2027,35 +2027,35 @@ void draw_axes()
         gRender.vertex3f(0.0f, 0.0f, 40.0f);
     gRender.end();
     // Some coordinate axes
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, v.mV[VX], v.mV[VY], v.mV[VZ]);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, v.mV[VX], v.mV[VY], v.mV[VZ]);
         renderCoordinateAxes();
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 // <FS:PP> Render chat range spheres in 3D world
 static void renderChatRangeSphere(const LLVector3& center, F32 radius, const LLColor4& color)
 {
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
         gDebugProgram.bind();
-        LLRenderState::BlendScope blend(true);
-        LLRenderState::DepthScope depth(true, true);
+        RKRenderState::BlendScope blend(true);
+        RKRenderState::DepthScope depth(true, true);
         gRender.color4fv(color.mV);
         gRender.diffuseColor4fv(color.mV);
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         {
-            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, radius, radius, radius);
-            gRender.setCullFace(LLRenderState::CullFace::Front);
+            RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, radius, radius, radius);
+            gRender.setCullFace(RKRenderState::CullFace::Front);
             gSphere.render();
-            gRender.setCullFace(LLRenderState::CullFace::Back);
+            gRender.setCullFace(RKRenderState::CullFace::Back);
             gSphere.render();
         }
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         gUIProgram.bind();
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 static void drawChatRangeSpheres()
@@ -2083,7 +2083,7 @@ static void drawChatRangeSpheres()
 void render_ui_3d()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
-    LLRenderPresetPipeline gls_pipeline;
+    RKRenderPresetPipeline gls_pipeline;
 
     //////////////////////////////////////
     //
@@ -2139,14 +2139,14 @@ void render_ui_3d()
 void render_ui_2d()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
 
     /////////////////////////////////////////////////////////////
     //
     // Render 2D UI elements that overlay the world (no z compare)
 
     //  Disable wireframe mode below here, as this is HUD/menus
-    gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+    gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
 
     //  Menu overlays, HUD, etc
     gViewerWindow->setup2DRender();
@@ -2174,16 +2174,16 @@ void render_ui_2d()
     if (isAgentAvatarValid() && gAgentCamera.mHUDCurZoom < 0.98f)
     {
         gUIProgram.bind();
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         S32 half_width = (gViewerWindow->getWorldViewWidthScaled() / 2);
         S32 half_height = (gViewerWindow->getWorldViewHeightScaled() / 2);
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, LLUI::getScaleFactor().mV[VX], LLUI::getScaleFactor().mV[VY], 1.f);
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)half_width, (F32)half_height, 0.f);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, LLUI::getScaleFactor().mV[VX], LLUI::getScaleFactor().mV[VY], 1.f);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, (F32)half_width, (F32)half_height, 0.f);
         F32 zoom = gAgentCamera.mHUDCurZoom;
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, zoom,zoom,1.f);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, zoom,zoom,1.f);
         gRender.color4fv(LLColor4::white.mV);
         gl_rect_2d(-half_width, half_height, half_width, -half_height, false);
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         gUIProgram.unbind();
     }
 
@@ -2206,7 +2206,7 @@ void render_ui_2d()
                     LLView::sDirtyRect.mBottom -= pad;
                     LLView::sDirtyRect.mTop += pad;
 
-                    LLRenderState::ScissorScope scissor(true);
+                    RKRenderState::ScissorScope scissor(true);
                     static LLRect last_rect = LLView::sDirtyRect;
 
                     //union with last rect to avoid mouse poop
@@ -2239,8 +2239,8 @@ void render_ui_2d()
             LLView::sDirtyRect = t_rect;
         }
 
-        LLRenderState::CullScope cull(false);
-        LLRenderState::BlendScope blend(false);
+        RKRenderState::CullScope cull(false);
+        RKRenderState::BlendScope blend(false);
         S32 width = gViewerWindow->getWindowWidthScaled();
         S32 height = gViewerWindow->getWindowHeightScaled();
         gRender.getTexUnit(0)->bind(&gPipeline.mUIScreen);
@@ -2316,22 +2316,22 @@ void render_disconnected_background()
 
     if (gDisconnectedImagep)
     {
-        LLRenderPresetUIDefault gls_ui;
+        RKRenderPresetUIDefault gls_ui;
         gViewerWindow->setup2DRender();
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         {
             // scale ui to reflect UIScaleFactor
             // this can't be done in setup2DRender because it requires a
             // pushMatrix/popMatrix pair
             const LLVector2& display_scale = gViewerWindow->getDisplayScale();
-            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, display_scale.mV[VX], display_scale.mV[VY], 1.f);
+            RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, display_scale.mV[VX], display_scale.mV[VY], 1.f);
 
             gRender.getTexUnit(0)->bind(gDisconnectedImagep);
             gRender.color4f(1.f, 1.f, 1.f, 1.f);
             gl_rect_2d_simple_tex(width, height);
             gRender.getTexUnit(0)->bindWhite();
         }
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
     gRender.flush();
 

@@ -9,7 +9,7 @@ The pass is `class3/deferred/rtReflectionF.glsl` (program "Deferred RT Reflectio
 - the lighting libraries (probes at the hit `sampleProbes` / `sampleProbeAmbient`, `pbrBaseLight`, atmosphere, G-buffer unpack, `tapHeroProbe`).
 
 ## Where the native path stands (read in rkvknative.cpp / rkvkshader.cpp)
-- Stock stages that mention `ll_rt_tlas` get the ray query extension and the set 3 declarations (scene, geometry records `LLRtGeom`, materials `LLRtMaterial`, pins, `ll_rt_tex`) from the loader (rkvkshader.cpp ~1066 and ~1098) and `ProgramInfo::mUsesRt` (the draw binds set 3, rkvkrenderer.cpp ~4071).
+- Stock stages that mention `ll_rt_tlas` get the ray query extension and the set 3 declarations (scene, geometry records `RKRtGeom`, materials `RKRtMaterial`, pins, `ll_rt_tex`) from the loader (rkvkshader.cpp ~1066 and ~1098) and `ProgramInfo::mUsesRt` (the draw binds set 3, rkvkrenderer.cpp ~4071).
 - Native programs (compileNativeProgram) get neither: no ray query extension, no set 3 text, `mUsesRt` stays false; and `nativeOverride` returns the old program for any program with `mUsesRt` ("the ray traced variants are the RT track", rkvknative.cpp ~705). So there is no native ray query shader yet: this pass is the first one, and its library (`native/lib/rt.glsl`) will also serve a native RT sun shadow later.
 - A native pass stands in by manifest line; the old program's uniform values are copied by name into the native one, so the C++ callers do not change.
 

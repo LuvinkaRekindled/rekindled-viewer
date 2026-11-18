@@ -28,7 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 
-class LLGroupRows
+class RKGroupRows
 {
 public:
     static constexpr U32 kCameras = 9;                      // LLViewerCamera::NUM_CAMERAS (static_assert in llvieweroctree.cpp)

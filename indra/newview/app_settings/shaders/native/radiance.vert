@@ -2,7 +2,7 @@
 // "Radiance Gen Shader", "Hero Radiance Gen Shader" and "Irradiance Gen Shader" (interface/radianceGenV.glsl, irradianceGenV.glsl); pairs with radiance.frag and irradiance.frag.
 // (the draw block is declared the same in all three)
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_matrix;
     uint ll_ti_cubearray_reflectionProbes;

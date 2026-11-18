@@ -1,13 +1,13 @@
 // dof.frag: the depth of field's blur: each pixel gathers samples on circles as wide as its circle of confusion (alpha of the picture): the near blur takes every sample, the far blur only the more blurred ones.
 // A line for line translation of "Deferred Post Shader" (deferred/postDeferredF.glsl); pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec2 screen_res;
     float max_cof;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
 };

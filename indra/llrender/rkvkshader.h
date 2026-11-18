@@ -31,7 +31,7 @@
 #include <string>
 #include <vector>
 
-namespace LLVk
+namespace RKVk
 {
 
 // How often a loose uniform changes (doc/vulkan/uniform-classes.tsv): each class is a block of its own, copied independently
@@ -80,7 +80,7 @@ inline bool debugShadersEnabled()
     return enabled;
 }
 
-} // namespace LLVk
+} // namespace RKVk
 
 #endif // LL_VULKAN
 

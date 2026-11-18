@@ -3,7 +3,7 @@
  * @brief Stage 0 of doc/vulkan/ATTACHMENTS-design.md: how much of the main thread's per-frame move chain (drawable and bridge updateMove, octree partition moves, the moved list) belongs to the
  *        attachments of avatars, split into rigid attachments, rigged attachments and everything else, plus why rigid attachments would not be "plain" for a bulk matrix pass.
  *        Measurement only: nothing here changes what is updated. Off unless LL_VK_ATTCENSUS=1 (every hook is one branch on a constant). Log tag AttCensus every 600 frames
- *        (LLAttCensus::frame() is called from LLViewerObjectList::update). Times are rdtsc ticks converted against the performance counter at the report.
+ *        (RKAttCensus::frame() is called from LLViewerObjectList::update). Times are rdtsc ticks converted against the performance counter at the report.
  */
 #ifndef LL_LLATTCENSUS_H
 #define LL_LLATTCENSUS_H
@@ -15,7 +15,7 @@
 class LLDrawable;
 class LLViewerObject;
 
-namespace LLAttCensus
+namespace RKAttCensus
 {
     inline const bool sOn = getenv("LL_VK_ATTCENSUS") != nullptr;
 

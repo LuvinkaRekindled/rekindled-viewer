@@ -63,7 +63,7 @@ std::string rlvGetAnonym(const LLAvatarName& avName)
 }
 // [/RLVa:KB]
 
-// We can't create LLImageTex objects because we have no window or rendering
+// We can't create RKImageTex objects because we have no window or rendering
 // context.  Provide enough of an LLUIImage to test the LLUI library without
 // an underlying image.
 class TestUIImage : public LLUIImage

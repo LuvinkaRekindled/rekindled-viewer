@@ -1,7 +1,7 @@
 // pathfinding.vert: the pathfinding overlay's shapes (the navmesh, the characters, the linksets): a vertex colour tinted by a simple three light shading (PF_NO_NORMAL: flat, for the shapes without normals). A line
 // for line translation of "Pathfinding Shader" (interface/pathfindingV.glsl) and "PathfindingNoNormals Shader" (interface/pathfindingNoNormalV.glsl); pairs with pathfinding.frag.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float tint;
 #ifndef PF_NO_NORMAL
@@ -10,7 +10,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float alpha_scale;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
 };

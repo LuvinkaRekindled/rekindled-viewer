@@ -1688,7 +1688,7 @@ LLViewerMediaImpl::LLViewerMediaImpl(     const LLUUID& texture_id,
     }
 
     mMainQueue = LL::WorkQueue::getInstance("mainloop");
-    mTexUpdateQueue = LL::WorkQueue::getInstance("LLImageTex"); // Share work queue with tex loader.
+    mTexUpdateQueue = LL::WorkQueue::getInstance("RKImageTex"); // Share work queue with tex loader.
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -3042,7 +3042,7 @@ void LLViewerMediaImpl::update()
     if (preMediaTexUpdate(media_tex, data, data_width, data_height, x_pos, y_pos, width, height))
     {
         // Push update to worker thread
-        auto main_queue = LLImageTexThread::sEnabledMedia ? mMainQueue.lock() : nullptr;
+        auto main_queue = RKImageTexThread::sEnabledMedia ? mMainQueue.lock() : nullptr;
         if (main_queue)
         {
             mTextureUpdatePending = true;
@@ -3139,7 +3139,7 @@ void LLViewerMediaImpl::doMediaTexUpdate(LLViewerMediaTexture* media_tex, U8* da
     // -Cosmic,2023-04-04
     // Allocate GL texture based on LLImageRaw but do NOT copy to GL
     U32 tex_name = 0;
-    if (!media_tex->createImageTexture(0, raw, 0, true, LLBaseTexture::OTHER, true, &tex_name))
+    if (!media_tex->createImageTexture(0, raw, 0, true, RKBaseTexture::OTHER, true, &tex_name))
     {
         LL_WARNS("Media") << "Failed to create media texture" << LL_ENDL;
     }

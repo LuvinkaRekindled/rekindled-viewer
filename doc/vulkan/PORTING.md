@@ -26,7 +26,7 @@ The largest stock-file edits: `llglslshader.cpp` (~600 lines), `pipeline.cpp` (~
 
 ## The GL wrappers are gone
 
-Since F2.1 nothing is generated and no GL function is intercepted: the viewer writes typed records (`rkvkstate.h`, `rkvktex.h`, `rkvkbuf.h`, `rkvktarget.h`, `rkvkquery.h`, `rkvkasync.h`) and the worker plays them (`rkvkgl.cpp`, `rkvkasync.cpp`). `gen_llvkgl.py` and its `.inc` files were deleted. Raw `gl*` calls that upstream adds do not compile (there is no OpenGL); route them through the `gGL` wrappers / the `LLVk*` calls.
+Since F2.1 nothing is generated and no GL function is intercepted: the viewer writes typed records (`rkvkstate.h`, `rkvktex.h`, `rkvkbuf.h`, `rkvktarget.h`, `rkvkquery.h`, `rkvkasync.h`) and the worker plays them (`rkvkgl.cpp`, `rkvkasync.cpp`). `gen_llvkgl.py` and its `.inc` files were deleted. Raw `gl*` calls that upstream adds do not compile (there is no OpenGL); route them through the `gGL` wrappers / the `RKVk*` calls.
 
 ## Porting steps
 

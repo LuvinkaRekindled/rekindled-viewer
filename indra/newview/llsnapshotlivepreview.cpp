@@ -297,9 +297,9 @@ void LLSnapshotLivePreview::draw()
         // calculate UV scale
         F32 uv_width = isImageScaled() ? 1.f : llmin((F32)getWidth() / (F32)getCurrentImage()->getWidth(), 1.f);
         F32 uv_height = isImageScaled() ? 1.f : llmin((F32)getHeight() / (F32)getCurrentImage()->getHeight(), 1.f);
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         {
-            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)rect.mLeft, (F32)rect.mBottom + TOP_PANEL_HEIGHT, 0.f);
+            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, (F32)rect.mLeft, (F32)rect.mBottom + TOP_PANEL_HEIGHT, 0.f);
             gRender.begin(LLRender::TRIANGLES);
             {
                 gRender.texCoord2f(uv_width, uv_height);
@@ -323,7 +323,7 @@ void LLSnapshotLivePreview::draw()
             }
             gRender.end();
         }
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
         gRender.color4f(1.f, 1.f, 1.f, mFlashAlpha);
         gl_rect_2d(getRect());
@@ -424,11 +424,11 @@ void LLSnapshotLivePreview::draw()
             bool rescale = !mImageScaled[old_image_index] && mViewerImage[mCurImageIndex].notNull();
             F32 uv_width = rescale ? llmin((F32)mWidth[old_image_index] / (F32)mViewerImage[mCurImageIndex]->getWidth(), 1.f) : 1.f;
             F32 uv_height = rescale ? llmin((F32)mHeight[old_image_index] / (F32)mViewerImage[mCurImageIndex]->getHeight(), 1.f) : 1.f;
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
             {
                 LLRect& rect = mImageRect[old_image_index];
-                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, (F32)rect.mLeft, (F32)rect.mBottom - ll_round(getRect().getHeight() * 2.f * (fall_interp * fall_interp)), 0.f);
-                LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, -45.f * fall_interp, 0.f, 0.f, 1.f);
+                RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, (F32)rect.mLeft, (F32)rect.mBottom - ll_round(getRect().getHeight() * 2.f * (fall_interp * fall_interp)), 0.f);
+                RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, -45.f * fall_interp, 0.f, 0.f, 1.f);
                 gRender.begin(LLRender::TRIANGLES);
                 {
                     gRender.texCoord2f(uv_width, uv_height);
@@ -451,7 +451,7 @@ void LLSnapshotLivePreview::draw()
                 }
                 gRender.end();
             }
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         }
     }
 }

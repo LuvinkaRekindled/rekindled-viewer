@@ -9,71 +9,71 @@
 
 #if !defined(LL_VULKAN)
 
-bool LLVkBridge::isReady() { return false; }
-void LLVkBridge::setSymbolizer(std::string (*)(const void*)) {}
-bool LLVkBridge::videoMemory(U64&, U64&) { return false; }
-bool LLVkBridge::hostMemory(U64&, U64&) { return false; }
-bool LLVkBridge::memoryByConsumer(MemoryByConsumer&) { return false; }
-std::string LLVkBridge::accelCensus() { return std::string(); }
-bool LLVkBridge::readbackAffordable() { return true; }
-bool LLVkBridge::ensureReady() { return false; }
-std::string LLVkBridge::startupFailureMessage() { return std::string(); }
-void LLVkBridge::setStartupFailureHandler(void (*)()) {}
-void LLVkBridge::setMainWindow(void*) {}
-bool LLVkBridge::describeDevice(DeviceInfo&) { return false; }
-bool LLVkBridge::inFrame() { return false; }
-void LLVkBridge::beginFrame(S32, S32) {}
-void LLVkBridge::endFrame() {}
-void LLVkBridge::holdFrame(bool) {}
-void LLVkBridge::setPresentPreference(S32, bool) {}
-void LLVkBridge::snapshotBoundary(S32) {}
-bool LLVkBridge::upscaleAvailable() { return false; }
-S32 LLVkBridge::neuralRenderMode() { return 0; }
-bool LLVkBridge::neuralRenderAvailable() { return false; }
-void LLVkBridge::setUpscaleLodBias(float) {}
-bool LLVkBridge::shadowPacketsAvailable() { return false; }
-bool LLVkBridge::shadowAlphaPacketsAvailable() { return false; }
-void LLVkBridge::pipelineBuilds(U64& pending, U64& total) { pending = 0; total = 0; }
-bool LLVkBridge::sceneGeoAvailable() { return false; }
-bool LLVkBridge::hizAvailable() { return false; }
-U32 LLVkBridge::hizSend(const HizBox*, U32, const F32*, const F32*, U32) { return 0; }
-S32 LLVkBridge::hizRead(U32, U32, U32*) { return -1; }
-void LLVkBridge::hizDone(U32) {}
-void LLVkBridge::hizSetResults(const U32*, U32) {}
-void LLVkBridge::hizPublish(U32, U32) {}
-U32 LLVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, const CullMapRow*, U32, U32, bool) { return 0; }
-void LLVkBridge::lodListPublish(U32, U32, const U32*) {}
-U32 LLVkBridge::lodListRead(U32, U32&, U32*, U32) { return 0; }
-void LLVkBridge::consumerListPublish(std::shared_ptr<const ConsumerList>) {}
-std::shared_ptr<const LLVkBridge::ConsumerList> LLVkBridge::consumerListRead() { return nullptr; }
-bool LLVkBridge::viewRequest(U32, U32, const CullParams&) { return false; }
-std::shared_ptr<const LLVkBridge::ViewSet> LLVkBridge::viewSetRead(U32) { return nullptr; }
-void LLVkBridge::viewSetPublish(std::shared_ptr<const ViewSet>) {}
-void LLVkBridge::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
-bool LLVkBridge::paletteArenaAcquire(U32, PaletteArena&) { return false; }
-void LLVkBridge::paletteArenaRegister(U32, F32*, U64, U32) {}
-void LLVkBridge::paletteArenaClear() {}
-bool LLVkBridge::paletteArenaInfo(U32, PaletteArena&) { return false; }
-void LLVkBridge::paletteArenaSent(U32, U64) {}
-void LLVkBridge::paletteArenaFree(U64) {}
-void LLVkBridge::upscale(const UpscaleArgs&) {}
-U32 LLVkBridge::rtShadowMode() { return 0; }
-bool LLVkBridge::rtLoadingGates() { return false; }
-S32 LLVkBridge::rtDebugView() { return 0; }
-S32 LLVkBridge::rtWaterReflections() { return 0; }
-S32 LLVkBridge::rtHitQuality() { return -1; }
-S32 LLVkBridge::rtHitRays() { return -1; }
-S32 LLVkBridge::rtGlossyReflections() { return 0; }
-bool LLVkBridge::rtMaterialsAvailable() { return false; }
-bool LLVkBridge::rtBodyRename() { return false; }
-U32 LLVkBridge::rtSkinPeriod(float) { return 1; }
-void LLVkBridge::rtScene(const RtSceneArgs&) {}
-void LLVkBridge::presentFrame() {}
-long long LLVkBridge::lastPresentTicks() { return 0; }
-void LLVkBridge::shutdown() {}
-void LLVkBridge::setBindlessPersistent(bool) {}
-void LLVkBridge::stopAsync() {}
-void LLVkBridge::describeTextures(const std::vector<U32>&, const std::vector<std::string>&, const std::vector<U64>&, const std::vector<std::vector<U64>>&, bool) {}
+bool RKVkBridge::isReady() { return false; }
+void RKVkBridge::setSymbolizer(std::string (*)(const void*)) {}
+bool RKVkBridge::videoMemory(U64&, U64&) { return false; }
+bool RKVkBridge::hostMemory(U64&, U64&) { return false; }
+bool RKVkBridge::memoryByConsumer(MemoryByConsumer&) { return false; }
+std::string RKVkBridge::accelCensus() { return std::string(); }
+bool RKVkBridge::readbackAffordable() { return true; }
+bool RKVkBridge::ensureReady() { return false; }
+std::string RKVkBridge::startupFailureMessage() { return std::string(); }
+void RKVkBridge::setStartupFailureHandler(void (*)()) {}
+void RKVkBridge::setMainWindow(void*) {}
+bool RKVkBridge::describeDevice(DeviceInfo&) { return false; }
+bool RKVkBridge::inFrame() { return false; }
+void RKVkBridge::beginFrame(S32, S32) {}
+void RKVkBridge::endFrame() {}
+void RKVkBridge::holdFrame(bool) {}
+void RKVkBridge::setPresentPreference(S32, bool) {}
+void RKVkBridge::snapshotBoundary(S32) {}
+bool RKVkBridge::upscaleAvailable() { return false; }
+S32 RKVkBridge::neuralRenderMode() { return 0; }
+bool RKVkBridge::neuralRenderAvailable() { return false; }
+void RKVkBridge::setUpscaleLodBias(float) {}
+bool RKVkBridge::shadowPacketsAvailable() { return false; }
+bool RKVkBridge::shadowAlphaPacketsAvailable() { return false; }
+void RKVkBridge::pipelineBuilds(U64& pending, U64& total) { pending = 0; total = 0; }
+bool RKVkBridge::sceneGeoAvailable() { return false; }
+bool RKVkBridge::hizAvailable() { return false; }
+U32 RKVkBridge::hizSend(const HizBox*, U32, const F32*, const F32*, U32) { return 0; }
+S32 RKVkBridge::hizRead(U32, U32, U32*) { return -1; }
+void RKVkBridge::hizDone(U32) {}
+void RKVkBridge::hizSetResults(const U32*, U32) {}
+void RKVkBridge::hizPublish(U32, U32) {}
+U32 RKVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, const CullMapRow*, U32, U32, bool) { return 0; }
+void RKVkBridge::lodListPublish(U32, U32, const U32*) {}
+U32 RKVkBridge::lodListRead(U32, U32&, U32*, U32) { return 0; }
+void RKVkBridge::consumerListPublish(std::shared_ptr<const ConsumerList>) {}
+std::shared_ptr<const RKVkBridge::ConsumerList> RKVkBridge::consumerListRead() { return nullptr; }
+bool RKVkBridge::viewRequest(U32, U32, const CullParams&) { return false; }
+std::shared_ptr<const RKVkBridge::ViewSet> RKVkBridge::viewSetRead(U32) { return nullptr; }
+void RKVkBridge::viewSetPublish(std::shared_ptr<const ViewSet>) {}
+void RKVkBridge::shadowPackets(const ShadowPacketsHeader&, const void*, size_t) {}
+bool RKVkBridge::paletteArenaAcquire(U32, PaletteArena&) { return false; }
+void RKVkBridge::paletteArenaRegister(U32, F32*, U64, U32) {}
+void RKVkBridge::paletteArenaClear() {}
+bool RKVkBridge::paletteArenaInfo(U32, PaletteArena&) { return false; }
+void RKVkBridge::paletteArenaSent(U32, U64) {}
+void RKVkBridge::paletteArenaFree(U64) {}
+void RKVkBridge::upscale(const UpscaleArgs&) {}
+U32 RKVkBridge::rtShadowMode() { return 0; }
+bool RKVkBridge::rtLoadingGates() { return false; }
+S32 RKVkBridge::rtDebugView() { return 0; }
+S32 RKVkBridge::rtWaterReflections() { return 0; }
+S32 RKVkBridge::rtHitQuality() { return -1; }
+S32 RKVkBridge::rtHitRays() { return -1; }
+S32 RKVkBridge::rtGlossyReflections() { return 0; }
+bool RKVkBridge::rtMaterialsAvailable() { return false; }
+bool RKVkBridge::rtBodyRename() { return false; }
+U32 RKVkBridge::rtSkinPeriod(float) { return 1; }
+void RKVkBridge::rtScene(const RtSceneArgs&) {}
+void RKVkBridge::presentFrame() {}
+long long RKVkBridge::lastPresentTicks() { return 0; }
+void RKVkBridge::shutdown() {}
+void RKVkBridge::setBindlessPersistent(bool) {}
+void RKVkBridge::stopAsync() {}
+void RKVkBridge::describeTextures(const std::vector<U32>&, const std::vector<std::string>&, const std::vector<U64>&, const std::vector<std::vector<U64>>&, bool) {}
 
 #else // LL_VULKAN
 
@@ -103,9 +103,9 @@ void LLVkBridge::describeTextures(const std::vector<U32>&, const std::vector<std
 #include <mutex>
 #include <unordered_map>
 
-namespace LLVkWorker { extern bool gActive; extern LLVkBridge::Mutex gMutex; void after_frame(); void before_end_frame(); double take_hook_ms(); std::string resource_summary(); }
+namespace RKVkWorker { extern bool gActive; extern RKVkBridge::Mutex gMutex; void after_frame(); void before_end_frame(); double take_hook_ms(); std::string resource_summary(); }
 
-namespace LLVkBridge
+namespace RKVkBridge
 {
 long long gPhaseTicks[PH_COUNT] = {};
 bool gPhaseTiming = false;
@@ -150,14 +150,14 @@ struct MirrorState
     HWND mWindow = nullptr;         // the viewer's main window: Vulkan presents into it
     volatile bool mResized = false;
 
-    LLVk::Swapchain mSwapchain;
-    LLVk::Image mBackbuffer;
-    LLVk::Image mDepth;
+    RKVk::Swapchain mSwapchain;
+    RKVk::Image mBackbuffer;
+    RKVk::Image mDepth;
     U32 mBackWidth = 0;
     U32 mBackHeight = 0;
 
     U32 mImageIndex = 0;
-    LLVk::Image mTarget;            // wrapper of the acquired swapchain image for this frame
+    RKVk::Image mTarget;            // wrapper of the acquired swapchain image for this frame
     U64 mFrames = 0;
     U64 mSkipped = 0;
     U64 mPresentFailed = 0;
@@ -180,7 +180,7 @@ bool create_window()
 
 void destroy_backbuffer()
 {
-    LLVk::Context& ctx = LLVk::Context::instance();
+    RKVk::Context& ctx = RKVk::Context::instance();
     ctx.destroyImage(sMirror.mBackbuffer);
     ctx.destroyImage(sMirror.mDepth);
     sMirror.mBackWidth = sMirror.mBackHeight = 0;
@@ -188,15 +188,15 @@ void destroy_backbuffer()
 
 bool create_backbuffer(U32 width, U32 height)
 {
-    LLVk::Context& ctx = LLVk::Context::instance();
-    LLVk::Renderer& renderer = LLVk::Renderer::instance();
+    RKVk::Context& ctx = RKVk::Context::instance();
+    RKVk::Renderer& renderer = RKVk::Renderer::instance();
     destroy_backbuffer();
 
-    LLVk::TextureDesc color;
+    RKVk::TextureDesc color;
     color.mWidth = width;
     color.mHeight = height;
     color.mUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    LLVk::TextureDesc depth;
+    RKVk::TextureDesc depth;
     depth.mWidth = width;
     depth.mHeight = height;
     depth.mFormat = VK_FORMAT_D32_SFLOAT;
@@ -216,53 +216,53 @@ bool create_backbuffer(U32 width, U32 height)
 
 } // anonymous namespace
 
-void LLVkBridge::setPresentPreference(S32 mode, bool vsync_on)
+void RKVkBridge::setPresentPreference(S32 mode, bool vsync_on)
 {
-    LLVk::setPresentPreference((int)mode, vsync_on);
+    RKVk::setPresentPreference((int)mode, vsync_on);
 }
 
-LLVkBridge::Mutex& LLVkBridge::lock()
+RKVkBridge::Mutex& RKVkBridge::lock()
 {
-    return LLVkWorker::gMutex;
+    return RKVkWorker::gMutex;
 }
 
-void LLVkBridge::setSymbolizer(std::string (*fn)(const void*))
+void RKVkBridge::setSymbolizer(std::string (*fn)(const void*))
 {
-    LLVkAsync::setSymbolizer(fn);
+    RKVkAsync::setSymbolizer(fn);
 }
 
-bool LLVkBridge::isReady()
+bool RKVkBridge::isReady()
 {
     return sMirror.mReady;
 }
 
-bool LLVkBridge::readbackAffordable()
+bool RKVkBridge::readbackAffordable()
 {
-    return LLVkTex::readbackAffordable();
+    return RKVkTex::readbackAffordable();
 }
 
-bool LLVkBridge::videoMemory(U64& usage_bytes, U64& budget_bytes)
+bool RKVkBridge::videoMemory(U64& usage_bytes, U64& budget_bytes)
 {
-    return sMirror.mReady && !sMirror.mFailed && LLVk::Context::instance().videoMemory(usage_bytes, budget_bytes);
+    return sMirror.mReady && !sMirror.mFailed && RKVk::Context::instance().videoMemory(usage_bytes, budget_bytes);
 }
 
-bool LLVkBridge::hostMemory(U64& usage_bytes, U64& allocated_by_us)
+bool RKVkBridge::hostMemory(U64& usage_bytes, U64& allocated_by_us)
 {
-    return sMirror.mReady && !sMirror.mFailed && LLVk::Context::instance().hostMemory(usage_bytes, allocated_by_us);
+    return sMirror.mReady && !sMirror.mFailed && RKVk::Context::instance().hostMemory(usage_bytes, allocated_by_us);
 }
 
-std::string LLVkBridge::accelCensus()
+std::string RKVkBridge::accelCensus()
 {
-    return sMirror.mReady && !sMirror.mFailed ? LLVk::Context::instance().arenaAccelCensus() : std::string();
+    return sMirror.mReady && !sMirror.mFailed ? RKVk::Context::instance().arenaAccelCensus() : std::string();
 }
 
-bool LLVkBridge::memoryByConsumer(MemoryByConsumer& out)
+bool RKVkBridge::memoryByConsumer(MemoryByConsumer& out)
 {
     if (!sMirror.mReady || sMirror.mFailed)
     {
         return false;
     }
-    const LLVk::ArenaStats s = LLVk::Context::instance().arenaStats();
+    const RKVk::ArenaStats s = RKVk::Context::instance().arenaStats();
     out.mBlocks = s.mBlocks;
     out.mHostBlocks = s.mHostBlocks;
     out.mAccelBlocks = s.mAccelBlocks;
@@ -274,37 +274,37 @@ bool LLVkBridge::memoryByConsumer(MemoryByConsumer& out)
     out.mAccelBytes = s.mAccelBlockBytes;
     out.mAccelUsed = s.mAccelUsedBytes;
     out.mAccelPooledBytes = s.mAccelPooledBytes;
-    out.mRtStructureBytes = LLVk::Rt::structureBytes();
+    out.mRtStructureBytes = RKVk::Rt::structureBytes();
     return true;
 }
 
-LLVk::Image* LLVkBridge::backbufferColor()
+RKVk::Image* RKVkBridge::backbufferColor()
 {
     return (sMirror.mReady && sMirror.mBackbuffer.valid()) ? &sMirror.mBackbuffer : nullptr;
 }
 
-LLVk::Image* LLVkBridge::backbufferDepth()
+RKVk::Image* RKVkBridge::backbufferDepth()
 {
     return (sMirror.mReady && sMirror.mDepth.valid()) ? &sMirror.mDepth : nullptr;
 }
 
-bool LLVkBridge::inFrame()
+bool RKVkBridge::inFrame()
 {
     return sMirror.mReady && sMirror.mInFrame;
 }
 
-void LLVkBridge::setMainWindow(void* hwnd)
+void RKVkBridge::setMainWindow(void* hwnd)
 {
     sMainWindowHandle = hwnd;
 }
 
-bool LLVkBridge::describeDevice(DeviceInfo& out)
+bool RKVkBridge::describeDevice(DeviceInfo& out)
 {
     if (!ensureReady())
     {
         return false;
     }
-    const LLVk::Capabilities& caps = LLVk::Context::instance().getCaps();
+    const RKVk::Capabilities& caps = RKVk::Context::instance().getCaps();
     std::string& vendor = out.mVendor;
     std::string& renderer = out.mRenderer;
     std::string& version = out.mVersion;
@@ -332,7 +332,7 @@ bool LLVkBridge::describeDevice(DeviceInfo& out)
         snprintf(buf, sizeof(buf), "4.6.0 Vulkan %u.%u", VK_API_VERSION_MAJOR(caps.mApiVersion), VK_API_VERSION_MINOR(caps.mApiVersion));
     }
     version = buf;
-    out.mVramMb = (U32)(LLVk::Context::instance().deviceLocalBytes() / (1024 * 1024));
+    out.mVramMb = (U32)(RKVk::Context::instance().deviceLocalBytes() / (1024 * 1024));
 
     // limits: what the GL queries used to be answered with (see emulate_limit in rkvkworker.cpp, which reads the same capabilities)
     out.mMaxTextureSize = (S32)caps.mMaxImageDim2D;
@@ -353,13 +353,13 @@ bool LLVkBridge::describeDevice(DeviceInfo& out)
     out.mRayTracingPipeline = caps.mRt.mPipeline;
     out.mRayTracingUsable = caps.mRt.mUsable;
     out.mRayTracingEnabled = caps.mRt.mEnabled;
-    out.mNeuralRender = LLVkUpscale::ready() && LLVkDlssNr::available();
+    out.mNeuralRender = RKVkUpscale::ready() && RKVkDlssNr::available();
     return true;
 }
 
 static void (*sStartupFailureHandler)() = nullptr;
 
-void LLVkBridge::setStartupFailureHandler(void (*handler)())
+void RKVkBridge::setStartupFailureHandler(void (*handler)())
 {
     sStartupFailureHandler = handler;
 }
@@ -374,15 +374,15 @@ static std::string startup_failure_text(const std::string& detail)
         "If your card is that recent, please update the graphics driver and start again. The same details are in the log file.";
 }
 
-std::string LLVkBridge::startupFailureMessage()
+std::string RKVkBridge::startupFailureMessage()
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
     return sMirror.mFailureMessage;
 }
 
-bool LLVkBridge::ensureReady()
+bool RKVkBridge::ensureReady()
 {
-    std::unique_lock<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    std::unique_lock<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
     if (sMirror.mReady)
     {
         return true;
@@ -392,8 +392,8 @@ bool LLVkBridge::ensureReady()
         return false;
     }
 
-    LLVk::Context& ctx = LLVk::Context::instance();
-    if (!create_window() || !ctx.init(sMirror.mWindow) || !LLVk::Renderer::instance().init()
+    RKVk::Context& ctx = RKVk::Context::instance();
+    if (!create_window() || !ctx.init(sMirror.mWindow) || !RKVk::Renderer::instance().init()
         || !sMirror.mSwapchain.create(ctx.getSurface(), sMirror.mWindow))
     {
         LL_WARNS("VkMirror") << "Vulkan initialisation failed: there is no other renderer" << LL_ENDL;
@@ -421,33 +421,33 @@ bool LLVkBridge::ensureReady()
         return false;
     }
     sMirror.mReady = true;
-    LLVkWorker::gActive = true;
+    RKVkWorker::gActive = true;
     LL_INFOS("VkMirror") << "Vulkan mirror ready" << LL_ENDL;
     return true;
 }
 
-void LLVkBridge::describeTextures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, const std::vector<std::vector<U64>>& level_hashes, bool quiet)
+void RKVkBridge::describeTextures(const std::vector<U32>& names, const std::vector<std::string>& labels, const std::vector<U64>& finest, const std::vector<std::vector<U64>>& level_hashes, bool quiet)
 {
-    LLVkAsync::postCall([names, labels, finest, level_hashes, quiet]() { LLVkWorker::describe_textures(names, labels, finest, level_hashes, quiet); });
+    RKVkAsync::postCall([names, labels, finest, level_hashes, quiet]() { RKVkWorker::describe_textures(names, labels, finest, level_hashes, quiet); });
 }
 
-void LLVkBridge::stopAsync()
+void RKVkBridge::stopAsync()
 {
-    LLVkAsync::stop();
+    RKVkAsync::stop();
     // Renderer::shutdown() is not reached on the normal exit path: stop the pipeline build threads and write the pipeline cache and the variant list here
-    LLVk::Program::stopPipelineThreads();
-    if (LLVk::Renderer::instance().isReady())
+    RKVk::Program::stopPipelineThreads();
+    if (RKVk::Renderer::instance().isReady())
     {
-        LLVk::Renderer::instance().savePipelineCache();
+        RKVk::Renderer::instance().savePipelineCache();
     }
 }
 
-void LLVkBridge::shutdown()
+void RKVkBridge::shutdown()
 {
-    LLVkAsync::stop();
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    LLVkWorker::gActive = false;
-    LLVk::Context& ctx = LLVk::Context::instance();
+    RKVkAsync::stop();
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+    RKVkWorker::gActive = false;
+    RKVk::Context& ctx = RKVk::Context::instance();
     if (ctx.isReady())
     {
         ctx.waitIdle();
@@ -460,7 +460,7 @@ void LLVkBridge::shutdown()
     sMirror.mReady = false;
     destroy_backbuffer();
     sMirror.mSwapchain.destroy();
-    LLVk::Renderer::instance().shutdown();
+    RKVk::Renderer::instance().shutdown();
     ctx.shutdown();
     if (sMirror.mWindow)
     {
@@ -494,11 +494,11 @@ void begin_stand_in_frame(const char* why)
 }
 }
 
-void LLVkBridge::beginFrameImpl(S32 width, S32 height)
+void RKVkBridge::beginFrameImpl(S32 width, S32 height)
 {
     gMainThreadId = __readgsdword(0x48);
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    if (LLVk::gDeviceLost && !sMirror.mFailed)
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+    if (RKVk::gDeviceLost && !sMirror.mFailed)
     {
         // <FS> there is no OpenGL to fall back to: carrying on would leave a blank window. Stop with a message the crash report carries
         LL_ERRS("VkMirror") << "The graphics device was lost (VK_ERROR_DEVICE_LOST): the GPU or its driver stopped answering. The viewer cannot continue; please restart it. "
@@ -527,16 +527,16 @@ void LLVkBridge::beginFrameImpl(S32 width, S32 height)
     {
         // presenting into the main window: nobody tells the swapchain when it is resized
         U32 client_w = 0, client_h = 0;
-        LLVk::windowClientSize(sMirror.mWindow, client_w, client_h);
-        const LLVk::Swapchain& swap = sMirror.mSwapchain;
+        RKVk::windowClientSize(sMirror.mWindow, client_w, client_h);
+        const RKVk::Swapchain& swap = sMirror.mSwapchain;
         if (swap.isValid() ? (client_w != swap.getExtent().width || client_h != swap.getExtent().height) : (client_w > 0 && client_h > 0))
         {
             sMirror.mResized = true;
         }
     }
-    LLVk::Context& ctx = LLVk::Context::instance();
-    LLVk::Renderer& renderer = LLVk::Renderer::instance();
-    LLVk::Swapchain& sc = sMirror.mSwapchain;
+    RKVk::Context& ctx = RKVk::Context::instance();
+    RKVk::Renderer& renderer = RKVk::Renderer::instance();
+    RKVk::Swapchain& sc = sMirror.mSwapchain;
 
     if (sMirror.mResized || sc.needsRecreate() || !sc.isValid())
     {
@@ -601,14 +601,14 @@ void LLVkBridge::beginFrameImpl(S32 width, S32 height)
     sMirror.mImageIndex = image_index;
 
     renderer.beginFrame(cmd, ctx.getFrameSlot());
-    LLVk::Image* colors[1] = { &sMirror.mBackbuffer };
+    RKVk::Image* colors[1] = { &sMirror.mBackbuffer };
     renderer.setRenderTarget(colors, 1, &sMirror.mDepth);
     sMirror.mInFrame = true;
 }
 
-void LLVkBridge::holdFrameImpl(bool hold)
+void RKVkBridge::holdFrameImpl(bool hold)
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
     sMirror.mHold = hold;
 }
 
@@ -617,8 +617,8 @@ namespace
 // opens a frame that has no swapchain image: the work the viewer does after the present (probe updates, snapshots) is recorded into it
 bool begin_offscreen_frame()
 {
-    LLVk::Context& ctx = LLVk::Context::instance();
-    LLVk::Renderer& renderer = LLVk::Renderer::instance();
+    RKVk::Context& ctx = RKVk::Context::instance();
+    RKVk::Renderer& renderer = RKVk::Renderer::instance();
     ctx.setNextFrameOffscreen(true);
     VkCommandBuffer cmd = ctx.beginFrame(true);
     if (cmd == VK_NULL_HANDLE)
@@ -628,7 +628,7 @@ bool begin_offscreen_frame()
         return false;
     }
     renderer.beginFrame(cmd, ctx.getFrameSlot());
-    LLVk::Image* colors[1] = { &sMirror.mBackbuffer };
+    RKVk::Image* colors[1] = { &sMirror.mBackbuffer };
     renderer.setRenderTarget(colors, 1, &sMirror.mDepth);
     sMirror.mInFrame = true;
     sMirror.mOffscreen = true;
@@ -636,7 +636,7 @@ bool begin_offscreen_frame()
 }
 }
 
-void LLVkBridge::Mutex::lockSlow(unsigned long me)
+void RKVkBridge::Mutex::lockSlow(unsigned long me)
 {
     for (U32 attempt = 0;; ++attempt)
     {
@@ -652,23 +652,23 @@ void LLVkBridge::Mutex::lockSlow(unsigned long me)
     }
 }
 
-const char* LLVkBridge::phaseName(int id)
+const char* RKVkBridge::phaseName(int id)
 {
     return id >= 0 && id < PH_COUNT ? PHASE_NAMES[id] : "?";
 }
 
-void LLVkBridge::snapshotBoundaryImpl(S32 mode)
+void RKVkBridge::snapshotBoundaryImpl(S32 mode)
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
     if (mode <= 0 || !sMirror.mReady || !sMirror.mInFrame)
     {
         return;
     }
     LL_INFOS("VkSnap") << "snapshot boundary, variant " << mode << (sMirror.mOffscreen ? " (off-screen frame)" : " (present frame)") << LL_ENDL;
-    LLVk::Context::instance().flight(LLVk::Context::FL_SNAPSHOT, (unsigned long long)mode, sMirror.mOffscreen ? 1ull : 0ull);
+    RKVk::Context::instance().flight(RKVk::Context::FL_SNAPSHOT, (unsigned long long)mode, sMirror.mOffscreen ? 1ull : 0ull);
     if (mode == 1)
     {
-        LLVk::Renderer::instance().flushAndRestart(4);
+        RKVk::Renderer::instance().flushAndRestart(4);
         return;
     }
     if (sMirror.mOffscreen)
@@ -678,7 +678,7 @@ void LLVkBridge::snapshotBoundaryImpl(S32 mode)
         endFrameImpl();             // closes the off-screen frame
         if (mode >= 3)
         {
-            LLVk::Context::instance().waitIdle();
+            RKVk::Context::instance().waitIdle();
         }
         sMirror.mHold = held;
         if (sMirror.mReady && !sMirror.mInFrame)
@@ -688,9 +688,9 @@ void LLVkBridge::snapshotBoundaryImpl(S32 mode)
     }
 }
 
-void LLVkBridge::presentFrameImpl()
+void RKVkBridge::presentFrameImpl()
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
     if (!sMirror.mReady || !sMirror.mInFrame || sMirror.mOffscreen)
     {
         return;
@@ -715,9 +715,9 @@ namespace
 // screen until the viewer happens to draw again. Recreate the swapchain at the new size and show the finished backbuffer on it now.
 bool represent_after_resize()
 {
-    LLVk::Context& ctx = LLVk::Context::instance();
-    LLVk::Swapchain& sc = sMirror.mSwapchain;
-    LLVk::Image& back = sMirror.mBackbuffer;
+    RKVk::Context& ctx = RKVk::Context::instance();
+    RKVk::Swapchain& sc = sMirror.mSwapchain;
+    RKVk::Image& back = sMirror.mBackbuffer;
     if (!back.valid() || !sc.create(ctx.getSurface(), sMirror.mWindow) || !sc.isValid())
     {
         return false;
@@ -732,7 +732,7 @@ bool represent_after_resize()
     const U32 src_w = sMirror.mBackWidth, src_h = sMirror.mBackHeight;
     ctx.immediateSubmit([&](VkCommandBuffer cmd) {
         // the backbuffer was left in TRANSFER_SRC_OPTIMAL by the frame's own present blit
-        LLVk::imageBarrier(cmd, target, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        RKVk::imageBarrier(cmd, target, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                            VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
         VkImageBlit blit = {};
         blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
@@ -740,8 +740,8 @@ bool represent_after_resize()
         blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
         blit.dstOffsets[0] = { 0, (S32)extent.height, 0 };      // the picture is stored bottom row first
         blit.dstOffsets[1] = { (S32)extent.width, 0, 1 };
-        LLVk::vkCmdBlitImage(cmd, back.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
-        LLVk::imageBarrier(cmd, target, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        RKVk::vkCmdBlitImage(cmd, back.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+        RKVk::imageBarrier(cmd, target, VK_IMAGE_ASPECT_COLOR_BIT, 1, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0);
     });
     return sc.presentNoWait(index);
@@ -764,8 +764,8 @@ struct BlinkCapture
     static constexpr U32 CELL = 8;
     struct Slot
     {
-        LLVk::Image mImage;
-        LLVk::Buffer mBuffer;
+        RKVk::Image mImage;
+        RKVk::Buffer mBuffer;
         U64 mFrame = 0;
         U64 mSeq = 0;       // the number of the capture (the frame numbers skip: the viewer closes an off-screen frame after most presented ones)
         bool mPending = false;
@@ -829,7 +829,7 @@ struct BlinkCapture
 
     void release()
     {
-        LLVk::Context& ctx = LLVk::Context::instance();
+        RKVk::Context& ctx = RKVk::Context::instance();
         for (Slot& s : mSlots)
         {
             if (s.mImage.valid()) ctx.destroyImage(s.mImage);
@@ -846,7 +846,7 @@ struct BlinkCapture
             return true;
         }
         release();
-        LLVk::Context& ctx = LLVk::Context::instance();
+        RKVk::Context& ctx = RKVk::Context::instance();
         mSrcW = src_w;
         mSrcH = src_h;
         mW = mCapW;
@@ -854,7 +854,7 @@ struct BlinkCapture
         for (Slot& s : mSlots)
         {
             if (!ctx.createImage2D(mW, mH, 1, 1, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, s.mImage)
-                || !ctx.createBuffer((VkDeviceSize)mW * mH * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, LLVk::Context::Memory::Readback, s.mBuffer))
+                || !ctx.createBuffer((VkDeviceSize)mW * mH * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, RKVk::Context::Memory::Readback, s.mBuffer))
             {
                 LL_WARNS("VkBlink") << "blink capture: could not create the capture images; off" << LL_ENDL;
                 release();
@@ -1014,7 +1014,7 @@ struct BlinkCapture
     // frames the GPU has finished are read, oldest first
     void collect()
     {
-        LLVk::Context& ctx = LLVk::Context::instance();
+        RKVk::Context& ctx = RKVk::Context::instance();
         for (;;)
         {
             Slot* best = nullptr;
@@ -1045,7 +1045,7 @@ struct BlinkCapture
     }
 
     // recorded after the blit to the swapchain: the backbuffer is in TRANSFER_SRC layout
-    void record(LLVk::Context& ctx, LLVk::Renderer& renderer, LLVk::Image& backbuffer, U32 w, U32 h)
+    void record(RKVk::Context& ctx, RKVk::Renderer& renderer, RKVk::Image& backbuffer, U32 w, U32 h)
     {
         if (!setup(w, h))
         {
@@ -1074,12 +1074,12 @@ struct BlinkCapture
         blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
         blit.dstOffsets[0] = { 0, (S32)mH, 0 };      // (rows flipped like the blit to the window: the viewer's images have row 0 at the bottom)
         blit.dstOffsets[1] = { (S32)mW, 0, 1 };
-        LLVk::vkCmdBlitImage(ctx.getCommandBuffer(), backbuffer.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot->mImage.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+        RKVk::vkCmdBlitImage(ctx.getCommandBuffer(), backbuffer.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot->mImage.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
         renderer.ensureLayout(slot->mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
         VkBufferImageCopy copy = {};
         copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
         copy.imageExtent = { mW, mH, 1 };
-        LLVk::vkCmdCopyImageToBuffer(ctx.getCommandBuffer(), slot->mImage.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot->mBuffer.mBuffer, 1, &copy);
+        RKVk::vkCmdCopyImageToBuffer(ctx.getCommandBuffer(), slot->mImage.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, slot->mBuffer.mBuffer, 1, &copy);
         slot->mFrame = ctx.getFrameNumber();
         slot->mSeq = mCaptured;
         slot->mPending = true;
@@ -1094,21 +1094,21 @@ struct BlinkCapture
 BlinkCapture sBlink;
 }
 
-void LLVkBridge::endFrameImpl()
+void RKVkBridge::endFrameImpl()
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
     if (!sMirror.mReady || !sMirror.mInFrame || sMirror.mHold)
     {
         return;
     }
     sMirror.mInFrame = false;
 
-    LLVk::Context& ctx = LLVk::Context::instance();
-    LLVk::Renderer& renderer = LLVk::Renderer::instance();
-    LLVk::Swapchain& sc = sMirror.mSwapchain;
+    RKVk::Context& ctx = RKVk::Context::instance();
+    RKVk::Renderer& renderer = RKVk::Renderer::instance();
+    RKVk::Swapchain& sc = sMirror.mSwapchain;
     const U32 index = sMirror.mImageIndex;
 
-    LLVkWorker::before_end_frame();
+    RKVkWorker::before_end_frame();
     if (sMirror.mOffscreen)
     {
         sMirror.mOffscreen = false;
@@ -1118,13 +1118,13 @@ void LLVkBridge::endFrameImpl()
         {
             // <FS> this frame took the place of a presented one: what a presented frame's end does for the worker's own upkeep runs here too (the readings and results of finished frames are taken, not left to pile up)
             sMirror.mStandIn = false;
-            LLVkWorker::after_frame();
+            RKVkWorker::after_frame();
         }
         return;
     }
 
-    LLVk::Image& target = sMirror.mTarget;
-    target = LLVk::Image();
+    RKVk::Image& target = sMirror.mTarget;
+    target = RKVk::Image();
     target.mImage = sc.getImage(index);
     target.mView = sc.getView(index);
     target.mFormat = sc.getFormat();
@@ -1143,7 +1143,7 @@ void LLVkBridge::endFrameImpl()
     blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
     blit.dstOffsets[0] = { 0, (S32)target.mExtent.height, 0 };
     blit.dstOffsets[1] = { (S32)target.mExtent.width, 0, 1 };
-    LLVk::vkCmdBlitImage(ctx.getCommandBuffer(), sMirror.mBackbuffer.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target.mImage,
+    RKVk::vkCmdBlitImage(ctx.getCommandBuffer(), sMirror.mBackbuffer.mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, target.mImage,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
     if (sBlink.enabled())
     {
@@ -1163,7 +1163,7 @@ void LLVkBridge::endFrameImpl()
         }
     }
     ++sMirror.mFrames;
-    LLVkWorker::after_frame();
+    RKVkWorker::after_frame();
 }
 
 // ---- the public frame calls: queued for the worker thread in async mode (LL_VK_ASYNC), inline otherwise ----
@@ -1172,305 +1172,305 @@ namespace
 // The worker takes over between two frames: once a frame has been closed in the usual way and the mirror is ready.
 void maybe_start_async()
 {
-    if (!LLVkAsync::gEnabled && LLVkAsync::requested() && sMirror.mReady && !sMirror.mInFrame && !sMirror.mHold)
+    if (!RKVkAsync::gEnabled && RKVkAsync::requested() && sMirror.mReady && !sMirror.mInFrame && !sMirror.mHold)
     {
-        LLVkAsync::start();
+        RKVkAsync::start();
     }
 }
 }
 
-void LLVkBridge::beginFrame(S32 width, S32 height)
+void RKVkBridge::beginFrame(S32 width, S32 height)
 {
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::frameBegin(width, height);
+        RKVkAsync::frameBegin(width, height);
         return;
     }
     beginFrameImpl(width, height);
 }
 
-void LLVkBridge::endFrame()
+void RKVkBridge::endFrame()
 {
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::frameEnd();
+        RKVkAsync::frameEnd();
         return;
     }
     endFrameImpl();
     maybe_start_async();
 }
 
-long long LLVkBridge::lastPresentTicks()
+long long RKVkBridge::lastPresentTicks()
 {
-    return LLVkAsync::lastPresentTicks();
+    return RKVkAsync::lastPresentTicks();
 }
 
-void LLVkBridge::presentFrame()
+void RKVkBridge::presentFrame()
 {
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::framePresent();
+        RKVkAsync::framePresent();
         return;
     }
     presentFrameImpl();
 }
 
-void LLVkBridge::holdFrame(bool hold)
+void RKVkBridge::holdFrame(bool hold)
 {
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::frameHold(hold);
+        RKVkAsync::frameHold(hold);
         return;
     }
     holdFrameImpl(hold);
 }
 
-void LLVkBridge::snapshotBoundary(S32 mode)
+void RKVkBridge::snapshotBoundary(S32 mode)
 {
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::snapshotBoundary(mode);
+        RKVkAsync::snapshotBoundary(mode);
         return;
     }
     snapshotBoundaryImpl(mode);
 }
 
-void LLVkBridge::setUpscaleLodBias(float bias)
+void RKVkBridge::setUpscaleLodBias(float bias)
 {
-    LLVkUpscale::setLodBias(bias);
+    RKVkUpscale::setLodBias(bias);
 }
 
-bool LLVkBridge::upscaleAvailable()
+bool RKVkBridge::upscaleAvailable()
 {
-    return sMirror.mReady && LLVkUpscale::ready();
+    return sMirror.mReady && RKVkUpscale::ready();
 }
 
-bool LLVkBridge::denoiseAvailable()
+bool RKVkBridge::denoiseAvailable()
 {
-    return sMirror.mReady && LLVkDenoise::ready();
+    return sMirror.mReady && RKVkDenoise::ready();
 }
 
-bool LLVkBridge::upscalerIsFsr()
+bool RKVkBridge::upscalerIsFsr()
 {
-    return sMirror.mReady && LLVkUpscale::backendIsFsr();
+    return sMirror.mReady && RKVkUpscale::backendIsFsr();
 }
 
-void LLVkBridge::denoiseReflections(const DenoiseArgs& args)
+void RKVkBridge::denoiseReflections(const DenoiseArgs& args)
 {
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::push(LLVkAsync::CMD_DENOISE, &args, sizeof(args));
+        RKVkAsync::push(RKVkAsync::CMD_DENOISE, &args, sizeof(args));
         return;
     }
     denoiseImpl(args);
 }
 
-void LLVkBridge::denoiseImpl(const DenoiseArgs& args)
+void RKVkBridge::denoiseImpl(const DenoiseArgs& args)
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    LLVkWorker::on_denoise_reflections(args);
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+    RKVkWorker::on_denoise_reflections(args);
 }
 
-S32 LLVkBridge::neuralRenderMode()
+S32 RKVkBridge::neuralRenderMode()
 {
-    return LLVkDlssNr::requested();
+    return RKVkDlssNr::requested();
 }
 
-bool LLVkBridge::neuralRenderAvailable()
+bool RKVkBridge::neuralRenderAvailable()
 {
-    return sMirror.mReady && LLVkDlssNr::ready();
+    return sMirror.mReady && RKVkDlssNr::ready();
 }
 
-void LLVkBridge::upscale(const UpscaleArgs& args)
+void RKVkBridge::upscale(const UpscaleArgs& args)
 {
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::push(LLVkAsync::CMD_UPSCALE, &args, sizeof(args));
+        RKVkAsync::push(RKVkAsync::CMD_UPSCALE, &args, sizeof(args));
         return;
     }
     upscaleImpl(args);
 }
 
-void LLVkBridge::upscaleImpl(const UpscaleArgs& args)
+void RKVkBridge::upscaleImpl(const UpscaleArgs& args)
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    LLVkWorker::on_upscale(args);
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+    RKVkWorker::on_upscale(args);
 }
 
-namespace LLVkWorker
+namespace RKVkWorker
 {
-    void on_shadow_packets(const LLVkBridge::ShadowPacketsHeader& header, const U8* blob);
-    void on_rt_scene(const LLVkBridge::RtSceneArgs& args);
+    void on_shadow_packets(const RKVkBridge::ShadowPacketsHeader& header, const U8* blob);
+    void on_rt_scene(const RKVkBridge::RtSceneArgs& args);
 }
 
-void LLVkBridge::pipelineBuilds(U64& pending, U64& total)
+void RKVkBridge::pipelineBuilds(U64& pending, U64& total)
 {
-    const LLVk::SyncStats& s = LLVk::gSyncStats;
+    const RKVk::SyncStats& s = RKVk::gSyncStats;
     const U64 queued = s.mPipePrewarmQueued.load(std::memory_order_relaxed) + s.mPipeMisses.load(std::memory_order_relaxed);
     const U64 done = s.mPipePrewarmDone.load(std::memory_order_relaxed) + s.mPipeBgDone.load(std::memory_order_relaxed);
     total = queued;
     pending = queued > done ? queued - done : 0;
 }
 
-U32 LLVkBridge::rtShadowMode()
+U32 RKVkBridge::rtShadowMode()
 {
     // known once the device exists (the shaders are compiled after that); the scene is built only when the device was created with ray queries
-    const LLVk::Capabilities& caps = LLVk::Context::instance().getCaps();
-    return sMirror.mReady && caps.mRt.mEnabled && caps.mRt.mUsable ? LLVk::Rt::shadowMode() : 0;
+    const RKVk::Capabilities& caps = RKVk::Context::instance().getCaps();
+    return sMirror.mReady && caps.mRt.mEnabled && caps.mRt.mUsable ? RKVk::Rt::shadowMode() : 0;
 }
 
-bool LLVkBridge::rtMaterialsAvailable()
+bool RKVkBridge::rtMaterialsAvailable()
 {
-    return rtShadowMode() != 0 && LLVk::Rt::materialsOn();
+    return rtShadowMode() != 0 && RKVk::Rt::materialsOn();
 }
 
-S32 LLVkBridge::rtGlossyReflections()
+S32 RKVkBridge::rtGlossyReflections()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::glossyReflections() : 0;
+    return rtShadowMode() != 0 ? RKVk::Rt::glossyReflections() : 0;
 }
 
-S32 LLVkBridge::rtHitQuality()
+S32 RKVkBridge::rtHitQuality()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::hitQuality() : -1;
+    return rtShadowMode() != 0 ? RKVk::Rt::hitQuality() : -1;
 }
 
-S32 LLVkBridge::rtSnapTest()
+S32 RKVkBridge::rtSnapTest()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::snapTest() : 0;
+    return rtShadowMode() != 0 ? RKVk::Rt::snapTest() : 0;
 }
 
-S32 LLVkBridge::rtSunSamples()
+S32 RKVkBridge::rtSunSamples()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::sunSamples() : 0;
+    return rtShadowMode() != 0 ? RKVk::Rt::sunSamples() : 0;
 }
 
-S32 LLVkBridge::rtTexAnim()
+S32 RKVkBridge::rtTexAnim()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::texAnim() : -1;
+    return rtShadowMode() != 0 ? RKVk::Rt::texAnim() : -1;
 }
 
-S32 LLVkBridge::rtSunNoise()
+S32 RKVkBridge::rtSunNoise()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::sunNoise() : 1;
+    return rtShadowMode() != 0 ? RKVk::Rt::sunNoise() : 1;
 }
 
-S32 LLVkBridge::rtEarly()
+S32 RKVkBridge::rtEarly()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::rtEarly() : -1;
+    return rtShadowMode() != 0 ? RKVk::Rt::rtEarly() : -1;
 }
 
-S32 LLVkBridge::nativeKey(const char* key, S32 def)
+S32 RKVkBridge::nativeKey(const char* key, S32 def)
 {
-    return LLVk::nativeKey(key, def);
+    return RKVk::nativeKey(key, def);
 }
 
-void LLVkBridge::nativeGlobalDefines(const std::vector<std::pair<std::string, std::string>>& defines)
+void RKVkBridge::nativeGlobalDefines(const std::vector<std::pair<std::string, std::string>>& defines)
 {
-    LLVk::nativeSetGlobalDefines(defines);
+    RKVk::nativeSetGlobalDefines(defines);
 }
 
-void LLVkBridge::nativeRtSession(bool on)
+void RKVkBridge::nativeRtSession(bool on)
 {
-    LLVk::nativeSetRtSession(on);
+    RKVk::nativeSetRtSession(on);
 }
 
-S32 LLVkBridge::rtSunFilter()
+S32 RKVkBridge::rtSunFilter()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::sunFilter() : 0;
+    return rtShadowMode() != 0 ? RKVk::Rt::sunFilter() : 0;
 }
 
-S32 LLVkBridge::rtSunPenMax()
+S32 RKVkBridge::rtSunPenMax()
 {
-    return LLVk::Rt::sunPenMax();
+    return RKVk::Rt::sunPenMax();
 }
 
-S32 LLVkBridge::rtSunPenLod()
+S32 RKVkBridge::rtSunPenLod()
 {
-    return LLVk::Rt::sunPenLod();
+    return RKVk::Rt::sunPenLod();
 }
 
-S32 LLVkBridge::rtSunStrength()
+S32 RKVkBridge::rtSunStrength()
 {
-    return LLVk::Rt::sunStrength();
+    return RKVk::Rt::sunStrength();
 }
 
-S32 LLVkBridge::rtSunSelfShadow()
+S32 RKVkBridge::rtSunSelfShadow()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::sunSelfShadow() : 1;
+    return rtShadowMode() != 0 ? RKVk::Rt::sunSelfShadow() : 1;
 }
 
-S32 LLVkBridge::rtSunPenRays()
+S32 RKVkBridge::rtSunPenRays()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::sunPenRays() : 0;
+    return rtShadowMode() != 0 ? RKVk::Rt::sunPenRays() : 0;
 }
 
-S32 LLVkBridge::rtHitRays()
+S32 RKVkBridge::rtHitRays()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::hitRays() : -1;
+    return rtShadowMode() != 0 ? RKVk::Rt::hitRays() : -1;
 }
 
-S32 LLVkBridge::rtWaterReflections()
+S32 RKVkBridge::rtWaterReflections()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::waterReflections() : 0;
+    return rtShadowMode() != 0 ? RKVk::Rt::waterReflections() : 0;
 }
 
-S32 LLVkBridge::rtDebugView()
+S32 RKVkBridge::rtDebugView()
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::debugView() : 0;
+    return rtShadowMode() != 0 ? RKVk::Rt::debugView() : 0;
 }
 
-bool LLVkBridge::rtLoadingGates()
+bool RKVkBridge::rtLoadingGates()
 {
-    return rtShadowMode() != 0 && LLVk::Rt::loadingGates();
+    return rtShadowMode() != 0 && RKVk::Rt::loadingGates();
 }
 
-bool LLVkBridge::rtBodyRename()
+bool RKVkBridge::rtBodyRename()
 {
-    return rtShadowMode() != 0 && LLVk::Rt::bodyRename();
+    return rtShadowMode() != 0 && RKVk::Rt::bodyRename();
 }
 
-U32 LLVkBridge::rtSkinPeriod(float distance)
+U32 RKVkBridge::rtSkinPeriod(float distance)
 {
-    return rtShadowMode() != 0 ? LLVk::Rt::skinPeriod(distance) : 1u;
+    return rtShadowMode() != 0 ? RKVk::Rt::skinPeriod(distance) : 1u;
 }
 
-void LLVkBridge::rtScene(const RtSceneArgs& args)
+void RKVkBridge::rtScene(const RtSceneArgs& args)
 {
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::push(LLVkAsync::CMD_RT_SCENE, &args, sizeof(args));
+        RKVkAsync::push(RKVkAsync::CMD_RT_SCENE, &args, sizeof(args));
         return;
     }
     rtSceneImpl(args);
 }
 
-void LLVkBridge::rtSceneImpl(const RtSceneArgs& args)
+void RKVkBridge::rtSceneImpl(const RtSceneArgs& args)
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    LLVkWorker::on_rt_scene(args);
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+    RKVkWorker::on_rt_scene(args);
 }
 
-bool LLVkBridge::shadowPacketsAvailable()
+bool RKVkBridge::shadowPacketsAvailable()
 {
-    return sMirror.mReady && LLVk::Context::instance().getCaps().mBufferDeviceAddress;
+    return sMirror.mReady && RKVk::Context::instance().getCaps().mBufferDeviceAddress;
 }
 
-bool LLVkBridge::shadowAlphaPacketsAvailable()
+bool RKVkBridge::shadowAlphaPacketsAvailable()
 {
-    return shadowPacketsAvailable() && LLVk::Context::instance().getCaps().mBindlessSlots != 0;
+    return shadowPacketsAvailable() && RKVk::Context::instance().getCaps().mBindlessSlots != 0;
 }
 
-bool LLVkBridge::sceneGeoAvailable()
+bool RKVkBridge::sceneGeoAvailable()
 {
-    const auto& caps = LLVk::Context::instance().getCaps();
+    const auto& caps = RKVk::Context::instance().getCaps();
     return shadowAlphaPacketsAvailable() && caps.mMultiDrawIndirect && caps.mDrawIndirectFirstInstance;
 }
 
-void LLVkBridge::shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes)
+void RKVkBridge::shadowPackets(const ShadowPacketsHeader& header, const void* blob, size_t blob_bytes)
 {
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::pushData(LLVkAsync::CMD_SHADOW_PACKETS, &header, sizeof(header), blob, blob_bytes);
+        RKVkAsync::pushData(RKVkAsync::CMD_SHADOW_PACKETS, &header, sizeof(header), blob, blob_bytes);
         return;
     }
     shadowPacketsImpl(header, (const U8*)blob);
@@ -1492,7 +1492,7 @@ PaletteArenaSlot gPaletteArena[kPaletteArenasMax];
 std::atomic<U32> gPaletteArenaCount{ 0 };
 }
 
-void LLVkBridge::paletteArenaRegister(U32 index, F32* ptr, U64 address, U32 floats)
+void RKVkBridge::paletteArenaRegister(U32 index, F32* ptr, U64 address, U32 floats)
 {
     if (index >= kPaletteArenasMax || !ptr || !address)
     {
@@ -1510,7 +1510,7 @@ void LLVkBridge::paletteArenaRegister(U32 index, F32* ptr, U64 address, U32 floa
     }
 }
 
-void LLVkBridge::paletteArenaClear()
+void RKVkBridge::paletteArenaClear()
 {
     gPaletteArenaCount.store(0, std::memory_order_release);
     for (PaletteArenaSlot& s : gPaletteArena)
@@ -1519,7 +1519,7 @@ void LLVkBridge::paletteArenaClear()
     }
 }
 
-bool LLVkBridge::paletteArenaAcquire(U32 frame, PaletteArena& out)
+bool RKVkBridge::paletteArenaAcquire(U32 frame, PaletteArena& out)
 {
     const U32 count = gPaletteArenaCount.load(std::memory_order_acquire);
     if (!count)
@@ -1566,7 +1566,7 @@ bool LLVkBridge::paletteArenaAcquire(U32 frame, PaletteArena& out)
     return true;
 }
 
-bool LLVkBridge::paletteArenaInfo(U32 index, PaletteArena& out)
+bool RKVkBridge::paletteArenaInfo(U32 index, PaletteArena& out)
 {
     if (index >= kPaletteArenasMax)
     {
@@ -1580,7 +1580,7 @@ bool LLVkBridge::paletteArenaInfo(U32 index, PaletteArena& out)
     return out.mPtr && out.mAddress;
 }
 
-void LLVkBridge::paletteArenaSent(U32 index, U64 free_at_renderer_frame)
+void RKVkBridge::paletteArenaSent(U32 index, U64 free_at_renderer_frame)
 {
     if (index >= kPaletteArenasMax)
     {
@@ -1593,7 +1593,7 @@ void LLVkBridge::paletteArenaSent(U32 index, U64 free_at_renderer_frame)
     }
 }
 
-void LLVkBridge::paletteArenaFree(U64 renderer_frame)
+void RKVkBridge::paletteArenaFree(U64 renderer_frame)
 {
     const U32 count = gPaletteArenaCount.load(std::memory_order_acquire);
     for (U32 i = 0; i < count; ++i)
@@ -1618,12 +1618,12 @@ std::atomic<U32> gHizDone{ 0 };
 U32 gHizSerial = 0;         // main thread only
 }
 
-bool LLVkBridge::hizAvailable()
+bool RKVkBridge::hizAvailable()
 {
-    return LLVkBridge::sceneGeoAvailable();
+    return RKVkBridge::sceneGeoAvailable();
 }
 
-U32 LLVkBridge::hizSend(const HizBox* boxes, U32 count, const F32* view_proj)
+U32 RKVkBridge::hizSend(const HizBox* boxes, U32 count, const F32* view_proj)
 {
     if (!count || count > 32768 || !hizAvailable())
     {
@@ -1645,7 +1645,7 @@ U32 LLVkBridge::hizSend(const HizBox* boxes, U32 count, const F32* view_proj)
     return serial;
 }
 
-S32 LLVkBridge::hizRead(U32 serial, U32 count, U32* out)
+S32 RKVkBridge::hizRead(U32 serial, U32 count, U32* out)
 {
     const U32* results = gHizResults.load(std::memory_order_acquire);
     const U32 capacity = gHizCapacity.load(std::memory_order_relaxed);
@@ -1665,7 +1665,7 @@ S32 LLVkBridge::hizRead(U32 serial, U32 count, U32* out)
     return published > serial ? -1 : 0;
 }
 
-void LLVkBridge::hizDone(U32 serial)
+void RKVkBridge::hizDone(U32 serial)
 {
     U32 cur = gHizDone.load(std::memory_order_relaxed);
     while (serial > cur && !gHizDone.compare_exchange_weak(cur, serial, std::memory_order_release))
@@ -1673,13 +1673,13 @@ void LLVkBridge::hizDone(U32 serial)
     }
 }
 
-void LLVkBridge::hizSetResults(const U32* results, U32 capacity)
+void RKVkBridge::hizSetResults(const U32* results, U32 capacity)
 {
     gHizCapacity.store(capacity, std::memory_order_relaxed);
     gHizResults.store(results, std::memory_order_release);
 }
 
-void LLVkBridge::hizPublish(U32 slot, U32 serial)
+void RKVkBridge::hizPublish(U32 slot, U32 serial)
 {
     gHizPublished[slot % 8].store(serial, std::memory_order_release);
 }
@@ -1689,7 +1689,7 @@ namespace
 U32 gCullSerial = 0;        // main thread only
 }
 
-U32 LLVkBridge::cullSend(const CullParams& params, const U32* slots, const CullRow* rows, const CullMapRow* map_rows, U32 count, U32 table_size, bool reset)
+U32 RKVkBridge::cullSend(const CullParams& params, const U32* slots, const CullRow* rows, const CullMapRow* map_rows, U32 count, U32 table_size, bool reset)
 {
     if (!table_size || !hizAvailable() || count > table_size)
     {
@@ -1723,7 +1723,7 @@ std::vector<U32> gLodChange;
 U32 gLodFrame = 0, gLodTable = 0;
 }
 
-void LLVkBridge::lodListPublish(U32 frame, U32 table_size, const U32* change_bits)
+void RKVkBridge::lodListPublish(U32 frame, U32 table_size, const U32* change_bits)
 {
     std::lock_guard<std::mutex> lock(gLodMutex);
     gLodChange.assign(change_bits, change_bits + (table_size + 31) / 32);
@@ -1731,7 +1731,7 @@ void LLVkBridge::lodListPublish(U32 frame, U32 table_size, const U32* change_bit
     gLodTable = table_size;
 }
 
-U32 LLVkBridge::lodListRead(U32 newer_than, U32& frame, U32* change_bits, U32 capacity_rows)
+U32 RKVkBridge::lodListRead(U32 newer_than, U32& frame, U32* change_bits, U32 capacity_rows)
 {
     std::lock_guard<std::mutex> lock(gLodMutex);
     if (!gLodTable || gLodFrame <= newer_than || gLodTable > capacity_rows)
@@ -1749,16 +1749,16 @@ U32 LLVkBridge::lodListRead(U32 newer_than, U32& frame, U32* change_bits, U32 ca
 namespace
 {
 std::mutex gConsMutex;
-std::shared_ptr<const LLVkBridge::ConsumerList> gCons;
+std::shared_ptr<const RKVkBridge::ConsumerList> gCons;
 }
 
-void LLVkBridge::consumerListPublish(std::shared_ptr<const ConsumerList> list)
+void RKVkBridge::consumerListPublish(std::shared_ptr<const ConsumerList> list)
 {
     std::lock_guard<std::mutex> lock(gConsMutex);
     gCons = std::move(list);
 }
 
-std::shared_ptr<const LLVkBridge::ConsumerList> LLVkBridge::consumerListRead()
+std::shared_ptr<const RKVkBridge::ConsumerList> RKVkBridge::consumerListRead()
 {
     std::lock_guard<std::mutex> lock(gConsMutex);
     return gCons;
@@ -1767,10 +1767,10 @@ std::shared_ptr<const LLVkBridge::ConsumerList> LLVkBridge::consumerListRead()
 namespace
 {
 std::mutex gViewSetMutex;
-std::unordered_map<U32, std::shared_ptr<const LLVkBridge::ViewSet>> gViewSets;       // the newest answer for each id (a few dozen ids at most: the probe faces)
+std::unordered_map<U32, std::shared_ptr<const RKVkBridge::ViewSet>> gViewSets;       // the newest answer for each id (a few dozen ids at most: the probe faces)
 }
 
-bool LLVkBridge::viewRequest(U32 id, U32 frame, const CullParams& params)
+bool RKVkBridge::viewRequest(U32 id, U32 frame, const CullParams& params)
 {
     if (!id || !hizAvailable())
     {
@@ -1784,14 +1784,14 @@ bool LLVkBridge::viewRequest(U32 id, U32 frame, const CullParams& params)
     return true;
 }
 
-std::shared_ptr<const LLVkBridge::ViewSet> LLVkBridge::viewSetRead(U32 id)
+std::shared_ptr<const RKVkBridge::ViewSet> RKVkBridge::viewSetRead(U32 id)
 {
     std::lock_guard<std::mutex> lock(gViewSetMutex);
     const auto it = gViewSets.find(id);
     return it == gViewSets.end() ? nullptr : it->second;
 }
 
-void LLVkBridge::viewSetPublish(std::shared_ptr<const ViewSet> set)
+void RKVkBridge::viewSetPublish(std::shared_ptr<const ViewSet> set)
 {
     std::lock_guard<std::mutex> lock(gViewSetMutex);
     if (gViewSets.size() > 256)
@@ -1801,10 +1801,10 @@ void LLVkBridge::viewSetPublish(std::shared_ptr<const ViewSet> set)
     gViewSets[set->mId] = std::move(set);
 }
 
-void LLVkBridge::shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob)
+void RKVkBridge::shadowPacketsImpl(const ShadowPacketsHeader& header, const U8* blob)
 {
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    LLVkWorker::on_shadow_packets(header, blob);
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+    RKVkWorker::on_shadow_packets(header, blob);
 }
 
 #endif // LL_VULKAN

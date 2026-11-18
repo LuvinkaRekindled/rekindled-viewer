@@ -118,12 +118,12 @@ namespace
             }
             else
             {
-                img = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+                img = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
             }
         }
         if (img)
         {
-            img->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
+            img->setBoostLevel(RKBaseTexture::BOOST_PREVIEW);
             img->forceToSaveRawImage(0);
         }
     };
@@ -226,7 +226,7 @@ namespace {
 
 struct GLTFPreviewModel
 {
-    // <FS> K6 B4: the sphere part is a buffer range of its own (it was an LLDrawBatch drawn by LLRenderPass::pushGLTFBatch, the preview's only link to the draw info layer); draw() does what
+    // <FS> K6 B4: the sphere part is a buffer range of its own (it was an RKDrawBatch drawn by LLRenderPass::pushGLTFBatch, the preview's only link to the draw info layer); draw() does what
     // pushGLTFBatch did for it: the material's bind, the culling of a double sided material, the model matrix, the range. The part owns its buffer (the old draw info held it by handle and owned nothing:
     // the sphere is cached across frames and a buffer held by nobody was destroyed by the retire list, so the next preview died in getColorStrider).
     GLTFPreviewModel(LLVertexBuffer* buffer, const LLMatrix4& mat, U16 start, U16 end, U32 count, U32 offset)
@@ -251,7 +251,7 @@ struct GLTFPreviewModel
         {
             mMaterial->bind();
         }
-        LLRenderState::CullScope cull_face(false, mMaterial && mMaterial->mDoubleSided);
+        RKRenderState::CullScope cull_face(false, mMaterial && mMaterial->mDoubleSided);
         LLRenderPass::applyModelMatrix(&mModelMatrix);
         mBuffer->setBuffer();
         mBuffer->drawRange(LLRender::TRIANGLES, mStart, mEnd, mCount, mOffset);
@@ -409,7 +409,7 @@ PreviewSphere& get_preview_sphere(LLPointer<LLFetchedGLTFMaterial>& material, co
 }
 
 // Final, direct modifications to shader constants, just before render
-void fixup_shader_constants(LLShaderProgram& shader)
+void fixup_shader_constants(RKShaderProgram& shader)
 {
     // Sunlight intensity of 0 no matter what
     shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, 1);
@@ -466,9 +466,9 @@ bool LLGLTFPreviewTexture::render()
     gRender.setClearColor(0, 0, 0, 0);
     gRender.clearBuffers(ClearBits::Color | ClearBits::Depth);
 
-    LLRenderState::DepthScope(false);       // F3.2: an unnamed temporary (as before): it is destroyed at once and restores, so it has no lasting effect
-    LLRenderState::StencilScope stencil(false);
-    LLRenderState::ScissorScope scissor(false);
+    RKRenderState::DepthScope(false);       // F3.2: an unnamed temporary (as before): it is destroyed at once and restores, so it has no lasting effect
+    RKRenderState::StencilScope stencil(false);
+    RKRenderState::ScissorScope scissor(false);
     SetTemporarily<bool> no_dof(&LLPipeline::RenderDepthOfField, false);
     SetTemporarily<bool> no_glow(&LLPipeline::sRenderGlow, false);
     SetTemporarily<bool> no_ssr(&LLPipeline::RenderScreenSpaceReflections, false);
@@ -540,7 +540,7 @@ bool LLGLTFPreviewTexture::render()
         RenderPassScope pass(screen);
         gRender.clearBuffers(ClearBits::Color | ClearBits::Depth);
 
-        LLShaderProgram& shader = gDeferredPBRAlphaProgram;
+        RKShaderProgram& shader = gDeferredPBRAlphaProgram;
 
         gPipeline.bindDeferredShader(shader);
         fixup_shader_constants(shader);
@@ -561,7 +561,7 @@ bool LLGLTFPreviewTexture::render()
     // the depth they sample, and the depth they sample is the aux screen's own depth buffer: this renderer cannot read a depth buffer it is writing and hands the program a far plane instead, so the
     // test failed wherever the sphere had been drawn and those pixels kept the picture from before the gamma correction (stage log 2026-11-10: the sphere's centre unchanged by both copies).
     // The scope ends with the function; the final draw below sets its own depth state.
-    LLRenderState::DepthScope post_depth_off(false, false);
+    RKRenderState::DepthScope post_depth_off(false, false);
 
     gPipeline.copyScreenSpaceReflections(&screen, &gPipeline.mSceneMap);
     gPipeline.generateLuminance(&screen, &gPipeline.mLuminanceMap);
@@ -590,7 +590,7 @@ bool LLGLTFPreviewTexture::render()
     gDeferredPostNoDoFProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, mBoundTarget, true);
 
     {
-        LLRenderState::DepthScope depth_test(true, true, LLRenderState::CompareOp::Always);
+        RKRenderState::DepthScope depth_test(true, true, RKRenderState::CompareOp::Always);
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     }

@@ -33,7 +33,7 @@
 
 class LLFace;
 class LLColor4;
-class LLShaderProgram;
+class RKShaderProgram;
 
 class LLDrawPoolAlpha final: public LLRenderPass
 {
@@ -76,7 +76,7 @@ private:
     bool mFringePass = false;                           // <FS> drawing that soft part
     F32 mWaterSign = 1.f;                               // <FS> S5g: the water sign of the pass being drawn (renderPostDeferred), for the lazy priming of the pull programs
     F32 mDepthCutoff = 0.f;                             // <FS> alpha cutoff of the depth only pass of the rigged alpha, 0 outside of it
-    std::vector<LLShaderProgram*> mDepthCutoffShaders;     // <FS> the shaders that drew in it (they get the usual cutoff back)
+    std::vector<RKShaderProgram*> mDepthCutoffShaders;     // <FS> the shaders that drew in it (they get the usual cutoff back)
     // our 'normal' alpha blend function for this pass
     LLRender::eBlendFactor mColorSFactor;
     LLRender::eBlendFactor mColorDFactor;

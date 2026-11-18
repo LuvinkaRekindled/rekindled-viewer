@@ -220,19 +220,19 @@ LLManipScale::~LLManipScale()
 
 void LLManipScale::render()
 {
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bindWhite();
-    LLRenderState::DepthScope gls_depth(true);
-    LLRenderState::BlendScope gl_blend(true);
+    RKRenderState::DepthScope gls_depth(true);
+    RKRenderState::BlendScope gl_blend(true);
     LLBBox bbox = LLSelectMgr::getInstance()->getBBoxOfSelection();
 
     if( canAffectSelection() )
     {
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         if (mObjectSelection->getSelectType() == SELECT_TYPE_HUD)
         {
             F32 zoom = gAgentCamera.mHUDCurZoom;
-            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, zoom, zoom, zoom);
+            RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, zoom, zoom, zoom);
         }
 
         ////////////////////////////////////////////////////////////////////////
@@ -296,17 +296,17 @@ void LLManipScale::render()
         LLVector3 pos_agent = bbox.getPositionAgent();
         LLQuaternion rot = bbox.getRotation();
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         {
-            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos_agent.mV[VX], pos_agent.mV[VY], pos_agent.mV[VZ]);
+            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, pos_agent.mV[VX], pos_agent.mV[VY], pos_agent.mV[VZ]);
 
             F32 angle_radians, x, y, z;
             rot.getAngleAxis(&angle_radians, &x, &y, &z);
-            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
+            RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
 
             {
-                LLRenderState::PolygonOffsetScope poly_offset(true);
+                RKRenderState::PolygonOffsetScope poly_offset(true);
                 gRender.setPolygonOffset( -2.f, -2.f);
 
                 renderCorners( bbox );
@@ -320,13 +320,13 @@ void LLManipScale::render()
                 gRender.setPolygonOffset( 0.f, 0.f);
             }
         }
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
         if (mManipPart != LL_NO_PART)
         {
             renderSnapGuides(bbox);
         }
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
         renderXYZ(bbox.getExtentLocal());
     }
@@ -637,7 +637,7 @@ void LLManipScale::renderFaces( const LLBBox& bbox )
     if (mManipPart == LL_NO_PART)
     {
         gRender.color4fv( default_normal_color.mV );
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
         gRender.begin(LLRender::TRIANGLE_STRIP);
         {
             gRender.vertex3f(min.mV[VX], max.mV[VY], min.mV[VZ]);
@@ -683,7 +683,7 @@ void LLManipScale::renderFaces( const LLBBox& bbox )
     };
 
     {
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
 
         for (S32 i = 0; i < 6; i++)
         {
@@ -754,16 +754,16 @@ void LLManipScale::renderCorners( const LLBBox& bbox )
 void LLManipScale::renderBoxHandle( F32 x, F32 y, F32 z )
 {
     gRender.getTexUnit(0)->bindWhite();
-    LLRenderState::DepthScope gls_depth(false);
+    RKRenderState::DepthScope gls_depth(false);
     //LLGLDisable gls_stencil(GL_STENCIL_TEST);
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, x, y, z);
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mScaledBoxHandleSize, mScaledBoxHandleSize, mScaledBoxHandleSize);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, x, y, z);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mScaledBoxHandleSize, mScaledBoxHandleSize, mScaledBoxHandleSize);
         gBox.render();
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 
@@ -779,15 +779,15 @@ void LLManipScale::renderAxisHandle( U32 handle_index, const LLVector3& start, c
         LLVector3 delta = end - offset_start;
         LLVector3 pos = offset_start + 0.5f * delta;
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         {
-            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pos.mV[VX], pos.mV[VY], pos.mV[VZ]);
-            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mBoxHandleSize[handle_index] + llabs(delta.mV[VX]),
+            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, pos.mV[VX], pos.mV[VY], pos.mV[VZ]);
+            RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mBoxHandleSize[handle_index] + llabs(delta.mV[VX]),
                 mBoxHandleSize[handle_index] + llabs(delta.mV[VY]),
                 mBoxHandleSize[handle_index] + llabs(delta.mV[VZ]));
             gBox.render();
         }
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
     else
     {
@@ -1321,11 +1321,11 @@ void LLManipScale::renderGuidelinesPart( const LLBBox& bbox )
     guideline_end += guideline_start;
 
     {
-        LLRenderState::DepthScope gls_depth(true);
+        RKRenderState::DepthScope gls_depth(true);
         gl_line_3d( guideline_start, guideline_end, LLColor4(1.f, 1.f, 1.f, 0.5f) );
     }
     {
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
         gl_line_3d( guideline_start, guideline_end, LLColor4(1.f, 1.f, 1.f, 0.25f) );
     }
 }
@@ -1603,7 +1603,7 @@ void LLManipScale::renderSnapGuides(const LLBBox& bbox)
     }
 
     {
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
 
         F32 dist_grid_axis = llmax(0.f, (drag_point - mScaleCenter) * mScaleDir);
 

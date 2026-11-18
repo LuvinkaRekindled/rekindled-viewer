@@ -16,7 +16,7 @@
 
 #include "linden_common.h"
 
-namespace LLVkQuery
+namespace RKVkQuery
 {
     enum Kind : U32
     {
@@ -36,7 +36,7 @@ namespace LLVkQuery
     U64 result(U32 id);
 }
 
-namespace LLVkWorker
+namespace RKVkWorker
 {
     void query_begin(unsigned kind, unsigned id);
     void query_end(unsigned kind);

@@ -928,7 +928,7 @@ void LLVOAvatar::debugAvatarRezTime(std::string notification_name, std::string c
 LLVOAvatar::~LLVOAvatar()
 {
     releaseJointViews();        // <FS> stage C: the joints stop pointing into the arrays that go with this avatar (the joints are deleted after the members)
-    LLAvatarHandles::release(mRenderHandle.v.load(std::memory_order_acquire));       // <FS> C2.4d: handles of this avatar stop resolving
+    RKAvatarHandles::release(mRenderHandle.v.load(std::memory_order_acquire));       // <FS> C2.4d: handles of this avatar stop resolving
     sInstances.remove(this);
 
     if (!mFullyLoaded)
@@ -1067,7 +1067,7 @@ void LLVOAvatar::deleteLayerSetCaches(bool clearAll)
         }
         if (mBakedTextureDatas[i].mMaskTexName)
         {
-            LLImageTex::deleteTextures(1, (U32*)&(mBakedTextureDatas[i].mMaskTexName));
+            RKImageTex::deleteTextures(1, (U32*)&(mBakedTextureDatas[i].mMaskTexName));
             mBakedTextureDatas[i].mMaskTexName = 0 ;
         }
     }
@@ -1782,7 +1782,7 @@ void LLVOAvatar::calculateSpatialExtents(LLVector4a& newMin, LLVector4a& newMax)
 void render_sphere_and_line(const LLVector3& begin_pos, const LLVector3& end_pos, F32 sphere_scale, const LLVector3& occ_color, const LLVector3& visible_color)
 {
     // Unoccluded bone portions
-    LLRenderState::DepthScope normal_depth(true);
+    RKRenderState::DepthScope normal_depth(true);
 
     // Draw line segment for unoccluded joint
     gRender.diffuseColor3f(visible_color[0], visible_color[1], visible_color[2]);
@@ -1794,12 +1794,12 @@ void render_sphere_and_line(const LLVector3& begin_pos, const LLVector3& end_pos
 
 
     // Draw sphere representing joint pos
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, sphere_scale, sphere_scale, sphere_scale);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, sphere_scale, sphere_scale, sphere_scale);
     gSphere.renderGGL();
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
-    LLRenderState::DepthScope depth_under(true, false, LLRenderState::CompareOp::Greater);
+    RKRenderState::DepthScope depth_under(true, false, RKRenderState::CompareOp::Greater);
 
     // Occluded bone portions
     gRender.diffuseColor3f(occ_color[0], occ_color[1], occ_color[2]);
@@ -1810,10 +1810,10 @@ void render_sphere_and_line(const LLVector3& begin_pos, const LLVector3& end_pos
     gRender.end();
 
     // Draw sphere representing joint pos
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, sphere_scale, sphere_scale, sphere_scale);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, sphere_scale, sphere_scale, sphere_scale);
     gSphere.renderGGL();
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 //-----------------------------------------------------------------------------
@@ -1831,8 +1831,8 @@ void LLVOAvatar::renderCollisionVolumes()
 
         collision_volume.updateWorldMatrix();
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &collision_volume.getWorldMatrix().mMatrix[0][0]);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, &collision_volume.getWorldMatrix().mMatrix[0][0]);
 
         LLVector3 begin_pos(0,0,0);
         LLVector3 end_pos(collision_volume.getEnd());
@@ -1863,7 +1863,7 @@ void LLVOAvatar::renderCollisionVolumes()
         render_sphere_and_line(begin_pos, end_pos, sphere_scale, cv_color_occluded, cv_color_visible);
         render_sphere_and_line(begin_pos, end_pos, center_dot_scale, dot_color_occluded, dot_color_visible);
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 
 
@@ -1880,7 +1880,7 @@ void drawBoxOutline(const LLVector4a& pos, const LLVector4a& size);
 
 void LLVOAvatar::renderBones(const std::string &selected_joint)
 {
-    LLRenderState::BlendScope blend(true);
+    RKRenderState::BlendScope blend(true);
 
     avatar_joint_list_t::iterator iter = mSkeleton.begin();
     avatar_joint_list_t::iterator end = mSkeleton.end();
@@ -1947,12 +1947,12 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
         LLVector3 end_pos(jointp->getEnd());
 
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getWorldMatrix().mMatrix[0][0]);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, &jointp->getWorldMatrix().mMatrix[0][0]);
 
         render_sphere_and_line(begin_pos, end_pos, sphere_scale, occ_color, visible_color);
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 
 
@@ -1975,8 +1975,8 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
                 // Ignore bounding box of HUD joints
                 continue;
             }
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &joint->getWorldMatrix().mMatrix[0][0]);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, &joint->getWorldMatrix().mMatrix[0][0]);
 
             LLVector4a pos;
             LLVector4a size;
@@ -1990,7 +1990,7 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
 
             drawBoxOutline(pos, size);
 
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         }
     }
 
@@ -2040,7 +2040,7 @@ void LLVOAvatar::renderBones(const std::string &selected_joint)
 
 void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selected_joints)
 {
-    LLRenderState::BlendScope blend(true);
+    RKRenderState::BlendScope blend(true);
 
     avatar_joint_list_t::iterator iter = mSkeleton.begin();
     avatar_joint_list_t::iterator end = mSkeleton.end();
@@ -2078,8 +2078,8 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
         occ_color = SELECTED_COLOR_OCCLUDED;
         visible_color = SELECTED_COLOR_VISIBLE;
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getWorldMatrix().mMatrix[0][0]);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, &jointp->getWorldMatrix().mMatrix[0][0]);
 
         gRender.diffuseColor3f( 1.f, 0.f, 1.f );
 
@@ -2139,7 +2139,7 @@ void LLVOAvatar::renderOnlySelectedBones(const std::vector<std::string> &selecte
 
         gRender.end();
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
         
         // renderBoxAroundJointAttachments( jointp );
@@ -2240,8 +2240,8 @@ void LLVOAvatar::renderBoxAroundJointAttachments(LLJoint * joint)
     if (joint && rig_info && rig_info->isRiggedTo())
     {
         LLViewerJointAttachment* as_joint_attach = dynamic_cast<LLViewerJointAttachment*>(joint);
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &joint->getWorldMatrix().mMatrix[0][0]);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, &joint->getWorldMatrix().mMatrix[0][0]);
 
         LLVector4a pos;
         LLVector4a size;
@@ -2255,7 +2255,7 @@ void LLVOAvatar::renderBoxAroundJointAttachments(LLJoint * joint)
 
         drawBoxOutline(pos, size);
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 }
 
@@ -2278,8 +2278,8 @@ void LLVOAvatar::renderJoints()
 
         jointp->updateWorldMatrix();
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &jointp->getWorldMatrix().mMatrix[0][0]);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, &jointp->getWorldMatrix().mMatrix[0][0]);
 
         gRender.diffuseColor3f( 1.f, 0.f, 1.f );
 
@@ -2339,7 +2339,7 @@ void LLVOAvatar::renderJoints()
 
         gRender.end();
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 
     mDebugText.clear();
@@ -3092,12 +3092,12 @@ LLViewerFetchedTexture *LLVOAvatar::getBakedTextureImage(const U8 te, const LLUU
             LL_DEBUGS("Avatar") << avString() << "get old-bake image from host " << uuid << LL_ENDL;
             LLHost host = getObjectHost();
             result = LLViewerTextureManager::getFetchedTexture(
-                uuid, FTT_HOST_BAKE, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, host);
+                uuid, FTT_HOST_BAKE, true, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, host);
             // </FS:Ansariel> [Legacy Bake]
         }
         LL_DEBUGS("Avatar") << avString() << "get server-bake image from URL " << url << LL_ENDL;
         result = LLViewerTextureManager::getFetchedTextureFromUrl(
-            url, FTT_SERVER_BAKE, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, uuid);
+            url, FTT_SERVER_BAKE, true, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, TexelFormat::None, PixelFormat::None, uuid);
         if (result->isMissingAsset())
         {
             result->setIsMissingAsset(false);
@@ -3452,7 +3452,7 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     }
 
     // record time and refresh "tooSlow" status (<FS> stage A mode 1: the table's pre-pass has done it)
-    const LLAvatarTable::Row* table_row = LLAvatarTable::row(this);
+    const RKAvatarTable::Row* table_row = RKAvatarTable::row(this);
     if (!table_row)
     {
         updateTooSlow();
@@ -3472,7 +3472,7 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     // <FS> An avatar nobody can see does not need the whole per-frame update: its motions, matrices, name tag and the rest are all driven by elapsed time (the impostor
     // path already runs them every 32-64 frames), and it is picked up in full the frame after it comes into view. Others' avatars only, and not when something is waiting
     // for the next full update (a first update, a special render mode): every second frame, every fourth when the avatar is far away, staggered by avatar id.
-    if (table_row ? table_row->mMode == LLAvatarTable::MODE_NONE : reducedHiddenSkip())
+    if (table_row ? table_row->mMode == RKAvatarTable::MODE_NONE : reducedHiddenSkip())
     {
         return;
     }
@@ -3581,7 +3581,7 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
         gFSAvStatCount[AV_IDLE_PRE]++;
     }
     bool detailed_update = updateCharacter(agent);
-    detailed_update = LLAvatarTable::attachmentLoop(this, detailed_update);     // <FS> stage A step 3: the gate of the attachment loop and the detailed presentation is the row's bit
+    detailed_update = RKAvatarTable::attachmentLoop(this, detailed_update);     // <FS> stage A step 3: the gate of the attachment loop and the detailed presentation is the row's bit
 
     if (mMotionUpdateDeferred)
     {
@@ -3618,7 +3618,7 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
 
     static LLUICachedControl<bool> visualizers_in_calls("ShowVoiceVisualizersInCalls", false);
     // <FS> B3d: the voice facts come from the avatar's row (taken once a frame from the voice client's participant list), not asked of the voice client for every avatar
-    bool voice_enabled = LLAvatarTable::voiceEnabled(this) && (visualizers_in_calls || LLAvatarTable::voiceProximal());
+    bool voice_enabled = RKAvatarTable::voiceEnabled(this) && (visualizers_in_calls || RKAvatarTable::voiceProximal());
 
     LLVector3 hud_name_pos;
     {
@@ -3672,7 +3672,7 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
         AvScope s(AV_PC_NAMETAG);
         AvSelfScope self_scope(11, this);
         LL_CPU_ZONE("av post: name tag");
-        if (LLAvatarTable::nameTagOpen(this))
+        if (RKAvatarTable::nameTagOpen(this))
         {
             idleUpdateNameTag(hud_name_pos);
         }
@@ -3787,7 +3787,7 @@ void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &
         // Notice the calls to "gAwayTimer.reset()". This resets the timer that determines how long the avatar has been
         // "away", so that the avatar doesn't lapse into away-mode (and slump over) while the user is still talking.
         //-----------------------------------------------------------------------------------------------------------------
-        if (LLAvatarTable::voiceSpeaking(this) && (!isInMuteList() || isSelf()))
+        if (RKAvatarTable::voiceSpeaking(this) && (!isInMuteList() || isSelf()))
         {
             if (!mVoiceVisualizer->getCurrentlySpeaking())
             {
@@ -4010,7 +4010,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         AvLedgerScope ledger_scope(!isSelf() && !LLPipeline::sAvSink);
         const auto att_loop_t0 = att_now();
         ++gAttStats.avatars;
-        LLAttCensus::sAvatarsLooped += LLAttCensus::sOn;
+        RKAttCensus::sAvatarsLooped += RKAttCensus::sOn;
         U32 draw_order = 0;
         S32 selection_on = sAttachmentSelectedForJobs;
         LLVOAvatar* selection_avatar = sAttachmentSelectedAvatar;
@@ -4428,9 +4428,9 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     att_run_full = !skip_update;
                     att_rigged_kind = rigged;
                     gAttStats.skipped += skip_update;
-                    if (LLAttCensus::sOn && !rigged && bridge)
+                    if (RKAttCensus::sOn && !rigged && bridge)
                     {
-                        LLAttCensus::classify(attached_object.get(), attached_object->mDrawable);
+                        RKAttCensus::classify(attached_object.get(), attached_object->mDrawable);
                     }
                     if (gFSAvTimersOn && !rigged && bridge)
                     {
@@ -4802,15 +4802,15 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
             idleUpdateAttachments(visible);
         }
     }
-    else if (LLAttCensus::sOn)
+    else if (RKAttCensus::sOn)
     {
         // census: an avatar whose attachment loop did not run this frame, and what it wears
-        ++LLAttCensus::sAvatarsHidden;
+        ++RKAttCensus::sAvatarsHidden;
         for (const auto& [attachment_point_id, attachment] : mAttachmentPoints)
         {
             if (attachment)
             {
-                LLAttCensus::sAttachmentsOnHidden += (U64)attachment->mAttachedObjects.size();
+                RKAttCensus::sAttachmentsOnHidden += (U64)attachment->mAttachedObjects.size();
             }
         }
     }
@@ -4962,7 +4962,7 @@ void LLVOAvatar::idleUpdateLipSync(bool voice_enabled)
     if (voice_enabled
         && mLastRezzedStatus > 0 // no point updating lip-sync for clouds
         && LLVoiceVisualizer::getLipSyncEnabled()
-        && LLAvatarTable::voiceSpeaking(this))
+        && RKAvatarTable::voiceSpeaking(this))
     {
         F32 ooh_morph_amount = 0.0f;
         F32 aah_morph_amount = 0.0f;
@@ -6105,12 +6105,12 @@ void LLVOAvatar::slamPosition()
 bool LLVOAvatar::isVisuallyMuted()
 {
     // <FS> PLAN-avatars.md stage A step 4b: after the avatars' update the table holds the answer
-    if (const LLAvatarTable::Row* row = LLAvatarTable::finalRow(this))
+    if (const RKAvatarTable::Row* row = RKAvatarTable::finalRow(this))
     {
         static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
         if (verify)
         {
-            LLAvatarTable::noteCheck(2, row->mMuted == computeVisuallyMutedLive());
+            RKAvatarTable::noteCheck(2, row->mMuted == computeVisuallyMutedLive());
         }
         return row->mMuted;
     }
@@ -7324,52 +7324,52 @@ unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update)
     needs_update = false;
     if (LLApp::isExiting() || isDead())
     {
-        return LLAvatarTable::MODE_OTHER;
+        return RKAvatarTable::MODE_OTHER;
     }
     static LLCachedControl<bool> friends_only(gSavedSettings, "RenderAvatarFriendsOnly", false);
     if (friends_only() && !isUIAvatar() && !isControlAvatar() && !isSelf() && !isBuddy())
     {
-        return LLAvatarTable::MODE_OTHER;
+        return RKAvatarTable::MODE_OTHER;
     }
     updateTooSlow();        // (idleUpdate does not)
     static LLCachedControl<bool> disable_all_render_types(gSavedSettings, "DisableAllRenderTypes");
     if (!(gPipeline.hasRenderType(mIsControlAvatar ? LLPipeline::RENDER_TYPE_CONTROL_AV : LLPipeline::RENDER_TYPE_AVATAR)) && !disable_all_render_types && !isSelf())
     {
-        return LLAvatarTable::MODE_OTHER;
+        return RKAvatarTable::MODE_OTHER;
     }
     if (reducedHiddenSkip())
     {
-        return LLAvatarTable::MODE_NONE;
+        return RKAvatarTable::MODE_NONE;
     }
     if (!mIsBuilt)
     {
-        return LLAvatarTable::MODE_OTHER;
+        return RKAvatarTable::MODE_OTHER;
     }
     visible = isVisible();
     needs_update = computeNeedsUpdate();
     if (!needs_update && !isSelf())
     {
-        return LLAvatarTable::MODE_SKIP;
+        return RKAvatarTable::MODE_SKIP;
     }
     if (!visible && !isSelf())
     {
-        return LLAvatarTable::MODE_MATRICES;
+        return RKAvatarTable::MODE_MATRICES;
     }
-    return LLAvatarTable::MODE_POSE;
+    return RKAvatarTable::MODE_POSE;
 }
 
 namespace
 {
-std::vector<std::pair<const LLVOAvatar*, LLAvatarTable::Row>> sAvatarRows;      // the rows of the frame; an avatar's index is in LLVOAvatar::mAvTableSlot
+std::vector<std::pair<const LLVOAvatar*, RKAvatarTable::Row>> sAvatarRows;      // the rows of the frame; an avatar's index is in LLVOAvatar::mAvTableSlot
 }
 
-const LLAvatarTable::Row* LLAvatarTable::row(const LLVOAvatar* av)
+const RKAvatarTable::Row* RKAvatarTable::row(const LLVOAvatar* av)
 {
     const S32 slot = av->mAvTableSlot;
     return (slot >= 0 && (size_t)slot < sAvatarRows.size() && sAvatarRows[slot].first == av) ? &sAvatarRows[slot].second : nullptr;
 }
 
-const LLAvatarTable::Row* LLAvatarTable::finalRow(const LLVOAvatar* av)
+const RKAvatarTable::Row* RKAvatarTable::finalRow(const LLVOAvatar* av)
 {
     const S32 slot = av->mAvTableSlot;
     if (slot < 0 || (size_t)slot >= sAvatarRows.size() || sAvatarRows[slot].first != av || !sAvatarRows[slot].second.mFinal)
@@ -7379,7 +7379,7 @@ const LLAvatarTable::Row* LLAvatarTable::finalRow(const LLVOAvatar* av)
     return &sAvatarRows[slot].second;
 }
 
-void LLAvatarTable::endFrame()
+void RKAvatarTable::endFrame()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     for (auto& entry : sAvatarRows)
@@ -7401,7 +7401,7 @@ void LLAvatarTable::endFrame()
     }
 }
 
-void LLAvatarTable::noteCheck(int which, bool same)
+void RKAvatarTable::noteCheck(int which, bool same)
 {
     static U64 reads[6] = {}, different[6] = {};
     static U32 last = 0;
@@ -7423,12 +7423,12 @@ namespace
 bool sVoiceProximal = false;
 }
 
-bool LLAvatarTable::voiceProximal()
+bool RKAvatarTable::voiceProximal()
 {
     return sVoiceProximal;
 }
 
-bool LLAvatarTable::voiceEnabled(const LLVOAvatar* av)
+bool RKAvatarTable::voiceEnabled(const LLVOAvatar* av)
 {
     static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
     const Row* r = row(av);
@@ -7443,7 +7443,7 @@ bool LLAvatarTable::voiceEnabled(const LLVOAvatar* av)
     return r->mVoice;
 }
 
-bool LLAvatarTable::voiceSpeaking(const LLVOAvatar* av)
+bool RKAvatarTable::voiceSpeaking(const LLVOAvatar* av)
 {
     static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
     const Row* r = row(av);
@@ -7458,7 +7458,7 @@ bool LLAvatarTable::voiceSpeaking(const LLVOAvatar* av)
     return r->mSpeaking;
 }
 
-void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t count)
+void RKAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t count)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     sAvatarRows.clear();
@@ -7513,7 +7513,7 @@ void LLAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
     }
 }
 
-bool LLAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
+bool RKAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
 {
     const Row* r = row(av);
     if (!r)
@@ -7535,7 +7535,7 @@ bool LLAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
     return bit;
 }
 
-bool LLAvatarTable::nameTagOpen(const LLVOAvatar* av)
+bool RKAvatarTable::nameTagOpen(const LLVOAvatar* av)
 {
     static U64 ran = 0, skipped = 0;
     static U32 last = 0;
@@ -7665,7 +7665,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     }
     ensureJointLocals();        // <FS> stage C: the joints' locals live in the flat array (main thread, before this frame's jobs)
 
-    const LLAvatarTable::Row* table_row = LLAvatarTable::row(this);       // <FS> stage A
+    const RKAvatarTable::Row* table_row = RKAvatarTable::row(this);       // <FS> stage A
     bool visible = table_row ? table_row->mVisible : isVisible();
 
     // For fading out the names above heads, only let the timer
@@ -8485,7 +8485,7 @@ U32 LLVOAvatar::renderSkinned()
 
         if (!LLDrawPoolAvatar::sSkipTransparent || LLPipeline::sImpostorRender)
         {
-            LLRenderState::BlendScope blend(!mIsDummy);
+            RKRenderState::BlendScope blend(!mIsDummy);
             num_indices += renderTransparent(first_pass);
         }
 
@@ -8577,7 +8577,7 @@ U32 LLVOAvatar::renderRigid()
     return num_indices;
 }
 
-bool LLVOAvatar::fillImpostorQuad(LLVkBridge::ImpostorQuadRow& row) const
+bool LLVOAvatar::fillImpostorQuad(RKVkBridge::ImpostorQuadRow& row) const
 {
     if (!mImpostor.isComplete())
     {
@@ -8623,7 +8623,7 @@ void LLVOAvatar::renderImpostorDebug(S32 diffuse_channel)
     left *= mImpostorDim.mV[0];
     up *= mImpostorDim.mV[1];
 
-    LLRenderState::BlendScope blend(true);
+    RKRenderState::BlendScope blend(true);
     gRender.setSceneBlendType(LLRender::BT_ADD);
     gRender.getTexUnit(diffuse_channel)->bindWhite();
 
@@ -8811,7 +8811,7 @@ void LLVOAvatar::releaseOldTextures()
             if (imagep)
             {
                 current_texture_mem += imagep->getTextureMemory();
-                if (imagep->getTextureState() == LLBaseTexture::NO_DELETE)
+                if (imagep->getTextureState() == RKBaseTexture::NO_DELETE)
                 {
                     // This will allow the texture to be deleted if not in use.
                     imagep->forceActive();
@@ -12067,12 +12067,12 @@ bool LLVOAvatar::isTooComplex() const
 bool LLVOAvatar::isTooSlow() const
 {
     // <FS> PLAN-avatars.md stage A step 4b: after the avatars' update the table holds the answer
-    if (const LLAvatarTable::Row* row = LLAvatarTable::finalRow(this))
+    if (const RKAvatarTable::Row* row = RKAvatarTable::finalRow(this))
     {
         static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
         if (verify)
         {
-            LLAvatarTable::noteCheck(1, row->mTooSlow == computeTooSlowLive());
+            RKAvatarTable::noteCheck(1, row->mTooSlow == computeTooSlowLive());
         }
         return row->mTooSlow;
     }
@@ -13376,7 +13376,7 @@ void LLVOAvatar::applyParsedAppearanceMessage(LLAppearanceMessageContents& conte
             //LL_DEBUGS("Avatar") << avString() << " baked_index " << (S32) baked_index << " using mLastTextureID " << mBakedTextureDatas[baked_index].mLastTextureID << LL_ENDL;
             LL_DEBUGS("Avatar") << avString() << "sb " << (S32) isUsingServerBakes() << " baked_index " << (S32) baked_index << " using mLastTextureID " << mBakedTextureDatas[baked_index].mLastTextureID << LL_ENDL;
             setTEImage(mBakedTextureDatas[baked_index].mTextureIndex,
-                LLViewerTextureManager::getFetchedTexture(mBakedTextureDatas[baked_index].mLastTextureID, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
+                LLViewerTextureManager::getFetchedTexture(mBakedTextureDatas[baked_index].mLastTextureID, FTT_DEFAULT, true, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
         }
         else
         {
@@ -13555,7 +13555,7 @@ LLViewerTexture* LLVOAvatar::getBakedTexture(const U8 te)
 //------------------------------------------------------------------------
 // <FS> PLAN-avatars.md stage B0: the avatar's world matrices as a flat array by joint number, once per avatar per frame (the palettes of all its skins read it)
 //------------------------------------------------------------------------
-struct LLFlatSkeleton
+struct RKFlatSkeleton
 {
     U32 mFrame = ~0u;
     bool mFromJob = false;                  // <FS> stage C: made by the avatar's pose job (flatWorldPass) for this frame
@@ -13570,7 +13570,7 @@ struct LLFlatSkeleton
     std::vector<S16> mParent;               // the parent's joint number (-1: none, or a parent that is not in the array)
     std::vector<S16> mOrder;                // the joints, parents before children
     U32 mJointCount = 0;
-    std::vector<LLXformLocals> mLocals;     // <FS> stage C: the joints' local position, rotation and scale live here (the xforms' slot pointers point into this vector, which is sized once)
+    std::vector<RKXformLocals> mLocals;     // <FS> stage C: the joints' local position, rotation and scale live here (the xforms' slot pointers point into this vector, which is sized once)
     U32 mLocalsKey = ~0u;                   // the structure key the joints were bound for
     // <FS> avatar relative skinning: the world matrices again, with the world position of every joint relative to an anchor; made from the joints' local transforms (a float world position at 3800 m has a step of 0.24 mm, the chain
     // from the locals does not). Valid for one fill of the plain array and one anchor.
@@ -13601,7 +13601,7 @@ static void fs_flat_report()
     }
 }
 
-static void fs_flat_fill(LLVOAvatar* av, LLFlatSkeleton& flat)
+static void fs_flat_fill(LLVOAvatar* av, RKFlatSkeleton& flat)
 {
     const U32 N = LL_CHARACTER_MAX_ANIMATED_JOINTS;
     if (flat.mWorld.size() != N)
@@ -13669,7 +13669,7 @@ static void fs_flat_fill(LLVOAvatar* av, LLFlatSkeleton& flat)
 
 // <FS> avatar relative skinning: the chain of the flat world pass, with the world position of the chain's start taken relative to the anchor (an anchor on the 64 m grid and a position in region coordinates
 // subtract exactly), so every joint's world position is a small number worked out in small numbers. Compared with the plain array when LL_VK_RIGREBASE_CHECK=1.
-static bool fs_flat_rel_fill(LLFlatSkeleton& flat, const F32* anchor)
+static bool fs_flat_rel_fill(RKFlatSkeleton& flat, const F32* anchor)
 {
     if (flat.mOrder.empty() || flat.mWorld.empty())
     {
@@ -13770,7 +13770,7 @@ bool LLVOAvatar::flatPaletteRel(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo
     {
         return false;
     }
-    LLFlatSkeleton& flat = *mFlatSkel;
+    RKFlatSkeleton& flat = *mFlatSkel;
     if (!fs_flat_rel_fill(flat, anchor))
     {
         return false;
@@ -13783,9 +13783,9 @@ void LLVOAvatar::flatPalette(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* s
     // (called under the palette mutex of updateSkinInfoMatrixPalette: one at a time)
     if (!mFlatSkel)
     {
-        mFlatSkel = std::make_shared<LLFlatSkeleton>();
+        mFlatSkel = std::make_shared<RKFlatSkeleton>();
     }
-    LLFlatSkeleton& flat = *mFlatSkel;
+    RKFlatSkeleton& flat = *mFlatSkel;
     if (flat.mFrame != gFrameCount)
     {
         fs_flat_fill(this, flat);
@@ -13990,9 +13990,9 @@ void LLVOAvatar::ensureJointLocals()
     }
     if (!mFlatSkel)
     {
-        mFlatSkel = std::make_shared<LLFlatSkeleton>();
+        mFlatSkel = std::make_shared<RKFlatSkeleton>();
     }
-    LLFlatSkeleton& flat = *mFlatSkel;
+    RKFlatSkeleton& flat = *mFlatSkel;
     const U32 N = LL_CHARACTER_MAX_ANIMATED_JOINTS;
     const U32 key = (U32)mSkeletonSerialNum ^ ((U32)mNumBones << 8) ^ ((U32)mNumCollisionVolumes << 20) ^ ((U32)mAttachmentPoints.size() << 26);
     if (flat.mWorld.size() != N || flat.mStructKey != key || flat.mOrder.empty())
@@ -14006,7 +14006,7 @@ void LLVOAvatar::ensureJointLocals()
     }
     if (flat.mLocals.size() != N)
     {
-        flat.mLocals.assign(N, LLXformLocals());        // (sized once: the pointers into it stay)
+        flat.mLocals.assign(N, RKXformLocals());        // (sized once: the pointers into it stay)
     }
     for (U32 k = 0; k < N; ++k)
     {
@@ -14016,7 +14016,7 @@ void LLVOAvatar::ensureJointLocals()
             continue;
         }
         LLXformMatrix* xf = joint->getXform();
-        LLXformLocals* slot = &flat.mLocals[k];
+        RKXformLocals* slot = &flat.mLocals[k];
         if (xf->getLocals() != slot)
         {
             slot->mPos = xf->getPosition();
@@ -14050,9 +14050,9 @@ bool LLVOAvatar::flatWorldPass()
     }
     if (!mFlatSkel)
     {
-        mFlatSkel = std::make_shared<LLFlatSkeleton>();
+        mFlatSkel = std::make_shared<RKFlatSkeleton>();
     }
-    LLFlatSkeleton& flat = *mFlatSkel;
+    RKFlatSkeleton& flat = *mFlatSkel;
     const U32 N = LL_CHARACTER_MAX_ANIMATED_JOINTS;
     // the structure: which joint is which number, the parents, the order: made again when the skeleton or its set of joints changed
     const U32 key = (U32)mSkeletonSerialNum ^ ((U32)mNumBones << 8) ^ ((U32)mNumCollisionVolumes << 20) ^ ((U32)mAttachmentPoints.size() << 26);
@@ -14076,7 +14076,7 @@ bool LLVOAvatar::flatWorldPass()
     LLQuaternion* wrot = flat.mWRot.data();
     U8* sco = flat.mSco.data();
     // The locals live in the array when every joint is bound to its slot (ensureJointLocals, main thread, before the jobs): the pass then reads the contiguous slots, no getter, and keeps no scale copy
-    const LLXformLocals* locals = (flat.mLocalsKey == flat.mStructKey && flat.mLocals.size() == N) ? flat.mLocals.data() : nullptr;
+    const RKXformLocals* locals = (flat.mLocalsKey == flat.mStructKey && flat.mLocals.size() == N) ? flat.mLocals.data() : nullptr;
     flat.mScaleInLocals = locals != nullptr;
     const bool root_active = mRoot->mUpdateXform;
     const U32 pass_serial = ++LLJoint::sViewPasses;
@@ -14296,7 +14296,7 @@ void LLVOAvatar::buildPaletteEntry(MatrixPaletteCache& entry, const LLMeshSkinIn
 
         // <FS> avatar relative skinning: above a height the palette the shaders read is made from world matrices relative to the anchor (ll_rig_anchor); the plain one is kept for the programs that take a
         // uniform palette. The tail (one entry more) names the anchor, all zeros when the palette is plain.
-        const LLRigAnchor rig = ll_rig_anchor(stamp);
+        const RKRigAnchor rig = ll_rig_anchor(stamp);
         bool rebase = false;
         LLMeshSkinInfo::matrix_list_t rel_palette;
         if (rig.mActive)
@@ -14666,11 +14666,11 @@ void LLVOAvatar::onBakedTextureMasksLoaded( bool success, LLViewerFetchedTexture
             }
 
             U32 gl_name;
-            LLImageTex::generateTextures(1, &gl_name );
+            RKImageTex::generateTextures(1, &gl_name );
 
             gRender.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, gl_name);
 
-            LLImageTex::setManualImage(
+            RKImageTex::setManualImage(
                 gl_name, TextureTarget::Tex2D, 0, TexelFormat::Alpha8,
                 aux_src->getWidth(), aux_src->getHeight(),
                 PixelFormat::Alpha, ComponentType::U8, aux_src->getData());
@@ -14700,7 +14700,7 @@ void LLVOAvatar::onBakedTextureMasksLoaded( bool success, LLViewerFetchedTexture
                         maskData->mLastDiscardLevel = discard_level;
                         if (self->mBakedTextureDatas[baked_index].mMaskTexName)
                         {
-                            LLImageTex::deleteTextures(1, &(self->mBakedTextureDatas[baked_index].mMaskTexName));
+                            RKImageTex::deleteTextures(1, &(self->mBakedTextureDatas[baked_index].mMaskTexName));
                         }
                         self->mBakedTextureDatas[baked_index].mMaskTexName = gl_name;
                         found_texture_id = true;
@@ -15505,12 +15505,12 @@ void LLVOAvatar::updateImpostors()
 bool LLVOAvatar::isImpostor()
 {
     // <FS> PLAN-avatars.md stage A step 4: after the avatars' update the table holds the answer (one owner for the decision; the 30 readers of the render side, the pools and the cull, read it)
-    if (const LLAvatarTable::Row* row = LLAvatarTable::finalRow(this))
+    if (const RKAvatarTable::Row* row = RKAvatarTable::finalRow(this))
     {
         static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
         if (verify && !isControlAvatar())
         {
-            LLAvatarTable::noteCheck(0, row->mImpostor == computeImpostorLive());
+            RKAvatarTable::noteCheck(0, row->mImpostor == computeImpostorLive());
         }
         return row->mImpostor;
     }
@@ -16555,12 +16555,12 @@ void LLVOAvatar::updateOverallAppearanceAnimations()
 LLVOAvatar::AvatarOverallAppearance LLVOAvatar::getOverallAppearance() const
 {
     // <FS> PLAN-avatars.md stage A step 5: after the avatars' update the table holds the answer (jellydoll / invisible decisions of the avatar pool, the cull, the velocity pass, the ray scene)
-    if (const LLAvatarTable::Row* row = LLAvatarTable::finalRow(this))
+    if (const RKAvatarTable::Row* row = RKAvatarTable::finalRow(this))
     {
         static const bool verify = getenv("LL_VK_AVTABLE_VERIFY") != nullptr;
         if (verify)
         {
-            LLAvatarTable::noteCheck(3, row->mAppearance == (U8)computeOverallAppearanceLive());
+            RKAvatarTable::noteCheck(3, row->mAppearance == (U8)computeOverallAppearanceLive());
         }
         return (AvatarOverallAppearance)row->mAppearance;
     }
@@ -16982,7 +16982,7 @@ U32 LLVOAvatar::getRenderHandle()
     {
         return handle;
     }
-    const U32 fresh = LLAvatarHandles::acquire(this);
+    const U32 fresh = RKAvatarHandles::acquire(this);
     if (!fresh)
     {
         return 0;
@@ -16990,7 +16990,7 @@ U32 LLVOAvatar::getRenderHandle()
     U32 expected = 0;
     if (!mRenderHandle.v.compare_exchange_strong(expected, fresh, std::memory_order_acq_rel))
     {
-        LLAvatarHandles::release(fresh);       // another thread asked first
+        RKAvatarHandles::release(fresh);       // another thread asked first
         return expected;
     }
     return fresh;
@@ -16998,7 +16998,7 @@ U32 LLVOAvatar::getRenderHandle()
 
 bool LLVOAvatar::retireOnLastRef() const
 {
-    return LLRetireList::park(const_cast<LLVOAvatar*>(this));
+    return RKRetireList::park(const_cast<LLVOAvatar*>(this));
 }
 
-std::atomic<U64> LLAvatarRef::sDeadResolved{0};
+std::atomic<U64> RKAvatarRef::sDeadResolved{0};

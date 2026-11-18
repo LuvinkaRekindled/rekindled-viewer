@@ -19,7 +19,7 @@ First actions:
 4. Write the numbers into `S7-design.md` section 13 and ask Adam before building B or C1.
 
 ## 2. Where things are
-- CPU visibility: `LLPipeline::updateCull` (pipeline.cpp ~2749), `stateSort` (~3427, the group / bridge / drawable loops), `postSort` (~4126), `LLOctreeCull` in `llvieweroctree.cpp`, `LLOcclusionCullingGroup`. Hi-Z: `LLHiz` / `LLHizTarget` (rkhiz.h, llvieweroctree.cpp), the worker side is kind 34; `LL_VK_HIZ_IGNORE` computes verdicts without using them.
+- CPU visibility: `LLPipeline::updateCull` (pipeline.cpp ~2749), `stateSort` (~3427, the group / bridge / drawable loops), `postSort` (~4126), `LLOctreeCull` in `llvieweroctree.cpp`, `LLOcclusionCullingGroup`. Hi-Z: `RKHiz` / `RKHizTarget` (rkhiz.h, llvieweroctree.cpp), the worker side is kind 34; `LL_VK_HIZ_IGNORE` computes verdicts without using them.
 - Table and passes: `rkvkworker.cpp` (`GeoGpuG` ~6026, `geo_prepare`, `geo_draw`, `geo_alpha_draw`, rigged rows `mRTable`), `LL_VK_SCENE_GEO` (pipeline.cpp ~5508, default 2 = the table with its rigged / moving parts; `=0` off, `LL_VK_SCENE_GEO_RIGGED`, `_MOVING`, `LL_VK_PALETTE_SHARED`, `LL_VK_RIGGED_INDEXED`, `LL_VK_ALPHA_NO_FRAGMENTS` are the bisect switches), S2 resident shadow casters and the cull shader (`LL_VK_SCENE_RESIDENT`).
 - Diagnostics that exist: `LL_VK_PASSCENSUS` (draw records by program), `LL_VK_VISDIP` (visible group dips / flickers with object descriptions), `LL_VK_UNICENSUS`, `LL_VK_OPSTATS`, `LL_VK_LIGHTLOG`, `LL_VK_POSELAG`, `FS_CPU_ZONES` with `--set FSGpuZoneTimers,1`.
 

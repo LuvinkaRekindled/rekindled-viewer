@@ -47,7 +47,7 @@ static LLDefaultChildRegistry::Register<LLProfileImageCtrl> r("profile_image");
 LLProfileImageCtrl::LLProfileImageCtrl(const LLProfileImageCtrl::Params& p)
     : LLIconCtrl(p)
     , mImage(NULL)
-    , mImageOldBoostLevel(LLBaseTexture::BOOST_NONE)
+    , mImageOldBoostLevel(RKBaseTexture::BOOST_NONE)
     , mWasNoDelete(false)
     , mImageLoadedSignal(NULL)
 {
@@ -81,12 +81,12 @@ void LLProfileImageCtrl::setValue(const LLSD& value)
     setImageAssetId(id);
     if (id.isNull())
     {
-        LLIconCtrl::setValue("Generic_Person_Large", LLBaseTexture::BOOST_UI);
+        LLIconCtrl::setValue("Generic_Person_Large", RKBaseTexture::BOOST_UI);
     }
     else
     {
         // called second to not change priority before it gets saved to mImageOldBoostLevel
-        LLIconCtrl::setValue(value, LLBaseTexture::BOOST_PREVIEW);
+        LLIconCtrl::setValue(value, RKBaseTexture::BOOST_PREVIEW);
     }
 }
 
@@ -120,10 +120,10 @@ void LLProfileImageCtrl::setImageAssetId(const LLUUID& asset_id)
     mImageID = asset_id;
     if (mImageID.notNull())
     {
-        mImage = LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, MIPMAP_YES, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
-        mWasNoDelete = mImage->getTextureState() == LLBaseTexture::NO_DELETE;
+        mImage = LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, MIPMAP_YES, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+        mWasNoDelete = mImage->getTextureState() == RKBaseTexture::NO_DELETE;
         mImageOldBoostLevel = mImage->getBoostLevel();
-        mImage->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
+        mImage->setBoostLevel(RKBaseTexture::BOOST_PREVIEW);
         mImage->setKnownDrawSize(LLViewerTexture::MAX_IMAGE_SIZE_DEFAULT, LLViewerTexture::MAX_IMAGE_SIZE_DEFAULT);
         mImage->forceToSaveRawImage(0);
 

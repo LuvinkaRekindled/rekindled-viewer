@@ -361,7 +361,7 @@ void LLToolCompTranslate::render()
 
     if( mCur != mManip )
     {
-        LLRenderState::DepthScope gls_depth(true, false);
+        RKRenderState::DepthScope gls_depth(true, false);
         mManip->renderGuidelines();
     }
 }
@@ -481,7 +481,7 @@ void LLToolCompScale::render()
 
     if( mCur != mManip )
     {
-        LLRenderState::DepthScope gls_depth(true, false);
+        RKRenderState::DepthScope gls_depth(true, false);
         mManip->renderGuidelines();
     }
 }
@@ -692,7 +692,7 @@ void LLToolCompRotate::render()
 
     if( mCur != mManip )
     {
-        LLRenderState::DepthScope gls_depth(true, false);
+        RKRenderState::DepthScope gls_depth(true, false);
         mManip->renderGuidelines();
     }
 }
@@ -1056,7 +1056,7 @@ void FSToolCompPose::render()
     if (mCur != mManip)
     {
         mManip->renderGuidelines(); // or something similar if your manip has it
-        LLRenderState::DepthScope gls_depth(true, false);
+        RKRenderState::DepthScope gls_depth(true, false);
     }
 }
 
@@ -1201,6 +1201,6 @@ void FSToolCompPoseTranslate::render()
     if (mCur != mManip)
     {
         mManip->renderGuidelines(); // or something similar if your manip has it
-        LLRenderState::DepthScope gls_depth(true, false);
+        RKRenderState::DepthScope gls_depth(true, false);
     }
 }

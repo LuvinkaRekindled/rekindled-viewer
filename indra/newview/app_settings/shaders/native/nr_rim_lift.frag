@@ -1,7 +1,7 @@
 // nr_rim_lift.frag: the neural renderer's rim lift: where the model darkened a pixel next to a depth edge more than its own neighbourhood, the pixel is lifted back toward the neighbourhood's darkening. A line for
 // line translation of "DLSS-NR Rim Lift" (deferred/nrRimLiftF.glsl); pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec2 depth_res;             // the depth texture's size in pixels
     vec2 clip_planes;           // near, far
@@ -10,7 +10,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float rim_edge;             // the relative step in linear depth that counts as an edge
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;     // the neural renderer's output
     uint ll_ti_emissiveRect;    // its input (the picture before it)

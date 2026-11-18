@@ -1,12 +1,12 @@
 // solidcolor.frag: a flat colour with the alpha of a texture. A line for line translation of "Solid Color Shader" (interface/solidcolorF.glsl); pairs with solidcolor.vert.
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
     uint ll_ti_tex0;
 };
 
-layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
+layout(std140, set = 0, binding = 6) uniform RKLooseMaterial
 {
     vec4 color;
 };

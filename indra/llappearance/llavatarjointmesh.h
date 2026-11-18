@@ -65,7 +65,7 @@ protected:
     LLColor4                    mColor;         // color value
 //  LLColor4                    mSpecular;      // specular color (always white for now)
     F32                         mShiny;         // shiny value
-    LLPointer<LLBaseTexture>      mTexture;       // ptr to a global texture
+    LLPointer<RKBaseTexture>      mTexture;       // ptr to a global texture
     LLTexLayerSet*              mLayerSet;      // ptr to a layer set owned by the avatar
     U32                         mTestImageName;     // handle to a temporary texture for previewing uploads
     LLPolyMesh*                 mMesh;          // ptr to a global polymesh
@@ -102,7 +102,7 @@ public:
     void setSpecular( const LLColor4& color, F32 shiny ) { /*mSpecular = color;*/ mShiny = shiny; };
 
     // Sets the shape texture
-    void setTexture( LLBaseTexture *texture );
+    void setTexture( RKBaseTexture *texture );
 
     bool hasImageTexture() const;
 

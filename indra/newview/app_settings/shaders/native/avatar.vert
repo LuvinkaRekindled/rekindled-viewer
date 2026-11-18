@@ -7,7 +7,7 @@
 #include "lib/rows.glsl"
 
 
-layout(std140, set = 0, binding = 8) uniform LLLooseSkin
+layout(std140, set = 0, binding = 8) uniform RKLooseSkin
 {
     vec4 matrixPalette[45];             // joint i: rows at i, i + 15 and i + 30
 #ifdef GB_MOTION

@@ -20,7 +20,7 @@ Not wrong, do not "fix": hits and misses (steady), geometry, shadows (the sun sh
 
 ## 2. What the hit already gives the shader (no new data needed for steps A and B)
 
-`rtShadeSurface(record, prim, bary, lod, ...)` decodes the hit: the geometry record (`LLRtGeom`: vertex, index, texcoord, colour and normal buffer addresses, flags) and the material row (`LLRtMaterial` / C++ `GpuMaterial` in `rkvkrt.cpp`): `slots` (base colour textures, pin indices), `slots2` (**normal map, metallic-roughness or specular map, emissive map**), `color`, `emissive`, `params` (cutoff, **metallic, roughness**), `uv` transforms, `flags` (bit 0 fullbright, bit 1 glTF). It samples with `textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod)` where `slot = ll_rt_slot(pin)`. It already computes the smooth normal when the record has normals (flag 1024). So the normal map slot, the roughness and metallic values and the specular map are in reach: they are read for the base colour and emissive only today.
+`rtShadeSurface(record, prim, bary, lod, ...)` decodes the hit: the geometry record (`RKRtGeom`: vertex, index, texcoord, colour and normal buffer addresses, flags) and the material row (`RKRtMaterial` / C++ `GpuMaterial` in `rkvkrt.cpp`): `slots` (base colour textures, pin indices), `slots2` (**normal map, metallic-roughness or specular map, emissive map**), `color`, `emissive`, `params` (cutoff, **metallic, roughness**), `uv` transforms, `flags` (bit 0 fullbright, bit 1 glTF). It samples with `textureLod(ll_rt_tex[nonuniformEXT(slot)], uv, lod)` where `slot = ll_rt_slot(pin)`. It already computes the smooth normal when the record has normals (flag 1024). So the normal map slot, the roughness and metallic values and the specular map are in reach: they are read for the base colour and emissive only today.
 
 ## 3. Steps (each visible on its own, each checked against the stock mirror)
 
@@ -54,7 +54,7 @@ In the code the level is one integer uniform of the lighting pass (the same plac
 
 ## 6. Files
 
-`shadowUtil.glsl` (`rtReflection`, `rtShadeSurface`, `rtSunRay`), `softenLightF.glsl` (class3/deferred: where `rtReflection` is called and the result mixed into `radiance`), `pipeline.cpp` (~line 12545: the uniforms of the soften pass), `rkvkrt.cpp` (`GpuMaterial`, `LLRtMaterial` declaration is in `rkvkshader.cpp` ~line 1025 if a field is added: keep both in step, the row is 96 bytes), `pbrPunctual.glsl` / `pbrBaseLight` (the BRDF to reuse), `rkvkmirror.cpp` (`rtGlossyReflections()`).
+`shadowUtil.glsl` (`rtReflection`, `rtShadeSurface`, `rtSunRay`), `softenLightF.glsl` (class3/deferred: where `rtReflection` is called and the result mixed into `radiance`), `pipeline.cpp` (~line 12545: the uniforms of the soften pass), `rkvkrt.cpp` (`GpuMaterial`, `RKRtMaterial` declaration is in `rkvkshader.cpp` ~line 1025 if a field is added: keep both in step, the row is 96 bytes), `pbrPunctual.glsl` / `pbrBaseLight` (the BRDF to reuse), `rkvkmirror.cpp` (`rtGlossyReflections()`).
 
 ## Status 2026-10-13 (night): steps A and B built and seen
 

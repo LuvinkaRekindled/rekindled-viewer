@@ -43,5 +43,5 @@ LLViewerShaderMgr* LLViewerShaderMgr::instance() {
     return stub_instance;
 }
 
-void LLViewerShaderMgr::updateShaderUniforms(LLShaderProgram* shader) {return;}
+void LLViewerShaderMgr::updateShaderUniforms(RKShaderProgram* shader) {return;}
 std::string LLViewerShaderMgr::getShaderDirPrefix() {return "SHADER_DIR_PREFIX-";}

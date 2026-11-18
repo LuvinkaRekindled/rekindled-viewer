@@ -6,9 +6,9 @@
  * calls (matrixMode, pushMatrix, translatef ...) depend on. pushMatrix / popMatrix flush the immediate-mode batch (pending vertices belong to the old matrix); so do these,
  * through the same LLRender functions.
  *
- *   LLRenderMatrix::push(Kind::Modelview);                 was: gRender.matrixMode(LLRender::MM_MODELVIEW); gRender.pushMatrix();
- *   LLRenderMatrix::translate(Kind::Modelview, x, y, z);   was: gRender.translatef(x, y, z);
- *   LLRenderMatrix::load(Kind::Projection, ptr);           was: gRender.loadMatrix(ptr);
+ *   RKRenderMatrix::push(Kind::Modelview);                 was: gRender.matrixMode(LLRender::MM_MODELVIEW); gRender.pushMatrix();
+ *   RKRenderMatrix::translate(Kind::Modelview, x, y, z);   was: gRender.translatef(x, y, z);
+ *   RKRenderMatrix::load(Kind::Projection, ptr);           was: gRender.loadMatrix(ptr);
  *   ModelviewScope m;  m.translate(x, y, z);               push when made, pop when destroyed
  *
  * LL_VK_MATRIX_GUARD_CHECK=1: (1) when a scope is destroyed the stack of its matrix must be as deep as the scope left it (an unbalanced push or pop inside the scope shows up as a
@@ -22,7 +22,7 @@
 #include "glm/mat4x4.hpp"
 #include "glm/vec3.hpp"
 
-namespace LLRenderMatrix
+namespace RKRenderMatrix
 {
 
 enum class Kind : U8 { Modelview, Projection, Texture0, Texture1, Texture2, Texture3 };      // the order of LLRender::eMatrixMode
@@ -79,17 +79,17 @@ public:
         pop(K);
     }
 
-    void set(const glm::mat4& m) { LLRenderMatrix::set(K, m); }
-    void multiply(const glm::mat4& m) { LLRenderMatrix::multiply(K, m); }
-    void identity() { LLRenderMatrix::identity(K); }
-    void translate(F32 x, F32 y, F32 z) { LLRenderMatrix::translate(K, x, y, z); }
-    void translate(const glm::vec3& v) { LLRenderMatrix::translate(K, v); }
-    void rotate(F32 degrees, const glm::vec3& axis) { LLRenderMatrix::rotate(K, degrees, axis); }
-    void rotate(F32 degrees, F32 x, F32 y, F32 z) { LLRenderMatrix::rotate(K, degrees, x, y, z); }
-    void scale(F32 x, F32 y, F32 z) { LLRenderMatrix::scale(K, x, y, z); }
-    void scale(const glm::vec3& v) { LLRenderMatrix::scale(K, v); }
-    void ortho(F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar) { LLRenderMatrix::ortho(K, left, right, bottom, top, zNear, zFar); }
-    const glm::mat4& get() const { return LLRenderMatrix::get(K); }
+    void set(const glm::mat4& m) { RKRenderMatrix::set(K, m); }
+    void multiply(const glm::mat4& m) { RKRenderMatrix::multiply(K, m); }
+    void identity() { RKRenderMatrix::identity(K); }
+    void translate(F32 x, F32 y, F32 z) { RKRenderMatrix::translate(K, x, y, z); }
+    void translate(const glm::vec3& v) { RKRenderMatrix::translate(K, v); }
+    void rotate(F32 degrees, const glm::vec3& axis) { RKRenderMatrix::rotate(K, degrees, axis); }
+    void rotate(F32 degrees, F32 x, F32 y, F32 z) { RKRenderMatrix::rotate(K, degrees, x, y, z); }
+    void scale(F32 x, F32 y, F32 z) { RKRenderMatrix::scale(K, x, y, z); }
+    void scale(const glm::vec3& v) { RKRenderMatrix::scale(K, v); }
+    void ortho(F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar) { RKRenderMatrix::ortho(K, left, right, bottom, top, zNear, zFar); }
+    const glm::mat4& get() const { return RKRenderMatrix::get(K); }
 
 private:
     U32 mDepth;

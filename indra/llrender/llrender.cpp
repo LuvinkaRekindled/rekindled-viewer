@@ -90,15 +90,15 @@ U32 LLRender::sSegmentEpoch = 1;
 void LLRender::segmentBoundary()
 {
     gRender.flush();        // immediate mode batches vertices until the next state change: the batch of the widget drawn last belongs to the stretch of records it was drawn in, with its texture
-    LLVkAsync::segmentBoundary();
+    RKVkAsync::segmentBoundary();
     ++sSegmentEpoch;
     for (LLTexUnit& unit : gRender.mTexUnits)
     {
         unit.mCurrTexture = 0;
     }
-    if (LLVkAsync::mainOnlyProducer())
+    if (RKVkAsync::mainOnlyProducer())
     {
-        LLShaderProgram::announceBound();
+        RKShaderProgram::announceBound();
     }
 }
 LLRender::UiCensusScope::UiCensusScope(int slot) : mSlot(sUiHashing ? slot : -1), mStart(sUiHashing ? __rdtsc() : 0) {}
@@ -164,20 +164,20 @@ static const TextureWrap sTextureWrap[] =
 
 const U32 immediate_mask = LLVertexBuffer::MAP_VERTEX | LLVertexBuffer::MAP_COLOR | LLVertexBuffer::MAP_TEXCOORD0;
 
-static const LLRenderState::BlendFactor sBlendFactor[] =
+static const RKRenderState::BlendFactor sBlendFactor[] =
 {
-    LLRenderState::BlendFactor::One,
-    LLRenderState::BlendFactor::Zero,
-    LLRenderState::BlendFactor::DstColor,
-    LLRenderState::BlendFactor::SrcColor,
-    LLRenderState::BlendFactor::OneMinusDstColor,
-    LLRenderState::BlendFactor::OneMinusSrcColor,
-    LLRenderState::BlendFactor::DstAlpha,
-    LLRenderState::BlendFactor::SrcAlpha,
-    LLRenderState::BlendFactor::OneMinusDstAlpha,
-    LLRenderState::BlendFactor::OneMinusSrcAlpha,
+    RKRenderState::BlendFactor::One,
+    RKRenderState::BlendFactor::Zero,
+    RKRenderState::BlendFactor::DstColor,
+    RKRenderState::BlendFactor::SrcColor,
+    RKRenderState::BlendFactor::OneMinusDstColor,
+    RKRenderState::BlendFactor::OneMinusSrcColor,
+    RKRenderState::BlendFactor::DstAlpha,
+    RKRenderState::BlendFactor::SrcAlpha,
+    RKRenderState::BlendFactor::OneMinusDstAlpha,
+    RKRenderState::BlendFactor::OneMinusSrcAlpha,
 
-    LLRenderState::BlendFactor::Zero // 'BF_UNDEF'
+    RKRenderState::BlendFactor::Zero // 'BF_UNDEF'
 };
 
 LLTexUnit::LLTexUnit(S32 index)
@@ -209,7 +209,7 @@ static inline void ll_bindTexUnit_impl(S32 unit_index, U32 texture, const char* 
         sNextFile = nullptr;
         sNextLine = 0;
     }
-    LLVkTex::bindSlot(unit_index, texture);
+    RKVkTex::bindSlot(unit_index, texture);
 }
 #define ll_bindTexUnit(unit, texture) ll_bindTexUnit_impl(unit, texture, __func__)
 
@@ -238,7 +238,7 @@ void LLTexUnit::refreshState(void)
 
 void LLTexUnit::clear()
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_STATE);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_STATE);
     if (mIndex < 0) return;
 
     if (mCurrTexType != TT_NONE)
@@ -248,7 +248,7 @@ void LLTexUnit::clear()
     }
 }
 
-void LLTexUnit::applyTexOptions(LLImageTex* gl_tex)
+void LLTexUnit::applyTexOptions(RKImageTex* gl_tex)
 {
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
@@ -261,8 +261,8 @@ void LLTexUnit::applyTexOptions(LLImageTex* gl_tex)
 
 void LLTexUnit::bindFast(LLTexture* texture)
 {
-    if (LLUniCensus::sOn) LLUniCensus::note_tex();
-    LLImageTex* gl_tex = texture->getImageTexture();
+    if (RKUniCensus::sOn) RKUniCensus::note_tex();
+    RKImageTex* gl_tex = texture->getImageTexture();
     texture->setActive();
     mCurrTexture = gl_tex->getTexName();
     mCurrTexType = gl_tex->getTarget();
@@ -273,7 +273,7 @@ void LLTexUnit::bindFast(LLTexture* texture)
         texture->forceImmediateUpdate();
         gl_tex->forceUpdateBindStats();
         // <FS> the update may just have made the texture: bind that one (the name read before it was 0, which drew the face white for the frame the texture appeared in)
-        if (LLImageTex* updated = texture->getImageTexture())
+        if (RKImageTex* updated = texture->getImageTexture())
         {
             gl_tex = updated;
             mCurrTexture = gl_tex->getTexName();
@@ -296,7 +296,7 @@ void LLTexUnit::bindFast(LLTexture* texture)
 
 U32 LLTexUnit::prepareFast(LLTexture* texture)
 {
-    LLImageTex* gl_tex = texture->getImageTexture();
+    RKImageTex* gl_tex = texture->getImageTexture();
     if (gl_tex->mTexOptionsDirty)
     {
         // the options are set on the bound texture: the full path
@@ -311,7 +311,7 @@ U32 LLTexUnit::prepareFast(LLTexture* texture)
         texture->forceImmediateUpdate();
         gl_tex->forceUpdateBindStats();
         // <FS> the update may just have made the texture: its name now, not the 0 read before (the face was drawn white for the frame it appeared in)
-        if (LLImageTex* updated = texture->getImageTexture())
+        if (RKImageTex* updated = texture->getImageTexture())
         {
             name = updated->getTexName();
         }
@@ -326,14 +326,14 @@ U32 LLTexUnit::prepareFast(LLTexture* texture)
 bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
 {
     LLRender::UiCensusScope ui_census(6);
-    if (LLUniCensus::sOn) LLUniCensus::note_tex();
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
+    if (RKUniCensus::sOn) RKUniCensus::note_tex();
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_BIND);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
     if (mIndex >= 0)
     {
         gRender.flush();
 
-        LLImageTex* gl_tex = NULL ;
+        RKImageTex* gl_tex = NULL ;
 
         if (texture != NULL && (gl_tex = texture->getImageTexture()))
         {
@@ -389,11 +389,11 @@ bool LLTexUnit::bind(LLTexture* texture, bool for_rendering, bool forceBind)
     return true;
 }
 
-bool LLTexUnit::bind(LLImageTex* texture, bool for_rendering, bool forceBind, S32 usename)
+bool LLTexUnit::bind(RKImageTex* texture, bool for_rendering, bool forceBind, S32 usename)
 {
     LLRender::UiCensusScope ui_census(6);
-    if (LLUniCensus::sOn) LLUniCensus::note_tex();
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_BIND);
+    if (RKUniCensus::sOn) RKUniCensus::note_tex();
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_BIND);
     if (mIndex < 0) return false;
 
     U32 texname = usename ? usename : texture->getTexName();
@@ -406,9 +406,9 @@ bool LLTexUnit::bind(LLImageTex* texture, bool for_rendering, bool forceBind, S3
 
     if(!texname)
     {
-        if(LLImageTex::sDefaultImageTexture && LLImageTex::sDefaultImageTexture->getTexName())
+        if(RKImageTex::sDefaultImageTexture && RKImageTex::sDefaultImageTexture->getTexName())
         {
-            return bind(LLImageTex::sDefaultImageTexture) ;
+            return bind(RKImageTex::sDefaultImageTexture) ;
         }
         return false ;
     }
@@ -435,7 +435,7 @@ bool LLTexUnit::bind(LLImageTex* texture, bool for_rendering, bool forceBind, S3
 
 bool LLTexUnit::bind(LLCubeMap* cubeMap)
 {
-    if (LLUniCensus::sOn) LLUniCensus::note_tex();
+    if (RKUniCensus::sOn) RKUniCensus::note_tex();
     if (mIndex < 0) return false;
 
     gRender.flush();
@@ -475,7 +475,7 @@ bool LLTexUnit::bind(LLCubeMap* cubeMap)
 // LLRenderTarget is unavailible on the mapserver since it uses FBOs.
 bool LLTexUnit::bind(LLRenderTarget* renderTarget, bool bindDepth)
 {
-    if (LLUniCensus::sOn) LLUniCensus::note_tex();
+    if (RKUniCensus::sOn) RKUniCensus::note_tex();
     if (mIndex < 0) return false;
 
     gRender.flush();
@@ -497,10 +497,10 @@ bool LLTexUnit::bind(LLRenderTarget* renderTarget, bool bindDepth)
 bool LLTexUnit::bindManual(eTextureType type, U32 texture, bool hasMips, const char* file, int line)
 {
     LLRender::UiCensusScope ui_census(6);
-    if (LLUniCensus::sOn) LLUniCensus::note_tex();
+    if (RKUniCensus::sOn) RKUniCensus::note_tex();
     sNextFile = file;
     sNextLine = line;
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_MANUAL);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_MANUAL);
     if (mIndex < 0)
     {
         return false;
@@ -527,7 +527,7 @@ static std::map<std::string, U64> sWhiteOverSites;                 // call site 
 
 void LLTexUnit::bindWhite(const char* file, int line)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_UNBIND);
     if (mIndex < 0) return;
     gRender.flush();
     sNextFile = file;
@@ -546,7 +546,7 @@ void LLTexUnit::bindWhiteFast(const char* file, int line)
 {
     sNextFile = file;
     sNextLine = line;
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_UNBIND);
     if (mIndex < 0) return;
     mCurrTexture = 0;
     ll_bindTexUnit(mIndex, sWhiteTexture);
@@ -554,7 +554,7 @@ void LLTexUnit::bindWhiteFast(const char* file, int line)
 
 void LLTexUnit::bindNone(eTextureType type)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_UNBIND);
     if (mIndex < 0) return;
     gRender.flush();
     mCurrTexture = 0;
@@ -565,7 +565,7 @@ void LLTexUnit::unbind(eTextureType type, const char* file, int line)
 {
     sNextFile = file;
     sNextLine = line;
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_UNBIND);
 
     if (mIndex < 0) return;
 
@@ -593,7 +593,7 @@ void LLTexUnit::unbindFast(eTextureType type, const char* file, int line)
 {
     sNextFile = file;
     sNextLine = line;
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_UNBIND);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_UNBIND);
 
     // Disabled caching of binding state.
     if (mCurrTexType == type)
@@ -613,7 +613,7 @@ void LLTexUnit::unbindFast(eTextureType type, const char* file, int line)
 
 void LLTexUnit::setTextureAddressMode(eTextureAddressMode mode)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_OPTIONS);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_OPTIONS);
     if (mIndex < 0 || mCurrTexture == 0) return;
 
     gRender.flush();
@@ -625,21 +625,21 @@ void LLTexUnit::setTextureAddressMode(eTextureAddressMode mode)
 struct TexParams
 {
     U32 mId;
-    LLVkFormat::Setting mE[8];
+    RKVkFormat::Setting mE[8];
     U32 mN = 0;
     explicit TexParams(U32 id) : mId(id) {}
-    void add(const LLVkFormat::Setting& s) { mE[mN++] = s; }
-    ~TexParams() { LLVkTex::params(mId, mE, mN); }
+    void add(const RKVkFormat::Setting& s) { mE[mN++] = s; }
+    ~TexParams() { RKVkTex::params(mId, mE, mN); }
 };
 
 void LLTexUnit::applyAddressMode(U32 tex_name, eTextureType tex_type, eTextureAddressMode mode)
 {
     TexParams p(tex_name);
-    p.add(LLVkFormat::setWrapS(sTextureWrap[mode]));
-    p.add(LLVkFormat::setWrapT(sTextureWrap[mode]));
+    p.add(RKVkFormat::setWrapS(sTextureWrap[mode]));
+    p.add(RKVkFormat::setWrapT(sTextureWrap[mode]));
     if (tex_type == TT_CUBE_MAP || tex_type == TT_CUBE_MAP_ARRAY || tex_type == TT_TEXTURE_3D)
     {
-        p.add(LLVkFormat::setWrapR(sTextureWrap[mode]));
+        p.add(RKVkFormat::setWrapR(sTextureWrap[mode]));
     }
 }
 
@@ -650,7 +650,7 @@ void LLTexUnit::setTextureAddressModeFast(eTextureAddressMode mode, eTextureType
 
 void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions option)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_TEXUNIT_OPTIONS);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_TEXUNIT_OPTIONS);
     if (mIndex < 0 || mCurrTexture == 0 || mCurrTexType == LLTexUnit::TT_MULTISAMPLE_TEXTURE) return;
 
     gRender.flush();
@@ -661,30 +661,30 @@ void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions optio
 void LLTexUnit::applyFilteringOption(U32 tex_name, eTextureType tex_type, LLTexUnit::eTextureFilterOptions option, bool has_mips)
 {
     TexParams p(tex_name);
-    p.add(LLVkFormat::setMagFilter(option == TFO_POINT ? TextureFilter::Nearest : TextureFilter::Linear));
+    p.add(RKVkFormat::setMagFilter(option == TFO_POINT ? TextureFilter::Nearest : TextureFilter::Linear));
 
     if (option >= TFO_TRILINEAR && has_mips)
     {
-        p.add(LLVkFormat::setMinFilter(TextureFilter::LinearMipLinear));
+        p.add(RKVkFormat::setMinFilter(TextureFilter::LinearMipLinear));
     }
     else if (option >= TFO_BILINEAR)
     {
-        p.add(LLVkFormat::setMinFilter(has_mips ? TextureFilter::LinearMipNearest : TextureFilter::Linear));
+        p.add(RKVkFormat::setMinFilter(has_mips ? TextureFilter::LinearMipNearest : TextureFilter::Linear));
     }
     else
     {
-        p.add(LLVkFormat::setMinFilter(has_mips ? TextureFilter::NearestMipNearest : TextureFilter::Nearest));
+        p.add(RKVkFormat::setMinFilter(has_mips ? TextureFilter::NearestMipNearest : TextureFilter::Nearest));
     }
 
     if (gDeviceCaps.mHasAnisotropic)
     {
-        if (LLImageTex::sGlobalUseAnisotropic && option == TFO_ANISOTROPIC)
+        if (RKImageTex::sGlobalUseAnisotropic && option == TFO_ANISOTROPIC)
         {
-            p.add(LLVkFormat::setAnisotropy(gDeviceCaps.mMaxAnisotropy));
+            p.add(RKVkFormat::setAnisotropy(gDeviceCaps.mMaxAnisotropy));
         }
         else
         {
-            p.add(LLVkFormat::setAnisotropy(1.f));
+            p.add(RKVkFormat::setAnisotropy(1.f));
         }
     }
 }
@@ -924,7 +924,7 @@ bool LLRender::init(bool needs_vertex_buffer)
 
     if (needs_vertex_buffer)
     {
-        LLVkState::setCullFace(LLRenderState::CullFace::Back);
+        RKVkState::setCullFace(RKRenderState::CullFace::Back);
     }
 
     // necessary for reflection maps
@@ -935,7 +935,7 @@ bool LLRender::init(bool needs_vertex_buffer)
     }
 
     // <FS:Ansariel> Don't ignore OpenGL max line width
-    mMaxLineWidthAliased = LLVk::Context::instance().getCaps().mLineWidthRange[1];
+    mMaxLineWidthAliased = RKVk::Context::instance().getCaps().mLineWidthRange[1];
     mMaxLineWidthSmooth = mMaxLineWidthAliased;
     // </FS:Ansariel>
 
@@ -1001,7 +1001,7 @@ void LLRender::setAlphaLights(const F32* rows, S32 count)
 
 void LLRender::syncLightState()
 {
-    LLShaderProgram *shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram *shader = RKShaderProgram::sCurBoundShaderPtr;
 
     if (!shader)
     {
@@ -1030,7 +1030,7 @@ void LLRender::syncLightState()
     static const bool light_log = getenv("LL_VK_LIGHTLOG") != nullptr;
     if (light_log)
     {   // diagnostic: the light state a program is given (and whether it is uploaded at all): one line when the lit slots differ from the last line of this program, or every 300 calls
-        static std::map<const LLShaderProgram*, std::pair<std::string, U32>> last;
+        static std::map<const RKShaderProgram*, std::pair<std::string, U32>> last;
         std::string sig;
         char buf[160];
         for (U32 i = 1; i < LL_NUM_LIGHT_UNITS; ++i)
@@ -1091,7 +1091,7 @@ void LLRender::syncLightState()
 
 void LLRender::syncMatrices()
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SYNC_MATRICES);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_SYNC_MATRICES);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
 
     static const U32 name[] =
@@ -1104,7 +1104,7 @@ void LLRender::syncMatrices()
         LLShaderMgr::TEXTURE_MATRIX3,
     };
 
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
     if (shader && shader->mMatEpoch != sSegmentEpoch)
     {
         // <FS> a UI segment was recorded or replayed since: what this shader was given is unknown, send the matrices again
@@ -1240,11 +1240,11 @@ void LLRender::syncMatrices()
             if (mMatHash[i] != shader->mMatHash[i])
             {
                 const F32* texture_matrix = glm::value_ptr(mMatrix[i][mMatIdx[i]]);
-                if (LLVkTexAnim::isParams(texture_matrix))
+                if (RKVkTexAnim::isParams(texture_matrix))
                 {
                     // <FS> a texture animation's matrix slot holds its parameters (rkvktexanim.h): a program that is not a pull program gets the matrix they give now
                     F32 evaluated[16];
-                    LLVkTexAnim::evaluateNow(texture_matrix, evaluated);
+                    RKVkTexAnim::evaluateNow(texture_matrix, evaluated);
                     shader->uniformMatrix4fv(name[i], 1, false, evaluated);
                 }
                 else
@@ -1265,7 +1265,7 @@ void LLRender::syncMatrices()
 
 void LLRender::translateOf(eMatrixMode mode, const glm::vec3& v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_XFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_MATRIX_XFORM);
     flush();
 
     {
@@ -1276,7 +1276,7 @@ void LLRender::translateOf(eMatrixMode mode, const glm::vec3& v)
 
 void LLRender::scaleOf(eMatrixMode mode, const glm::vec3& v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_XFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_MATRIX_XFORM);
     flush();
 
     {
@@ -1287,7 +1287,7 @@ void LLRender::scaleOf(eMatrixMode mode, const glm::vec3& v)
 
 void LLRender::orthoOf(eMatrixMode mode, F32 left, F32 right, F32 bottom, F32 top, F32 zNear, F32 zFar)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_LOAD);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_MATRIX_LOAD);
     flush();
 
     {
@@ -1298,7 +1298,7 @@ void LLRender::orthoOf(eMatrixMode mode, F32 left, F32 right, F32 bottom, F32 to
 
 void LLRender::rotateOf(eMatrixMode mode, F32 degrees, const glm::vec3& axis)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_XFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_MATRIX_XFORM);
     flush();
 
     {
@@ -1309,7 +1309,7 @@ void LLRender::rotateOf(eMatrixMode mode, F32 degrees, const glm::vec3& axis)
 
 void LLRender::pushMatrixOf(eMatrixMode mode)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_STACK);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_MATRIX_STACK);
     flush();
 
     {
@@ -1327,7 +1327,7 @@ void LLRender::pushMatrixOf(eMatrixMode mode)
 
 void LLRender::popMatrixOf(eMatrixMode mode)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_STACK);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_MATRIX_STACK);
     flush();
     {
         if (mMatIdx[mode] > 0)
@@ -1344,7 +1344,7 @@ void LLRender::popMatrixOf(eMatrixMode mode)
 
 void LLRender::setMatrixOf(eMatrixMode mode, const glm::mat4& m)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_LOAD);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_MATRIX_LOAD);
     flush();
     {
         mMatrix[mode][mMatIdx[mode]] = m;
@@ -1354,7 +1354,7 @@ void LLRender::setMatrixOf(eMatrixMode mode, const glm::mat4& m)
 
 void LLRender::multMatrixOf(eMatrixMode mode, const glm::mat4& m)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_LOAD);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_MATRIX_LOAD);
     flush();
     {
         mMatrix[mode][mMatIdx[mode]] *= m;
@@ -1364,7 +1364,7 @@ void LLRender::multMatrixOf(eMatrixMode mode, const glm::mat4& m)
 
 void LLRender::loadIdentityOf(eMatrixMode mode)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_MATRIX_LOAD);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_MATRIX_LOAD);
     flush();
 
     {
@@ -1487,13 +1487,13 @@ void LLRender::setColorMask(bool writeColorR, bool writeColorG, bool writeColorB
         mCurrColorMask[2] = writeColorB;
         mCurrColorMask[3] = writeAlpha;
 
-        LLVkState::setColorMask(writeColorR, writeColorG, writeColorB, writeAlpha);
+        RKVkState::setColorMask(writeColorR, writeColorG, writeColorB, writeAlpha);
     }
 }
 
 void LLRender::clearBuffers(ClearBits mask)
 {
-    LLVkTarget::clear(hasBits(mask, ClearBits::Color), hasBits(mask, ClearBits::Depth), mClearColor);
+    RKVkTarget::clear(hasBits(mask, ClearBits::Color), hasBits(mask, ClearBits::Depth), mClearColor);
 }
 
 void LLRender::setClearColor(F32 r, F32 g, F32 b, F32 a)
@@ -1503,22 +1503,22 @@ void LLRender::setClearColor(F32 r, F32 g, F32 b, F32 a)
 
 void LLRender::setViewport(S32 x, S32 y, S32 width, S32 height)
 {
-    LLVkState::setViewport(x, y, width, height);
+    RKVkState::setViewport(x, y, width, height);
 }
 
-void LLRender::setCullFace(LLRenderState::CullFace face)
+void LLRender::setCullFace(RKRenderState::CullFace face)
 {
-    LLVkState::setCullFace(face);
+    RKVkState::setCullFace(face);
 }
 
 void LLRender::setPolygonOffset(F32 factor, F32 units)
 {
-    LLVkState::setPolygonOffset(factor, units);
+    RKVkState::setPolygonOffset(factor, units);
 }
 
-void LLRender::setPolygonMode(LLRenderState::PolygonMode mode)
+void LLRender::setPolygonMode(RKRenderState::PolygonMode mode)
 {
-    LLVkState::setPolygonMode(mode);
+    RKVkState::setPolygonMode(mode);
 }
 
 void LLRender::setPointSize(F32 size)
@@ -1526,123 +1526,123 @@ void LLRender::setPointSize(F32 size)
     (void)size;         // nothing reads a point size
 }
 
-void LLRender::setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask)
+void LLRender::setStencilFunc(RKRenderState::CompareOp op, S32 ref, U32 mask)
 {
-    LLVkState::setStencilFunc(op, ref, mask);
+    RKVkState::setStencilFunc(op, ref, mask);
 }
 
-void LLRender::setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass)
+void LLRender::setStencilOp(RKRenderState::StencilOp sfail, RKRenderState::StencilOp dpfail, RKRenderState::StencilOp dppass)
 {
-    LLVkState::setStencilOp(sfail, dpfail, dppass);
+    RKVkState::setStencilOp(sfail, dpfail, dppass);
 }
 
 void LLRender::setStencilMask(U32 mask)
 {
-    LLVkState::setStencilMask(mask);
+    RKVkState::setStencilMask(mask);
 }
 
 void LLRender::readPixels(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* data, const char* file, int line)
 {
-    LLVkTarget::readPixels(LLRenderTarget::currentId(file, line), x, y, width, height, format, type, data, file, line);
+    RKVkTarget::readPixels(LLRenderTarget::currentId(file, line), x, y, width, height, format, type, data, file, line);
 }
 
-std::shared_ptr<LLReadbackTicket> ll_read_pixels_async(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes)
+std::shared_ptr<RKReadbackTicket> ll_read_pixels_async(S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes)
 {
-    return LLVkTarget::readPixelsAsync(LLRenderTarget::currentId(__FILE__, __LINE__), x, y, width, height, format, type, bytes, __FILE__, __LINE__);
+    return RKVkTarget::readPixelsAsync(LLRenderTarget::currentId(__FILE__, __LINE__), x, y, width, height, format, type, bytes, __FILE__, __LINE__);
 }
 
 void LLRender::genQueries(S32 count, U32* ids)
 {
-    LLVkQuery::create(count, ids);
+    RKVkQuery::create(count, ids);
 }
 
 void LLRender::deleteQueries(S32 count, const U32* ids)
 {
-    LLVkQuery::destroy(count, ids);
+    RKVkQuery::destroy(count, ids);
 }
 
 void LLRender::beginQuery(QueryKind kind, U32 id)
 {
-    LLVkQuery::begin((LLVkQuery::Kind)kind, id);
+    RKVkQuery::begin((RKVkQuery::Kind)kind, id);
 }
 
 void LLRender::endQuery(QueryKind kind)
 {
-    LLVkQuery::end((LLVkQuery::Kind)kind);
+    RKVkQuery::end((RKVkQuery::Kind)kind);
 }
 
 bool LLRender::queryReady(U32 id)
 {
-    return LLVkQuery::ready(id);
+    return RKVkQuery::ready(id);
 }
 
 U64 LLRender::queryResult(U32 id)
 {
-    return LLVkQuery::result(id);
+    return RKVkQuery::result(id);
 }
 
 void LLRender::genBuffers(S32 count, U32* ids)
 {
-    LLVkBuf::create(count, ids);
+    RKVkBuf::create(count, ids);
 }
 
 void LLRender::deleteBuffers(S32 count, const U32* ids)
 {
-    LLVkBuf::destroy(count, ids);
+    RKVkBuf::destroy(count, ids);
 }
 
 void LLRender::bufferData(U32 buffer, BufferKind kind, S64 size, const void* data)
 {
-    LLVkBuf::setData(buffer, kind, size, data);
+    RKVkBuf::setData(buffer, kind, size, data);
 }
 
 void LLRender::bindUniformBlock(U32 binding, U32 id)
 {
-    LLVkBuf::bindUniformBlock(binding, id);
+    RKVkBuf::bindUniformBlock(binding, id);
 }
 
 void LLRender::copyTexSubImage2D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 x, S32 y, S32 width, S32 height, const LLRenderTarget* source)
 {
-    LLVkTex::copySubImage(texture, target, level, xoffset, yoffset, 0, x, y, width, height, LLRenderTarget::idOf(source));
+    RKVkTex::copySubImage(texture, target, level, xoffset, yoffset, 0, x, y, width, height, LLRenderTarget::idOf(source));
 }
 
 void LLRender::copyTexSubImage3D(U32 texture, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, const LLRenderTarget* source)
 {
-    LLVkTex::copySubImage(texture, target, level, xoffset, yoffset, zoffset, x, y, width, height, LLRenderTarget::idOf(source));
+    RKVkTex::copySubImage(texture, target, level, xoffset, yoffset, zoffset, x, y, width, height, LLRenderTarget::idOf(source));
 }
 
 void LLRender::generateMipmap(U32 texture)
 {
-    LLVkTex::generateMipmap(texture);
+    RKVkTex::generateMipmap(texture);
 }
 
 void LLRender::setTexFilter(U32 texture, bool mag, TextureFilter filter)
 {
-    LLVkTex::set(texture, mag ? LLVkFormat::setMagFilter(filter) : LLVkFormat::setMinFilter(filter));
+    RKVkTex::set(texture, mag ? RKVkFormat::setMagFilter(filter) : RKVkFormat::setMinFilter(filter));
 }
 
 void LLRender::setTexWrap(U32 texture, TextureWrap s, TextureWrap t)
 {
-    const LLVkFormat::Setting settings[2] = { LLVkFormat::setWrapS(s), LLVkFormat::setWrapT(t) };
-    LLVkTex::params(texture, settings, 2);
+    const RKVkFormat::Setting settings[2] = { RKVkFormat::setWrapS(s), RKVkFormat::setWrapT(t) };
+    RKVkTex::params(texture, settings, 2);
 }
 
-void LLRender::setTexCompare(U32 texture, bool on, LLRenderState::CompareOp func)
+void LLRender::setTexCompare(U32 texture, bool on, RKRenderState::CompareOp func)
 {
     if (on)
     {
-        const LLVkFormat::Setting settings[2] = { LLVkFormat::setCompareMode(true), LLVkFormat::setCompareFunc(func) };
-        LLVkTex::params(texture, settings, 2);
+        const RKVkFormat::Setting settings[2] = { RKVkFormat::setCompareMode(true), RKVkFormat::setCompareFunc(func) };
+        RKVkTex::params(texture, settings, 2);
     }
     else
     {
-        LLVkTex::set(texture, LLVkFormat::setCompareMode(false));
+        RKVkTex::set(texture, RKVkFormat::setCompareMode(false));
     }
 }
 
 void LLRender::texImage2D(U32 texture, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* data, const char* file, int line)
 {
-    LLVkTex::image2D(texture, target, level, internal_format, width, height, format, type, data, file, line);
+    RKVkTex::image2D(texture, target, level, internal_format, width, height, format, type, data, file, line);
 }
 
 void LLRender::bindTextureSlot(S32 unit, U32 id)
@@ -1652,32 +1652,32 @@ void LLRender::bindTextureSlot(S32 unit, U32 id)
         sSlotId[unit] = id;
         sSlotWriter[unit] = "bindTextureSlot";
     }
-    LLVkTex::bindSlot(unit, id);
+    RKVkTex::bindSlot(unit, id);
 }
 
 void LLRender::deleteTextures(S32 count, const U32* ids)
 {
-    LLVkTex::destroy(count, ids);
+    RKVkTex::destroy(count, ids);
 }
 
 void LLRender::setScissor(S32 x, S32 y, S32 width, S32 height)
 {
-    LLVkState::setScissor(x, y, width, height);
+    RKVkState::setScissor(x, y, width, height);
 }
 
 void LLRender::getTexLevelParameteriv(U32 texture, TextureTarget target, S32 level, LevelQuery query, S32* result)
 {
-    *result = LLVkTex::levelParameter(texture, target, level, query);
+    *result = RKVkTex::levelParameter(texture, target, level, query);
 }
 
 void LLRender::getTexImage(U32 texture, TextureTarget target, S32 level, PixelFormat format, ComponentType type, void* pixels, const char* file, int line)
 {
-    LLVkTex::getImage(texture, target, level, format, type, pixels, file, line);
+    RKVkTex::getImage(texture, target, level, format, type, pixels, file, line);
 }
 
 void LLRender::setSceneBlendType(eBlendType type)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_BLEND);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_BLEND);
     switch (type)
     {
         case BT_ALPHA:
@@ -1709,7 +1709,7 @@ void LLRender::setSceneBlendType(eBlendType type)
 
 void LLRender::blendFunc(eBlendFactor sfactor, eBlendFactor dfactor)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_BLEND);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_BLEND);
     llassert(sfactor < BF_UNDEF);
     llassert(dfactor < BF_UNDEF);
     if (mCurrBlendColorSFactor != sfactor || mCurrBlendColorDFactor != dfactor ||
@@ -1720,14 +1720,14 @@ void LLRender::blendFunc(eBlendFactor sfactor, eBlendFactor dfactor)
         mCurrBlendColorDFactor = dfactor;
         mCurrBlendAlphaDFactor = dfactor;
         flush();
-        LLVkState::setBlendFunc(sBlendFactor[sfactor], sBlendFactor[dfactor], sBlendFactor[sfactor], sBlendFactor[dfactor]);
+        RKVkState::setBlendFunc(sBlendFactor[sfactor], sBlendFactor[dfactor], sBlendFactor[sfactor], sBlendFactor[dfactor]);
     }
 }
 
 void LLRender::blendFunc(eBlendFactor color_sfactor, eBlendFactor color_dfactor,
              eBlendFactor alpha_sfactor, eBlendFactor alpha_dfactor)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_BLEND);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_BLEND);
     llassert(color_sfactor < BF_UNDEF);
     llassert(color_dfactor < BF_UNDEF);
     llassert(alpha_sfactor < BF_UNDEF);
@@ -1742,7 +1742,7 @@ void LLRender::blendFunc(eBlendFactor color_sfactor, eBlendFactor color_dfactor,
         mCurrBlendAlphaDFactor = alpha_dfactor;
         flush();
 
-        LLVkState::setBlendFunc(sBlendFactor[color_sfactor], sBlendFactor[color_dfactor],
+        RKVkState::setBlendFunc(sBlendFactor[color_sfactor], sBlendFactor[color_dfactor],
                                 sBlendFactor[alpha_sfactor], sBlendFactor[alpha_dfactor]);
     }
 }
@@ -1794,7 +1794,7 @@ void LLRender::setLineWidth(F32 line_width)
             flush();
         }
         mLineWidth = line_width;
-        LLVkState::setLineWidth(line_width);
+        RKVkState::setLineWidth(line_width);
     }
 }
 // </FS>
@@ -1810,7 +1810,7 @@ void LLRender::beginList(std::list<LLVertexBufferData> *list)
     {
         LL_ERRS() << "beginList called while another list is open." << LL_ENDL;
     }
-    llassert(LLShaderProgram::sCurBoundShaderPtr == &gUIProgram);
+    llassert(RKShaderProgram::sCurBoundShaderPtr == &gUIProgram);
     flush();
     sBufferDataList = list;
 }
@@ -1907,7 +1907,7 @@ void note(bool has_texcoord, U32 count, const char* tex_file, int tex_line)
     if (kind)
     {
         const char* writer = sSlotWriter[0] ? sSlotWriter[0] : "nobody";
-        const std::string shader = LLShaderProgram::sCurBoundShaderPtr ? LLShaderProgram::sCurBoundShaderPtr->mName : std::string("?");
+        const std::string shader = RKShaderProgram::sCurBoundShaderPtr ? RKShaderProgram::sCurBoundShaderPtr->mName : std::string("?");
         std::string site;
         if (sSlotFile[0])
         {
@@ -1967,8 +1967,8 @@ void LLRender::flush()
             sUiCensusVerts += mCount;
         }
         LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
-        LLVkAsync::FrontLap front_lap(LLVkAsync::FP_FLUSH);
-        llassert_always(LLShaderProgram::sCurBoundShaderPtr != nullptr);
+        RKVkAsync::FrontLap front_lap(RKVkAsync::FP_FLUSH);
+        llassert_always(RKShaderProgram::sCurBoundShaderPtr != nullptr);
 
         if (!mUIOffset.empty())
         {
@@ -2004,7 +2004,7 @@ void LLRender::flush()
 
             LLVertexBuffer *vb;
 
-            U32 attribute_mask = LLShaderProgram::sCurBoundShaderPtr->mAttributeMask;
+            U32 attribute_mask = RKShaderProgram::sCurBoundShaderPtr->mAttributeMask;
 
             if (sBufferDataList)
             {
@@ -2024,8 +2024,8 @@ void LLRender::flush()
             else
             {
                 // F3.1: the vertices travel in the draw record (no vertex buffer, no hash cache): position always, texcoord and colour when the shader reads them
-                static_assert((U32)LLVkAsync::SCRATCH_POSITION == (U32)LLVertexBuffer::MAP_VERTEX && (U32)LLVkAsync::SCRATCH_TEXCOORD0 == (U32)LLVertexBuffer::MAP_TEXCOORD0 &&
-                              (U32)LLVkAsync::SCRATCH_COLOR == (U32)LLVertexBuffer::MAP_COLOR, "scratch attribute bits are the vertex buffer's");
+                static_assert((U32)RKVkAsync::SCRATCH_POSITION == (U32)LLVertexBuffer::MAP_VERTEX && (U32)RKVkAsync::SCRATCH_TEXCOORD0 == (U32)LLVertexBuffer::MAP_TEXCOORD0 &&
+                              (U32)RKVkAsync::SCRATCH_COLOR == (U32)LLVertexBuffer::MAP_COLOR, "scratch attribute bits are the vertex buffer's");
                 if (attribute_mask & ~immediate_mask)
                 {
                     LL_WARNS_ONCE("Vulkan") << "immediate mode: the bound shader reads attributes (mask 0x" << std::hex << attribute_mask << std::dec << ") that immediate vertices do not have: they read the constant value" << LL_ENDL;
@@ -2046,10 +2046,10 @@ void LLRender::flush()
                     sUiHashAccum = h;
                     sUiHashCycles += __rdtsc() - t0;
                 }
-                LLVkAsync::FrontLap draw_lap(LLVkAsync::FP_DRAW);
+                RKVkAsync::FrontLap draw_lap(RKVkAsync::FP_DRAW);
                 ++LLVertexBuffer::sDrawCalls;
                 gRender.syncMatrices();
-                LLVkAsync::drawScratch(LLVertexBuffer::sPrimitive[mMode], (S32)count, (attribute_mask & immediate_mask) | LLVertexBuffer::MAP_VERTEX,
+                RKVkAsync::drawScratch(LLVertexBuffer::sPrimitive[mMode], (S32)count, (attribute_mask & immediate_mask) | LLVertexBuffer::MAP_VERTEX,
                                        mVerticesp.get(), mTexcoordsp.get(), mColorsp.get());
             }
         }
@@ -2270,7 +2270,7 @@ void LLRender::texCoord2fv(const F32* tc, const char* file, int line)
 
 void LLRender::color4ub(const U8& r, const U8& g, const U8& b, const U8& a)
 {
-    if (!LLShaderProgram::sCurBoundShaderPtr || LLShaderProgram::sCurBoundShaderPtr->mAttributeMask & LLVertexBuffer::MAP_COLOR)
+    if (!RKShaderProgram::sCurBoundShaderPtr || RKShaderProgram::sCurBoundShaderPtr->mAttributeMask & LLVertexBuffer::MAP_COLOR)
     {
         mColorsp[mCount] = LLColor4U(r,g,b,a);
     }
@@ -2309,7 +2309,7 @@ void LLRender::color3fv(const F32* c)
 
 void LLRender::diffuseColor3f(F32 r, F32 g, F32 b)
 {
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2320,7 +2320,7 @@ void LLRender::diffuseColor3f(F32 r, F32 g, F32 b)
 
 void LLRender::diffuseColor3fv(const F32* c)
 {
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2331,7 +2331,7 @@ void LLRender::diffuseColor3fv(const F32* c)
 
 void LLRender::diffuseColor4f(F32 r, F32 g, F32 b, F32 a)
 {
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2342,7 +2342,7 @@ void LLRender::diffuseColor4f(F32 r, F32 g, F32 b, F32 a)
 
 void LLRender::diffuseColor4fv(const F32* c)
 {
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2353,7 +2353,7 @@ void LLRender::diffuseColor4fv(const F32* c)
 
 void LLRender::diffuseColor4ubv(const U8* c)
 {
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2364,7 +2364,7 @@ void LLRender::diffuseColor4ubv(const U8* c)
 
 void LLRender::diffuseColor4ub(U8 r, U8 g, U8 b, U8 a)
 {
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
     llassert(shader != NULL);
 
     if (shader)
@@ -2495,7 +2495,7 @@ glm::vec3 mul_mat4_vec3(const glm::mat4& mat, const glm::vec3& vec)
 
 
 // ---- F3.3: the named-matrix operations of rkrendermatrix.h ----
-namespace LLRenderMatrix
+namespace RKRenderMatrix
 {
 
 bool sGuardCheck = []() { const char* e = getenv("LL_VK_MATRIX_GUARD_CHECK"); return e && e[0] == '1'; }();

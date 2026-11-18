@@ -47,7 +47,7 @@ namespace tinygltf
 
 class LLTextureEntry;
 
-class LLGLTFMaterial : public LLAssetRefCount
+class LLGLTFMaterial : public RKAssetRefCount
 {
 public:
 

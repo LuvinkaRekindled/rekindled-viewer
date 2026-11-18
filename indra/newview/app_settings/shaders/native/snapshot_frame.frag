@@ -1,7 +1,7 @@
 // snapshot_frame.frag: the snapshot floater's frame: what lies outside the frame is blurred and gray, a border is drawn around it. A line for line translation of "Snapshot Frame Post"
 // (post/snapshotFrameF.glsl); pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec2 screen_res;
     vec4 frame_rect; // x, y, width, height (normalized 0->1)
@@ -9,7 +9,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float border_thickness; // in pixels
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
 };

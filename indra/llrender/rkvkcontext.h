@@ -43,7 +43,7 @@
 #pragma warning(pop)
 #endif
 
-namespace LLVk
+namespace RKVk
 {
 
 // the size in pixels of the window the renderer presents into (Windows: the client rectangle, Linux: the SDL drawable size)
@@ -601,7 +601,7 @@ void imageBarrier(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect,
                   VkPipelineStageFlags2 src_stage, VkAccessFlags2 src_access,
                   VkPipelineStageFlags2 dst_stage, VkAccessFlags2 dst_access);
 
-} // namespace LLVk
+} // namespace RKVk
 
 #endif // LL_VULKAN
 

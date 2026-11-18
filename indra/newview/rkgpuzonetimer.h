@@ -10,7 +10,7 @@
 #ifndef LL_LLGPUZONETIMER_H
 #define LL_LLGPUZONETIMER_H
 
-class LLGpuZoneTimer
+class RKGpuZoneTimer
 {
 public:
     // Call once per frame, right after the buffer swap. Installs or removes the zone hooks to
@@ -26,11 +26,11 @@ public:
 
 // <FS> CPU zones of the main thread. With the environment variable FS_CPU_ZONES=1 every LL_CPU_ZONE scope adds its wall time to a named, inclusive zone and the log
 // (tag CpuZones) gets a summary of the milliseconds per frame of each zone every 600 frames. Does nothing without the variable.
-class LLCpuZoneScope
+class RKCpuZoneScope
 {
 public:
-    explicit LLCpuZoneScope(const char* name);
-    ~LLCpuZoneScope();
+    explicit RKCpuZoneScope(const char* name);
+    ~RKCpuZoneScope();
     // once per main loop iteration
     static void frame();
 private:
@@ -40,7 +40,7 @@ private:
 };
 #define LL_CPU_ZONE_CAT2(a, b) a##b
 #define LL_CPU_ZONE_CAT(a, b) LL_CPU_ZONE_CAT2(a, b)
-#define LL_CPU_ZONE(name) LLCpuZoneScope LL_CPU_ZONE_CAT(llcpuzone_, __LINE__)(name);
+#define LL_CPU_ZONE(name) RKCpuZoneScope LL_CPU_ZONE_CAT(llcpuzone_, __LINE__)(name);
 
 // LL_VK_HITCHWATCH=<ms>: a watcher thread that, when the main loop has not finished a frame for <ms> (a hitch), writes the stacks of all threads to the log
 // ("HitchWatch" tag), again every 500 ms while the frame is still not done. Called once a frame from the main loop.

@@ -19,7 +19,7 @@
 #include "rkvkasync.h"
 #include "rkvkformat.h"
 
-namespace LLVkTex
+namespace RKVkTex
 {
     // how the client pixels of an upload are laid out (F4: values of the call, no thread state): rows are tightly packed (alignment 1), a row is mRowLength texels when that is not 0 (a sub rectangle of a larger image)
     struct PixelStore
@@ -31,7 +31,7 @@ namespace LLVkTex
     // the records (rkvkasync.cpp writes and reads them)
     enum TexKind : U32 { K_IMAGE2D, K_IMAGE3D, K_SUB2D, K_SUB3D, K_COMPRESSED2D };
     enum TexOpKind : U32 { OPK_MIPMAP, OPK_COPY_SUB, OPK_COPY_IMAGE, OPK_SWIZZLE, OPK_DROP_LEVELS, OPK_COMMIT };
-    struct TexOp { U32 mKind; U32 mTex; LLVkFormat::Target mTarget; U8 mStore; U8 mSwz[4]; U8 mPad8; S32 mLevel; S32 mX0, mY0, mZ0, mX, mY, mW, mH; U32 mSource; };
+    struct TexOp { U32 mKind; U32 mTex; RKVkFormat::Target mTarget; U8 mStore; U8 mSwz[4]; U8 mPad8; S32 mLevel; S32 mX0, mY0, mZ0, mX, mY, mW, mH; U32 mSource; };
 
     // ---- handles: the producer allocates the id, the worker makes and destroys the texture in stream order ----
     void create(S32 count, U32* ids);
@@ -45,9 +45,9 @@ namespace LLVkTex
     void subImage3D(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     void compressedImage2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, S32 image_size, const void* data, const char* file = __builtin_FILE(), int line = __builtin_LINE());
     // sampler and level parameters (wrap, filter, anisotropy, levels, compare, swizzle): written as one record
-    // (F3.6f: typed settings, LLVkFormat::setWrapS ...; a setting acts on the named texture, its dimensionality does not matter, so there is no target)
-    void params(U32 id, const LLVkFormat::Setting* p, U32 count);
-    inline void set(U32 id, const LLVkFormat::Setting& s) { params(id, &s, 1); }
+    // (F3.6f: typed settings, RKVkFormat::setWrapS ...; a setting acts on the named texture, its dimensionality does not matter, so there is no target)
+    void params(U32 id, const RKVkFormat::Setting* p, U32 count);
+    inline void set(U32 id, const RKVkFormat::Setting& s) { params(id, &s, 1); }
     void swizzle(U32 id, const TextureSwizzle* rgba);
     void generateMipmap(U32 id);
     // <FS> native-vk: the texture gives up its top 'levels' mip levels: the image the levels below them make (no draw, no render target). Nothing happens when the texture does not hold its whole mip chain.
@@ -69,24 +69,24 @@ namespace LLVkTex
     void bindSlot(S32 unit, U32 id);
 }
 
-namespace LLVkWorker
+namespace RKVkWorker
 {
     // worker side (or the calling thread in inline mode): the typed handlers, acting on the named texture
-    void tex_image2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, LLVkFormat::Transfer tr, const void* pixels);
-    void tex_image3D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, int depth, LLVkFormat::Transfer tr, const void* pixels);
-    void tex_subimage2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int width, int height, LLVkFormat::Transfer tr, const void* pixels);
-    void tex_subimage3D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, LLVkFormat::Transfer tr, const void* pixels);
-    void tex_compressed2D(unsigned id, const LLVkTex::PixelStore& ps, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int width, int height, int imageSize, const void* data);
-    void tex_params(unsigned id, const LLVkFormat::Setting* settings, unsigned count);
-    void tex_swizzle(unsigned id, const LLVkFormat::Swizzle* rgba);
+    void tex_image2D(unsigned id, const RKVkTex::PixelStore& ps, RKVkFormat::Target tg, int level, RKVkFormat::Store st, int width, int height, RKVkFormat::Transfer tr, const void* pixels);
+    void tex_image3D(unsigned id, const RKVkTex::PixelStore& ps, RKVkFormat::Target tg, int level, RKVkFormat::Store st, int width, int height, int depth, RKVkFormat::Transfer tr, const void* pixels);
+    void tex_subimage2D(unsigned id, const RKVkTex::PixelStore& ps, RKVkFormat::Target tg, int level, int xoffset, int yoffset, int width, int height, RKVkFormat::Transfer tr, const void* pixels);
+    void tex_subimage3D(unsigned id, const RKVkTex::PixelStore& ps, RKVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int width, int height, int depth, RKVkFormat::Transfer tr, const void* pixels);
+    void tex_compressed2D(unsigned id, const RKVkTex::PixelStore& ps, RKVkFormat::Target tg, int level, RKVkFormat::Store st, int width, int height, int imageSize, const void* data);
+    void tex_params(unsigned id, const RKVkFormat::Setting* settings, unsigned count);
+    void tex_swizzle(unsigned id, const RKVkFormat::Swizzle* rgba);
     void tex_mipmap(unsigned id);
     void tex_drop_levels(unsigned id, int levels);
     void tex_commit_image(unsigned id, unsigned staged);
-    void tex_copy_sub(unsigned id, LLVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height, unsigned source);
-    void tex_copy_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Store st, int x, int y, int width, int height, unsigned source);
-    int tex_level_parameter(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Level q);
-    void tex_get_image(unsigned id, LLVkFormat::Target tg, int level, LLVkFormat::Transfer tr, void* out);
-    void tex_get_compressed_image(unsigned id, LLVkFormat::Target tg, int level, void* out);
+    void tex_copy_sub(unsigned id, RKVkFormat::Target tg, int level, int xoffset, int yoffset, int zoffset, int x, int y, int width, int height, unsigned source);
+    void tex_copy_image(unsigned id, RKVkFormat::Target tg, int level, RKVkFormat::Store st, int x, int y, int width, int height, unsigned source);
+    int tex_level_parameter(unsigned id, RKVkFormat::Target tg, int level, RKVkFormat::Level q);
+    void tex_get_image(unsigned id, RKVkFormat::Target tg, int level, RKVkFormat::Transfer tr, void* out);
+    void tex_get_compressed_image(unsigned id, RKVkFormat::Target tg, int level, void* out);
 }
 
 #endif // LL_VULKAN

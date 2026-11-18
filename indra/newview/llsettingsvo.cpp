@@ -724,7 +724,7 @@ inline void draw_real(LLShaderUniforms* shader, F32 value, S32 shader_key)
 
 void LLSettingsVOSky::applyToUniforms(void* ptarget)
 {
-    LLShaderUniforms* shader = &((LLShaderUniforms*)ptarget)[LLShaderProgram::SG_ANY];
+    LLShaderUniforms* shader = &((LLShaderUniforms*)ptarget)[RKShaderProgram::SG_ANY];
 
     draw_color(shader, getAmbientColor(), LLShaderMgr::AMBIENT);
     draw_color(shader, getBlueDensity(), LLShaderMgr::BLUE_DENSITY);
@@ -753,13 +753,13 @@ void LLSettingsVOSky::applySpecial(void *ptarget, bool force)
 
     bool irradiance_pass = gCubeSnapshot && !gPipeline.mReflectionMapManager.isRadiancePass();
 
-    LLShaderUniforms* shader = &((LLShaderUniforms*)ptarget)[LLShaderProgram::SG_DEFAULT];
+    LLShaderUniforms* shader = &((LLShaderUniforms*)ptarget)[RKShaderProgram::SG_DEFAULT];
     {
         shader->uniform3fv(LLViewerShaderMgr::LIGHTNORM, light_direction);
         shader->uniform3fv(LLShaderMgr::WL_CAMPOSLOCAL, LLViewerCamera::getInstance()->getOrigin());
     }
 
-    shader = &((LLShaderUniforms*)ptarget)[LLShaderProgram::SG_SKY];
+    shader = &((LLShaderUniforms*)ptarget)[RKShaderProgram::SG_SKY];
 
     shader->uniform3fv(LLViewerShaderMgr::LIGHTNORM, light_direction);
 
@@ -787,7 +787,7 @@ void LLSettingsVOSky::applySpecial(void *ptarget, bool force)
 
     shader->uniform3fv(LLShaderMgr::CLOUD_COLOR, LLVector3(psky->getCloudColor().mV));
 
-    shader = &((LLShaderUniforms*)ptarget)[LLShaderProgram::SG_ANY];
+    shader = &((LLShaderUniforms*)ptarget)[RKShaderProgram::SG_ANY];
     shader->uniform1f(LLShaderMgr::SCENE_LIGHT_STRENGTH, mSceneLightStrength);
 
     LLColor3 ambient(getTotalAmbient());
@@ -1066,7 +1066,7 @@ void LLSettingsVOWater::applySpecial(void *ptarget, bool force)
 
     LLEnvironment& env = LLEnvironment::instance();
 
-    auto group = LLShaderProgram::SG_ANY;
+    auto group = RKShaderProgram::SG_ANY;
     LLShaderUniforms* shader = &((LLShaderUniforms*)ptarget)[group];
 
     {

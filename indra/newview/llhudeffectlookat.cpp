@@ -715,7 +715,7 @@ void LLHUDEffectLookAt::render()
             return;
 
         //LLGLDisable gls_stencil(GL_STENCIL_TEST);
-        LLRenderState::DepthScope depth(true, false);  // <FS:Zi> Reduce screen clutter
+        RKRenderState::DepthScope depth(true, false);  // <FS:Zi> Reduce screen clutter
 
         LLVector3 target = mTargetPos + ((LLVOAvatar*)(LLViewerObject*)mSourceObject)->mHeadp->getWorldPosition();
         LLColor3 lookAtColor = (*mAttentions)[mTargetType].mColor;
@@ -748,19 +748,19 @@ void LLHUDEffectLookAt::render()
                 }
             }
 
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
             hud_render_utf8text(name, position, *fontp, LLFontGL::NORMAL, LLFontGL::DROP_SHADOW, -0.5f * fontp->getWidthF32(name), 3.0f, lookAtColor, false);
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         }
 
         // render crosshair
         gRender.getTexUnit(0)->bindWhite();
 
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, target.mV[VX], target.mV[VY], target.mV[VZ]);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, target.mV[VX], target.mV[VY], target.mV[VZ]);
         // <FS:Ansariel> FIRE-16912: Draw lines for lookat targets; by Ayamo Nozaki
         //gRender.scalef(0.3f, 0.3f, 0.3f);
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, 0.1f, 0.1f, 0.1f);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, 0.1f, 0.1f, 0.1f);
         // </FS:Ansariel>
         gRender.begin(LLRender::LINES);
         {
@@ -789,7 +789,7 @@ void LLHUDEffectLookAt::render()
             }
             // </FS:Ansariel>
         } gRender.end();
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 }
 

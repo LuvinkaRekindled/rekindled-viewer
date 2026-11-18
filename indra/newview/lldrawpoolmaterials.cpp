@@ -85,7 +85,7 @@ void LLDrawPoolMaterials::endDeferredPass(S32 pass)
 
     if (!mUntouched)
     {
-        LLShaderProgram::unbind();      // (the pull program renderDeferred bound)
+        RKShaderProgram::unbind();      // (the pull program renderDeferred bound)
     }
     mUntouched = false;
 
@@ -143,7 +143,7 @@ void LLDrawPoolMaterials::renderDeferred(S32 pass)
     if (rigged ? ll_rigged_packets_enabled() : true)
     {
         const U32 idx = sMaterialPassShader[pass];
-        LLShaderProgram* pull = rigged ? &gDeferredMaterialPullSkinProgram[idx] : &gDeferredMaterialPullProgram[idx];
+        RKShaderProgram* pull = rigged ? &gDeferredMaterialPullSkinProgram[idx] : &gDeferredMaterialPullProgram[idx];
         {
             LL_CPU_ZONE("materials: bind pull program");
             // the native G-buffer programs have no texture slot and read none of what bindDeferredShader sets (shadow matrices, clip planes, SSAO, sun and moon direction, probe LOD; sunlight_color and

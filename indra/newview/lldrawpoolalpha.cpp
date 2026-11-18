@@ -67,7 +67,7 @@
 bool LLDrawPoolAlpha::sShowDebugAlpha = false;
 bool LLDrawPoolAlpha::sShowDebugAlphaRigged = false;
 
-#define current_shader (LLShaderProgram::sCurBoundShaderPtr)
+#define current_shader (RKShaderProgram::sCurBoundShaderPtr)
 
 LLVector4 LLDrawPoolAlpha::sWaterPlane;
 
@@ -104,7 +104,7 @@ S32 LLDrawPoolAlpha::getNumPostDeferredPasses()
 extern S32 rrAlphaSunOld();    // pipeline.cpp: test switch, 1 = the old one hard sun ray
 
 
-static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironment, F32 water_sign)
+static void prepare_alpha_shader(RKShaderProgram* shader, bool deferredEnvironment, F32 water_sign)
 {
     static LLCachedControl<F32> displayGamma(gSavedSettings, "RenderDeferredDisplayGamma");
     F32 gamma = displayGamma;
@@ -125,7 +125,7 @@ static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironme
     shader->bind();
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
 
-    if (LLVkBridge::rtShadowMode())
+    if (RKVkBridge::rtShadowMode())
     {
         // <FS> ray traced sun shadows on alpha blended surfaces (hair, glass, flat decals like a logo on the floor): these shaders used to leave the sun's size and the sample count at 0 and trace ONE HARD ray, so
         // the shadow of a leaf fell crisp on the hair while the opaque surfaces next to it (skin, clothes, the ground) get the soft sun disc of the lightmap, accumulated and blurred. They get the same
@@ -144,7 +144,7 @@ static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironme
         shader->uniform1f(radius_s, alpha_sun == 1 ? 0.f : tanf(llclamp(rt_softness() * scale, 0.f, 20.f) * DEG_TO_RAD));
         shader->uniform1i(samples_s, alpha_sun == 1 ? 1 : llclamp(samples, 1, 16));
         {
-            const S32 noise = LLVkBridge::rtSunNoise();     // rt-debug.txt sunnoise: 1 every frame (default), 2 every 4th frame, 0 a fixed pattern (the same key as the sun lightmap pass)
+            const S32 noise = RKVkBridge::rtSunNoise();     // rt-debug.txt sunnoise: 1 every frame (default), 2 every 4th frame, 0 a fixed pattern (the same key as the sun lightmap pass)
             shader->uniform1f(frame_s, (LLPipeline::sDLSS && noise != 0) ? (F32)((noise == 2 ? (gPipeline.mJitterIndex / 4) : gPipeline.mJitterIndex) % 64) : 0.f);
         }
         static LLCachedControl<F32> rt_lod_near(gSavedSettings, "RenderRTShadowAlphaLodNear", 4.f);
@@ -157,14 +157,14 @@ static void prepare_alpha_shader(LLShaderProgram* shader, bool deferredEnvironme
         static LLStaticHashedString alpha_pass_s("rt_sun_alpha");
         shader->uniform1f(alpha_pass_s, 1.f);        // <FS> a blended surface (hair): its sun ray starts off the surface by LL_RT_SUN_BIAS_ALPHA, not LL_RT_SUN_BIAS (cards must not shade the cards next to them)
         static LLStaticHashedString self_off_s("rt_sun_self_off");
-        const S32 self = LLVkBridge::rtSunSelfShadow();
+        const S32 self = RKVkBridge::rtSunSelfShadow();
         shader->uniform1f(self_off_s, self == 0 ? 1.f : (self == 2 ? 2.f : 0.f));      // rt-debug.txt sunself=0: the avatar self shadow work off, 2: on with the full hair walk (same-lap cost A/Bs)
         static LLStaticHashedString pen_rays_s("rt_sun_pen_rays");
         {
             // <FS> the rays of a pixel whose first ray met a close skinned surface (hair on the face): 2 while the upscaler accumulates the noise (laps of 2026-11-03: sun program -0.5 ms, rigged alpha -0.9 ms, Adam: fine by eye),
             // the shader's 8 without it (a snapshot, no upscaler). rt-debug.txt penrays=N overrides (8 = the old number)
             extern bool gSnapshot;
-            const S32 pen = LLVkBridge::rtSunPenRays();
+            const S32 pen = RKVkBridge::rtSunPenRays();
             shader->uniform1i(pen_rays_s, pen > 0 ? pen : ((LLPipeline::sDLSS && !gSnapshot) ? 2 : 0));
         }
     }
@@ -227,7 +227,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     // explicitly unbind here so render loop doesn't make assumptions about the last shader
     // already being setup for rendering
-    LLShaderProgram::unbind();
+    RKShaderProgram::unbind();
 
     if (!LLPipeline::sRenderingHUDs)
     {
@@ -277,7 +277,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
 {
     gPipeline.enableLightsDynamic();
 
-    LLRenderPresetPipelineAlpha gls_pipeline_alpha;
+    RKRenderPresetPipelineAlpha gls_pipeline_alpha;
 
     //enable writing to alpha for emissive effects
     gRender.setColorMask(true, true);
@@ -312,7 +312,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
         write_depth = false;
     }
 
-    LLRenderState::DepthScope depth(true, write_depth ? true : false, fringe ? LLRenderState::CompareOp::Less : LLRenderState::CompareOp::LessEqual);
+    RKRenderState::DepthScope depth(true, write_depth ? true : false, fringe ? RKRenderState::CompareOp::Less : RKRenderState::CompareOp::LessEqual);
 
     mColorSFactor = LLRender::BF_SOURCE_ALPHA;           // } regular alpha blend
     mColorDFactor = LLRender::BF_ONE_MINUS_SOURCE_ALPHA; // }
@@ -334,16 +334,16 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
         LL_GPU_TIMER_ZONE("alpha: rigged depth");
         gRender.setColorMask(false, false);
         {
-            LLRenderState::DepthScope prepass_depth(true, true);
+            RKRenderState::DepthScope prepass_depth(true, true);
             // the colour pass draws the same triangles and tests with LEQUAL: written a hair farther so that no rounding between the two passes makes them fail
-            LLRenderState::PolygonOffsetScope offset(true);
+            RKRenderState::PolygonOffsetScope offset(true);
             gRender.setPolygonOffset(1.f, 4.f);
             renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2, true, true);
         }
         gRender.setColorMask(true, true);
         gRender.setPolygonOffset(0.f, 0.f);
 
-        LLShaderProgram::unbind();
+        RKShaderProgram::unbind();
     }
 
     // If the face is more than 90% transparent, then don't update the Depth buffer for Dof
@@ -353,9 +353,9 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
         LL_GPU_TIMER_ZONE(fringe ? "alpha: rigged fringe" : rigged ? (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: rigged (post water)" : "alpha: rigged (pre water)")
                                  : (mType == LLDrawPool::POOL_ALPHA_POST_WATER ? "alpha: static (post water)" : "alpha: static (pre water)"));
         // the soft part: drawn a little farther than the depth only pass wrote the same triangles, so that what wrote depth there fails the strict test
-        LLRenderState::PolygonOffsetScope fringe_offset(true, fringe);
+        RKRenderState::PolygonOffsetScope fringe_offset(true, fringe);
         // F3.5c: this alpha pass writes no depth (unless write_depth): its draws sample the depth buffer (soft particles, water fog) and the pass takes the read-only depth layout
-        LLRenderState::DepthReadOnlyScope depth_read_only(true, !write_depth);
+        RKRenderState::DepthReadOnlyScope depth_read_only(true, !write_depth);
         if (fringe)
         {
             gRender.setPolygonOffset(1.f, 8.f);
@@ -371,15 +371,15 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, bool fringe)
 
     if (split)
     {   // every shader that drew with the cutoff goes back to the usual one (the static alpha and the soft part do not set it again)
-        LLShaderProgram::unbind();
+        RKShaderProgram::unbind();
         mDepthCutoff = 0.f;
-        for (LLShaderProgram* shader : mDepthCutoffShaders)
+        for (RKShaderProgram* shader : mDepthCutoffShaders)
         {
             shader->bind();
             shader->setMinimumAlpha(MINIMUM_ALPHA);
         }
         mDepthCutoffShaders.clear();
-        LLShaderProgram::unbind();
+        RKShaderProgram::unbind();
     }
 
     gRender.setColorMask(true, false);
@@ -408,7 +408,7 @@ void LLDrawPoolAlpha::renderDebugAlpha()
         // pull twin, one colour a group of types, as the water exclusion pool draws PASS_INVISIBLE (red: the alpha mask and the invisible alpha draws, blue: the material, glTF and fullbright masks, green: the invisible draws). The HUD view
         // lists, prepares and elides these types while this view is on (ll_scene_geo_hud_type), so it draws them the same way.
         {
-            LLShaderProgram* color = &gDrawColorProgram;
+            RKShaderProgram* color = &gDrawColorProgram;
             static LLStaticHashedString waterSign("waterSign");
             color->bind();
             color->uniform1f(waterSign, 1.f);
@@ -455,7 +455,7 @@ void LLDrawPoolAlpha::renderDebugAlpha()
             pushGeometryPackets(LLRenderPass::PASS_INVISIBLE_RIGGED, true);
         }
         // </FS:Beq>
-        LLShaderProgram::sCurBoundShaderPtr->unbind();
+        RKShaderProgram::sCurBoundShaderPtr->unbind();
     }
 }
 
@@ -465,8 +465,8 @@ void LLDrawPoolAlpha::renderDebugAlpha()
 // (K6 B1: the Batch Size / Texture Animation views draw the same ranges with their own programs and colour: a view says which)
 struct AlphaTableView
 {
-    LLShaderProgram* mStatic = nullptr;
-    LLShaderProgram* mRigged = nullptr;
+    RKShaderProgram* mStatic = nullptr;
+    RKShaderProgram* mRigged = nullptr;
     F32 mColor[4] = { 0.f, 0.f, 0.f, 1.f };
 };
 static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*> (&drawn)[2], const AlphaTableView* view = nullptr)
@@ -481,7 +481,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
     // items are the ones the rigged alpha pass sent this frame, persistent at the worker: only the ranges go)
     for (int rig = 0; rig < 2; ++rig)
     {
-    LLShaderProgram* color = rig ? (LLShaderProgram*)(LLDrawPoolAlpha::sShowDebugAlphaRigged && !LLPipeline::sRenderingHUDs ? &gHighlightPullSkinProgram : nullptr) : &gDrawColorProgram;
+    RKShaderProgram* color = rig ? (RKShaderProgram*)(LLDrawPoolAlpha::sShowDebugAlphaRigged && !LLPipeline::sRenderingHUDs ? &gHighlightPullSkinProgram : nullptr) : &gDrawColorProgram;
     if (view)
     {
         color = rig ? view->mRigged : view->mStatic;
@@ -505,7 +505,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
         {
             continue;
         }
-        LLAlphaPlanView plan;
+        RKAlphaPlanView plan;
         if (ll_alpha_plan(group, plan, rig != 0) != 1 || plan.mHandle == 0)
         {
             continue;
@@ -513,7 +513,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
         bool all_served = true;
         for (U32 sg = 0; sg < plan.mSegCount; ++sg)
         {
-            const LLAlphaPlanSeg& seg = plan.mSegs[sg];
+            const RKAlphaPlanSeg& seg = plan.mSegs[sg];
             if (seg.mServed)
             {
                 ranges.push_back({ plan.mHandle, seg.mRank, seg.mCount });
@@ -550,24 +550,24 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
     F32 matrices[32];
     memcpy(matrices, glm::value_ptr(gRender.getModelviewMatrix()), 16 * sizeof(F32));
     memcpy(matrices + 16, glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
-    LLVkBridge::ShadowPacketsHeader begin_header;
+    RKVkBridge::ShadowPacketsHeader begin_header;
     begin_header.mKind = 29;
     begin_header.mEntries = 0;
-    LLVkBridge::shadowPackets(begin_header, matrices, sizeof(matrices));
-    LLVkBridge::ShadowPacketsHeader header;
+    RKVkBridge::shadowPackets(begin_header, matrices, sizeof(matrices));
+    RKVkBridge::ShadowPacketsHeader header;
     header.mKind = 29;
     header.mEntries = (U32)ranges.size();
     header.mPass = rig ? 1 : 0;
     header.mFragment = 0;
     {
-        LLRenderState::CullScope cull_face(false, true);        // (both sides: a highlight, not a surface)
-        LLVkBridge::shadowPackets(header, ranges.data(), ranges.size() * sizeof(Range));
+        RKRenderState::CullScope cull_face(false, true);        // (both sides: a highlight, not a surface)
+        RKVkBridge::shadowPackets(header, ranges.data(), ranges.size() * sizeof(Range));
     }
     }
 }
 
 // <FS> K6 B1: the Batch Size and Texture Animation debug views from the scene table (they walked every group's draw infos and drew each with pushVerts). The visible fragments' items of every table type are
-// drawn again with the "Debug Batch Pull Shader" (native: alpha.vert + debug_batch.frag): Batch Size gives each draw the colour LLDrawBatch::getDebugColor made for it when its entry was built (carried in the
+// drawn again with the "Debug Batch Pull Shader" (native: alpha.vert + debug_batch.frag): Batch Size gives each draw the colour RKDrawBatch::getDebugColor made for it when its entry was built (carried in the
 // table row), Texture Animation tints the draws that have a texture matrix yellow. The blended alpha draws come from the alpha plans' ranges as in the highlight; the rigged ones use the skinned twin.
 void ll_render_table_debug()
 {
@@ -584,11 +584,11 @@ void ll_render_table_debug()
             continue;
         }
         const F32 mode = view == 1 ? 1.f : 0.f;
-        LLRenderState::PolygonOffsetScope offset(true);
+        RKRenderState::PolygonOffsetScope offset(true);
         gRender.setPolygonOffset(-1.f, 1.f);
-        LLRenderState::BlendScope blend(true);
-        LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::LessEqual);
-        LLShaderProgram* programs[2] = { &gDebugBatchPullProgram, &gDebugBatchPullSkinProgram };
+        RKRenderState::BlendScope blend(true);
+        RKRenderState::DepthScope depth(true, false, RKRenderState::CompareOp::LessEqual);
+        RKShaderProgram* programs[2] = { &gDebugBatchPullProgram, &gDebugBatchPullSkinProgram };
         for (int rig = 0; rig < 2; ++rig)
         {
             programs[rig]->bind();
@@ -612,7 +612,7 @@ void ll_render_table_debug()
         alpha_view.mColor[0] = mode;
         static thread_local std::unordered_set<const LLSpatialGroup*> table_drawn[2];
         highlight_alpha_from_table(table_drawn, &alpha_view);
-        LLShaderProgram::unbind();
+        RKShaderProgram::unbind();
     }
 }
 
@@ -640,7 +640,7 @@ void LLDrawPoolAlpha::renderAlphaHighlight()
                 const int highlight_count = ll_alpha_transient_count(group, pass == 1);
                 for (int highlight_k = 0; highlight_k < highlight_count; ++highlight_k)
                 {
-                    LLAlphaTransientDraw params;
+                    RKAlphaTransientDraw params;
                     if (!ll_alpha_transient_draw(group, pass == 1, (U32)highlight_k, params) || !params.mVb)
                     {
                         continue;
@@ -766,7 +766,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     // S5f F1: the depth only passes (the depth of field depth pass: minimum alpha 0.33 on the mask program; the rigged depth prepass: mDepthCutoff) are served by the same runs: the lit key draws with the fullbright
     // (mask) pull program, as the old code sets simple_shader = fullbright_shader = the mask program for them
     const bool dof_pass = transient_ok && depth_only && mDepthCutoff <= 0.f;
-    auto min_alpha_of = [&](LLShaderProgram* program) -> F32
+    auto min_alpha_of = [&](RKShaderProgram* program) -> F32
     {
         if (mDepthCutoff > 0.f)
         {
@@ -791,16 +791,16 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         }
         return (depth_only || LLPipeline::sRenderingHUDs) && (key & 0xFF) == 0 ? (int)((key & ~0xFFu) | 1u) : (int)key;
     };
-    static thread_local std::vector<LLShaderProgram*> primed_programs;
+    static thread_local std::vector<RKShaderProgram*> primed_programs;
     primed_programs.clear();
     bool pass_begun = false;
-    LLShaderProgram* min_alpha_zero_program = nullptr;       // the pull program whose minimum alpha a custom blend run set to 0 (put back by the next run of it with a standard blend)
+    RKShaderProgram* min_alpha_zero_program = nullptr;       // the pull program whose minimum alpha a custom blend run set to 0 (put back by the next run of it with a standard blend)
     int setup_key = -1;     // the key whose pull program is bound with its blend function, lights and values in place, since the last old draw or glow pass (anything that could change them clears it)
     // S5f F3: the draws the table does not keep (particle groups, a group without a current fragment, ...) of this pass as transient entries (kind 32): batched like the ranges of a run, in the pass's order (the pending
     // ranges and the pending entries are never both non-empty: whichever comes second flushes the other first)
     struct TransientBatch
     {
-        std::vector<LLVkBridge::GeoEntry> mEntries;
+        std::vector<RKVkBridge::GeoEntry> mEntries;
         std::vector<F32> mMatrices, mTexmats, mPbr;
         std::vector<const LLMatrix4*> mMatrixKeys;
         std::vector<U8> mBlob;
@@ -862,7 +862,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         }
         ItemCensus::Scope census_scope(ItemCensus::ALPHA_TR_FLUSH);
         ItemCensus::add(ItemCensus::ALPHA_TR_FLUSH, tr.mEntries.size());
-        const size_t entries_bytes = tr.mEntries.size() * sizeof(LLVkBridge::GeoEntry), matrix_bytes = tr.mMatrices.size() * sizeof(F32), texmat_bytes = tr.mTexmats.size() * sizeof(F32), pbr_bytes = tr.mPbr.size() * sizeof(F32);
+        const size_t entries_bytes = tr.mEntries.size() * sizeof(RKVkBridge::GeoEntry), matrix_bytes = tr.mMatrices.size() * sizeof(F32), texmat_bytes = tr.mTexmats.size() * sizeof(F32), pbr_bytes = tr.mPbr.size() * sizeof(F32);
         tr.mBlob.resize(entries_bytes + matrix_bytes + texmat_bytes + pbr_bytes);
         U8* at = tr.mBlob.data();
         memcpy(at, tr.mEntries.data(), entries_bytes);
@@ -878,7 +878,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         {
             memcpy(at, tr.mPbr.data(), pbr_bytes);
         }
-        LLVkBridge::ShadowPacketsHeader header;
+        RKVkBridge::ShadowPacketsHeader header;
         header.mKind = 32;
         header.mEntries = (U32)tr.mEntries.size();
         header.mMatrices = (U32)(tr.mMatrices.size() / 44);
@@ -890,8 +890,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             ll_frame_palette_flush();       // (the shared palettes the entries point into go first)
         }
         {
-            LLRenderState::CullScope cull_face(false, pending_key >= 0 && (((pending_key >> 16) & 1) != 0 || ((pending_key >> 18) & 1) != 0));       // a double sided glTF material, a particle group: culling off
-            LLVkBridge::shadowPackets(header, tr.mBlob.data(), tr.mBlob.size());
+            RKRenderState::CullScope cull_face(false, pending_key >= 0 && (((pending_key >> 16) & 1) != 0 || ((pending_key >> 18) & 1) != 0));       // a double sided glTF material, a particle group: culling off
+            RKVkBridge::shadowPackets(header, tr.mBlob.data(), tr.mBlob.size());
         }
         ++sAlphaScene.mTrRecords;
         sAlphaScene.mTrEntries += tr.mEntries.size();
@@ -904,7 +904,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         pending_key = -1;
     };
     // an entry for the draw (its GL names made now: the old bind marks a texture in use, regenerates a deleted one and applies its sampler options, prepareFast does the same)
-    auto tr_add = [&](const LLAlphaTransient& t, const LLAlphaTransientDraw* draw_p)       // (draw_p null = a particle run: no model or texture matrix, never rigged)
+    auto tr_add = [&](const RKAlphaTransient& t, const RKAlphaTransientDraw* draw_p)       // (draw_p null = a particle run: no model or texture matrix, never rigged)
     {
         ItemCensus::Scope census_scope(ItemCensus::ALPHA_TR_ADD);
         ItemCensus::add(ItemCensus::ALPHA_TR_ADD, tr_rigged ? 1 : 0);
@@ -912,7 +912,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         {
             tr_matrix(nullptr);         // matrix 0: the view alone
         }
-        LLVkBridge::GeoEntry e = t.mEntry;
+        RKVkBridge::GeoEntry e = t.mEntry;
         if (tr_rigged && draw_p)
         {
             U32 offset = 0, joints = 0;
@@ -944,7 +944,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     };
     // S5f F3: the glow second draw of the transient draws, per group by class (as glow_range for the fragment items): the draws, built again as entries at the glow pass
     static thread_local std::vector<U32> glow_draws[3];       // (the transient items of the group in hand, by glow class)
-    static thread_local std::vector<const LLParticleRun*> glow_particle_runs;       // C5 J2: the particle runs with a glow (plain class), of the group in hand; glow_particle_rows: their group's buffer
+    static thread_local std::vector<const RKParticleRun*> glow_particle_runs;       // C5 J2: the particle runs with a glow (plain class), of the group in hand; glow_particle_rows: their group's buffer
     const LLVertexBuffer* glow_particle_rows = nullptr;
     auto run_flush = [&]()
     {
@@ -973,10 +973,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     LL_WARNS("VkScene") << "[alpha matrices] the stack's modelview differs from gRenderModelView by " << worst << " (rigged " << rigged << ", HUD " << LLPipeline::sRenderingHUDs << ", impostor " << LLPipeline::sImpostorRender << ")" << LL_ENDL;
                 }
             }
-            LLVkBridge::ShadowPacketsHeader begin_header;
+            RKVkBridge::ShadowPacketsHeader begin_header;
             begin_header.mKind = 29;
             begin_header.mEntries = 0;
-            LLVkBridge::shadowPackets(begin_header, matrices, sizeof(matrices));
+            RKVkBridge::shadowPackets(begin_header, matrices, sizeof(matrices));
             pass_begun = true;
             sAlphaScene.mBytes += sizeof(matrices);
         }
@@ -1041,21 +1041,21 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             ll_frame_palette_flush();
             if (!persist || !bindings.empty())
             {
-                LLVkBridge::ShadowPacketsHeader palette_header;
+                RKVkBridge::ShadowPacketsHeader palette_header;
                 palette_header.mKind = 31;
                 palette_header.mEntries = (U32)bindings.size();
-                LLVkBridge::shadowPackets(palette_header, bindings.data(), bindings.size() * sizeof(Binding));
+                RKVkBridge::shadowPackets(palette_header, bindings.data(), bindings.size() * sizeof(Binding));
                 sAlphaScene.mBytes += bindings.size() * sizeof(Binding);
             }
         }
-        LLVkBridge::ShadowPacketsHeader header;
+        RKVkBridge::ShadowPacketsHeader header;
         header.mKind = 29;
         header.mEntries = (U32)pending.size();
         header.mPass = rigged ? 1 : 0;
         header.mFragment = depth_only ? 2u : (mFringePass ? 1u : 0u);       // (the worker names the GPU time of the kinds of pass: 1 the rigged fringe, 2 a depth only pass)
         {
-            LLRenderState::CullScope cull_face(false, ((pending_key >> 16) & 1) != 0 || ((pending_key >> 18) & 1) != 0);       // a double sided glTF material, a particle group: culling off for its run
-            LLVkBridge::shadowPackets(header, pending.data(), pending.size() * sizeof(PendingRange));
+            RKRenderState::CullScope cull_face(false, ((pending_key >> 16) & 1) != 0 || ((pending_key >> 18) & 1) != 0);       // a double sided glTF material, a particle group: culling off for its run
+            RKVkBridge::shadowPackets(header, pending.data(), pending.size() * sizeof(PendingRange));
         }
         ++sAlphaScene.mRecords;
         sAlphaScene.mRanges += pending.size();
@@ -1064,7 +1064,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         pending_src.clear();
         pending_key = -1;
     };
-    auto add_range = [&](const LLAlphaPlanView& pv, const LLAlphaPlanSeg& seg)
+    auto add_range = [&](const RKAlphaPlanView& pv, const RKAlphaPlanSeg& seg)
     {
         pending.push_back({ pv.mHandle, seg.mRank, seg.mCount });
         if (rigged)
@@ -1073,7 +1073,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         }
     };
     // S5e: a served draw with a glow buffer: into the group's glow ranges when the table draws its glow (true); false when its class has no glow pull program (no glow is drawn for it)
-    auto glow_add = [&](const LLAlphaPlanView& pv, int cls, U32 rank) -> bool
+    auto glow_add = [&](const RKAlphaPlanView& pv, int cls, U32 rank) -> bool
     {
         const bool pbr_draw = cls != 0;
         if (!(pbr_draw ? glow_pbr_table : glow_plain_table))
@@ -1137,7 +1137,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
         ItemCensus::Scope census_scope(ItemCensus::ALPHA_RUN_BEGIN);
         const int pkey = key & 0xFF;        // the program: 0 lit, 1 fullbright, 2 + mask a material, 18 PBR; the blend function pair id is in bits 8-15, bit 16: double sided, bit 17: rigged
         const bool skinned = ((key >> 17) & 1) != 0;
-        LLShaderProgram* pull;
+        RKShaderProgram* pull;
         if (pkey == 18)
         {
             pull = LLPipeline::sRenderingHUDs ? &gHUDPBRAlphaPullProgram : (skinned ? &gDeferredPBRAlphaPullSkinProgram : &gDeferredPBRAlphaPullProgram);
@@ -1166,7 +1166,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             {
                 pull->setMinimumAlpha(0.33f);       // (prepare_alpha_shader is bound to it)
             }
-            LLShaderProgram::unbind();              // (it left the program bound: without this the bindDeferredShaderFast below, which binds the shadow, light and probe maps, would be skipped)
+            RKShaderProgram::unbind();              // (it left the program bound: without this the bindDeferredShaderFast below, which binds the shadow, light and probe maps, would be skipped)
             setup_key = -1;
         }
         if (setup_key == key && current_shader == pull)
@@ -1310,7 +1310,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             // </FS:LO>
 
             bool disable_cull = is_particle_or_hud_particle;
-            LLAlphaPlanView plan;
+            RKAlphaPlanView plan;
             bool group_plan;
             {
                 ItemCensus::Scope census_scope(ItemCensus::ALPHA_PLAN);
@@ -1322,7 +1322,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 run_flush();        // (the culling state of a group the table does not continue is its own)
                 setup_key = -1;
             }
-            LLRenderState::CullScope cull(false, disable_cull);
+            RKRenderState::CullScope cull(false, disable_cull);
 
             // C5 J2: a particle group's draws are runs of rows (no draw infos): transient entries made from the runs, in the sorted order
             if (!rigged && is_particle_or_hud_particle && !group->mParticleRuns.empty())
@@ -1330,9 +1330,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 if (transient_ok)
                 {
                     glow_particle_rows = group->mVertexBuffer.get();
-                    for (const LLParticleRun& run : group->mParticleRuns)
+                    for (const RKParticleRun& run : group->mParticleRuns)
                     {
-                        LLAlphaTransient transient;
+                        RKAlphaTransient transient;
                         if (!ll_particle_transient(run, group->mVertexBuffer.get(), depth_only, transient))
                         {
                             ++sAlphaScene.mDropped;
@@ -1365,8 +1365,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 {
                     return false;
                 }
-                LLAlphaTransient transient;
-                LLAlphaTransientDraw tdraw;
+                RKAlphaTransient transient;
+                RKAlphaTransientDraw tdraw;
                 if (!ll_alpha_transient_item(group, rigged, k, depth_only, transient, tdraw))
                 {
                     return false;
@@ -1400,7 +1400,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 U32 glow_at_p = 0;
                 for (U32 sg = 0; sg < plan.mSegCount; ++sg)
                 {
-                    const LLAlphaPlanSeg& seg = plan.mSegs[sg];
+                    const RKAlphaPlanSeg& seg = plan.mSegs[sg];
                     if (seg.mServed)
                     {
                         if (pending_key != run_key(seg.mKey) || !tr.mEntries.empty())
@@ -1465,19 +1465,19 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     // don't touch color, add to alpha (glow)
                     gRender.blendFunc(LLRender::BF_ZERO, LLRender::BF_ONE, LLRender::BF_ONE, LLRender::BF_ONE);
 
-                    LLShaderProgram* lastShader = current_shader;
+                    RKShaderProgram* lastShader = current_shader;
                     // glTF double sided: culling off; the rigged ones with depth writes off ("emissive" is additive, so sorting does not matter)
                     for (int cls = 0; cls < 3; ++cls)
                     {
-                        LLShaderProgram* glow_program = cls == 0 ? (rigged ? &gDeferredEmissivePullSkinProgram : &gDeferredEmissivePullProgram) : (rigged ? &gPBRGlowPullSkinProgram : &gPBRGlowPullProgram);
+                        RKShaderProgram* glow_program = cls == 0 ? (rigged ? &gDeferredEmissivePullSkinProgram : &gDeferredEmissivePullProgram) : (rigged ? &gPBRGlowPullSkinProgram : &gPBRGlowPullProgram);
                         if (!glow_draws[cls].empty() || (cls == 0 && !glow_particle_runs.empty()))
                         {   // the transient draws' glow: entries made again, one record
                             glow_program->bind();
                             pending_key = (cls == 2 ? (1 << 16) : 0) | (is_particle_or_hud_particle ? (1 << 18) : 0);       // (a particle group draws with culling off, its glow too)
                             for (U32 glow_k : glow_draws[cls])
                             {
-                                LLAlphaTransient glow_transient;
-                                LLAlphaTransientDraw glow_draw;
+                                RKAlphaTransient glow_transient;
+                                RKAlphaTransientDraw glow_draw;
                                 if (ll_alpha_transient_item(group, rigged, glow_k, false, glow_transient, glow_draw))
                                 {
                                     tr_add(glow_transient, &glow_draw);
@@ -1485,9 +1485,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             }
                             if (cls == 0)
                             {
-                                for (const LLParticleRun* glow_run : glow_particle_runs)
+                                for (const RKParticleRun* glow_run : glow_particle_runs)
                                 {
-                                    LLAlphaTransient glow_transient;
+                                    RKAlphaTransient glow_transient;
                                     if (ll_particle_transient(*glow_run, glow_particle_rows, false, glow_transient))
                                     {
                                         tr_add(glow_transient, nullptr);
@@ -1497,7 +1497,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             }
                             if (rigged)
                             {   // (the rigged glow draws with depth writes off, as the old rigged glow passes; the static glow draws with the pass's own depth state, which writes none: a glow quad that wrote depth would hide whatever is drawn behind it after, wherever its fragments are invisible)
-                                LLRenderState::DepthScope depth(true, false);
+                                RKRenderState::DepthScope depth(true, false);
                                 tr_flush();
                             }
                             else
@@ -1514,7 +1514,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             pending_key = (cls == 2 ? (1 << 16) : 0) | (is_particle_or_hud_particle ? (1 << 18) : 0);
                             if (rigged)
                             {
-                                LLRenderState::DepthScope depth(true, false);
+                                RKRenderState::DepthScope depth(true, false);
                                 run_flush();
                             }
                             else

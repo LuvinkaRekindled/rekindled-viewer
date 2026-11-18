@@ -1,7 +1,7 @@
 // smaa_edge.vert: the vertex stage of SMAA's edge detection (a full screen triangle and the offsets of the neighbours). A line for line translation of "SMAA Edge Detection" (deferred/SMAAEdgeDetectV.glsl);
 // pairs with smaa_edge.frag; the manifest lines define SMAA_GLSL_4, SMAA_PREDICATION, SMAA_REPROJECTION and the preset.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec4 SMAA_RT_METRICS;
 };

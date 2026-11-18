@@ -11,7 +11,7 @@
 // THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 // =============================================================================================================
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     int sourceIdx;
     float mipLevel;
@@ -20,7 +20,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float probe_strength;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_matrix;
     uint ll_ti_cubearray_reflectionProbes;

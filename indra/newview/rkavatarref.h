@@ -1,8 +1,8 @@
 /**
  * @file rkavatarref.h
- * @brief LLAvatarRef: an avatar reference that is a handle, not a counted pointer.
+ * @brief RKAvatarRef: an avatar reference that is a handle, not a counted pointer.
  *
- * doc/vulkan/PLAN-clean-core.md step C2.4d (the avatar counterpart of LLTexRef, LLGLTFMatRef, LLSkinRef). It holds no reference count and owns nothing: the avatar's owners (the object list, gAgentAvatarp, the
+ * doc/vulkan/PLAN-clean-core.md step C2.4d (the avatar counterpart of RKTexRef, RKGLTFMatRef, RKSkinRef). It holds no reference count and owns nothing: the avatar's owners (the object list, gAgentAvatarp, the
  * attachments) keep it alive and the retire list (kind 3) keeps it intact for the frames that could still read it after the last owner let go. get() resolves the handle each time and answers nullptr for an
  * avatar that is gone (counted: sDeadResolved, in the retire log line; healthy runs: 0). isNull / notNull / explicit bool / == nullptr / != nullptr are HANDLE based: "an avatar was assigned". That is what
  * classifies a draw as rigged (rigged != (p.mAvatar != nullptr)); a draw whose avatar is gone stays classed as rigged, its palette upload then fails (null avatar) and it is skipped, instead of being drawn
@@ -16,23 +16,23 @@
 #include <atomic>
 #include <type_traits>
 
-class LLAvatarRef
+class RKAvatarRef
 {
 public:
-    LLAvatarRef() = default;
-    LLAvatarRef(std::nullptr_t) {}
-    LLAvatarRef(LLVOAvatar* avatar) : mHandle(avatar ? avatar->getRenderHandle() : 0) {}
-    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, LLAvatarRef>::value && !std::is_convertible<P, LLVOAvatar*>::value, decltype(std::declval<const P&>().get())>>
-    LLAvatarRef(const P& p) : LLAvatarRef(static_cast<LLVOAvatar*>(p.get())) {}
-    LLAvatarRef& operator=(LLVOAvatar* avatar) { mHandle = avatar ? avatar->getRenderHandle() : 0; return *this; }
-    LLAvatarRef& operator=(std::nullptr_t) { mHandle = 0; return *this; }
-    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, LLAvatarRef>::value && !std::is_convertible<P, LLVOAvatar*>::value, decltype(std::declval<const P&>().get())>>
-    LLAvatarRef& operator=(const P& p) { return *this = static_cast<LLVOAvatar*>(p.get()); }
+    RKAvatarRef() = default;
+    RKAvatarRef(std::nullptr_t) {}
+    RKAvatarRef(LLVOAvatar* avatar) : mHandle(avatar ? avatar->getRenderHandle() : 0) {}
+    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, RKAvatarRef>::value && !std::is_convertible<P, LLVOAvatar*>::value, decltype(std::declval<const P&>().get())>>
+    RKAvatarRef(const P& p) : RKAvatarRef(static_cast<LLVOAvatar*>(p.get())) {}
+    RKAvatarRef& operator=(LLVOAvatar* avatar) { mHandle = avatar ? avatar->getRenderHandle() : 0; return *this; }
+    RKAvatarRef& operator=(std::nullptr_t) { mHandle = 0; return *this; }
+    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, RKAvatarRef>::value && !std::is_convertible<P, LLVOAvatar*>::value, decltype(std::declval<const P&>().get())>>
+    RKAvatarRef& operator=(const P& p) { return *this = static_cast<LLVOAvatar*>(p.get()); }
 
     LLVOAvatar* get() const
     {
         if (!mHandle) return nullptr;
-        LLVOAvatar* avatar = LLAvatarHandles::resolve(mHandle);
+        LLVOAvatar* avatar = RKAvatarHandles::resolve(mHandle);
         if (!avatar) ++sDeadResolved;
         return avatar;
     }

@@ -3,11 +3,11 @@
 // in the order of the old immediate mode quad (LLVOAvatar::renderImpostor). Stands in for "Deferred Impostor Shader" (deferred/impostorV.glsl), which has no table: only this program draws (kind 41).
 // The matrices are the viewer's (GL clip space): the depth is remapped to Vulkan's as the old programs' is (rkvkshader.cpp).
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     uvec2 ll_impostor_table;
 };
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
 };

@@ -29,13 +29,13 @@
 #include "lldir.h"
 #include "llfile.h"
 
-namespace LLVk
+namespace RKVk
 {
 
 namespace
 {
 
-const char* const kBlockNames[UC_COUNT] = { "LLLooseUniforms", "LLLooseDraw", "LLLooseMaterial", "LLLooseLight", "LLLooseSkin" };
+const char* const kBlockNames[UC_COUNT] = { "RKLooseUniforms", "RKLooseDraw", "RKLooseMaterial", "RKLooseLight", "RKLooseSkin" };
 
 bool read_file(const std::string& path, std::string& out)
 {
@@ -773,7 +773,7 @@ bool compileNativeProgram(const std::string& name, const std::string& root, cons
 }
 
 // ---- the manifest: the native program of each line ----------------------------------------------------------------------------
-// (Every program is built from its manifest line by LLShaderProgram::link: nativeOnlyLine. There is no stock program behind a native one and no swap at the draw any more.)
+// (Every program is built from its manifest line by RKShaderProgram::link: nativeOnlyLine. There is no stock program behind a native one and no swap at the draw any more.)
 
 namespace
 {
@@ -1022,6 +1022,6 @@ int nativeKey(const std::string& key, int def)
     return debug_key(key, def);
 }
 
-} // namespace LLVk
+} // namespace RKVk
 
 #endif // LL_VULKAN

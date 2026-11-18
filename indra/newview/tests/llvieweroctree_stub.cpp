@@ -53,7 +53,7 @@ LLOcclusionCullingGroup::LLOcclusionCullingGroup(OctreeNode* node, LLViewerOctre
 LLOcclusionCullingGroup::~LLOcclusionCullingGroup() = default;
 void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shift) {}
 void LLOcclusionCullingGroup::hizResult(bool occluded) {}
-LLHizTarget::~LLHizTarget() {}
+RKHizTarget::~RKHizTarget() {}
 void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode) {}
 void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode) {}
 void LLOcclusionCullingGroup::handleChildAddition(const OctreeNode *parent, OctreeNode *child) {}
@@ -61,8 +61,8 @@ BOOL LLOcclusionCullingGroup::isRecentlyVisible() const { return FALSE; }
 BOOL LLOcclusionCullingGroup::isAnyRecentlyVisible() const { return FALSE; }
 
 
-LLViewerOctreeGroup::LLViewerOctreeGroup(OctreeNode* node) : mOctreeNode(node) { mRowId = LLGroupRows::acquire(this); }
-LLViewerOctreeGroup::~LLViewerOctreeGroup() { LLGroupRows::release(mRowId, DEAD); }
+LLViewerOctreeGroup::LLViewerOctreeGroup(OctreeNode* node) : mOctreeNode(node) { mRowId = RKGroupRows::acquire(this); }
+LLViewerOctreeGroup::~LLViewerOctreeGroup() { RKGroupRows::release(mRowId, DEAD); }
 
 LLViewerOctreeEntryData::LLViewerOctreeEntryData(LLViewerOctreeEntry::eEntryDataType_t) {}
 LLViewerOctreeEntryData::~LLViewerOctreeEntryData() = default;

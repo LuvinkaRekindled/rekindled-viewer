@@ -14,7 +14,7 @@
 #include <string>
 #include <unordered_set>
 
-namespace LLVkFormat
+namespace RKVkFormat
 {
 
 Target target(U32 gl)
@@ -84,7 +84,7 @@ static_assert((int)DIM_2D == (int)TextureTarget::Tex2D && (int)DIM_CUBE == (int)
 static_assert((int)F_NEAREST == (int)TextureFilter::Nearest && (int)F_LINEAR_MIP_NEAREST == (int)TextureFilter::LinearMipNearest && (int)F_LINEAR_MIP_LINEAR == (int)TextureFilter::LinearMipLinear
               && (int)F_NEAREST_MIP_LINEAR == (int)TextureFilter::NearestMipLinear, "TextureFilter");
 static_assert((int)W_REPEAT == (int)TextureWrap::Repeat && (int)W_CLAMP_EDGE == (int)TextureWrap::ClampToEdge && (int)W_MIRRORED_REPEAT == (int)TextureWrap::MirroredRepeat && (int)W_CLAMP_BORDER == (int)TextureWrap::ClampToBorder, "TextureWrap");
-static_assert((int)CMP_NEVER == (int)LLRenderState::CompareOp::Never && (int)CMP_LESS == (int)LLRenderState::CompareOp::Less && (int)CMP_LEQUAL == (int)LLRenderState::CompareOp::LessEqual && (int)CMP_GEQUAL == (int)LLRenderState::CompareOp::GreaterEqual && (int)CMP_ALWAYS == (int)LLRenderState::CompareOp::Always, "LLRenderState::CompareOp");
+static_assert((int)CMP_NEVER == (int)RKRenderState::CompareOp::Never && (int)CMP_LESS == (int)RKRenderState::CompareOp::Less && (int)CMP_LEQUAL == (int)RKRenderState::CompareOp::LessEqual && (int)CMP_GEQUAL == (int)RKRenderState::CompareOp::GreaterEqual && (int)CMP_ALWAYS == (int)RKRenderState::CompareOp::Always, "RKRenderState::CompareOp");
 static_assert((int)SW_R == (int)TextureSwizzle::R && (int)SW_A == (int)TextureSwizzle::A && (int)SW_ZERO == (int)TextureSwizzle::Zero && (int)SW_ONE == (int)TextureSwizzle::One, "TextureSwizzle");
 static_assert((int)LQ_WIDTH == (int)LevelQuery::Width && (int)LQ_DEPTH == (int)LevelQuery::Depth && (int)LQ_COMPRESSED == (int)LevelQuery::Compressed && (int)LQ_COMPRESSED_SIZE == (int)LevelQuery::CompressedSize, "LevelQuery");
 
@@ -283,22 +283,22 @@ Setting setting(U32 pname, bool is_float, S32 i, F32 f)
 
 TextureFilter textureFilterFromGLTF(S32 v)
 {
-    return (TextureFilter)LLVkFormat::setting(0x2801, false, v, 0.f).mValue;        // TEXTURE_MIN_FILTER: the same table for min and mag
+    return (TextureFilter)RKVkFormat::setting(0x2801, false, v, 0.f).mValue;        // TEXTURE_MIN_FILTER: the same table for min and mag
 }
 
 TextureWrap textureWrapFromGLTF(S32 v)
 {
-    return (TextureWrap)LLVkFormat::setting(0x2802, false, v, 0.f).mValue;
+    return (TextureWrap)RKVkFormat::setting(0x2802, false, v, 0.f).mValue;
 }
 
 TexelFormat texelFormatFromGL(S32 gl)
 {
-    return (TexelFormat)LLVkFormat::store(gl);
+    return (TexelFormat)RKVkFormat::store(gl);
 }
 
 PixelFormat pixelFormatFromGL(U32 gl)
 {
-    return (PixelFormat)LLVkFormat::transfer(gl, 0x1401).mComps;
+    return (PixelFormat)RKVkFormat::transfer(gl, 0x1401).mComps;
 }
 
 ComponentType componentTypeFromGL(U32 gl)
@@ -308,10 +308,10 @@ ComponentType componentTypeFromGL(U32 gl)
     {
         return ComponentType::U8;
     }
-    return (ComponentType)LLVkFormat::componentType(gl);
+    return (ComponentType)RKVkFormat::componentType(gl);
 }
 
-namespace LLVkFormat
+namespace RKVkFormat
 {
 
 // ---- F3.6e verify ----

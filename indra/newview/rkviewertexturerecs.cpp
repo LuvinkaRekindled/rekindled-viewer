@@ -65,15 +65,15 @@ std::vector<U8> sSlotGen(1, 0);
 std::vector<U32> sFreeSlots;
 std::vector<U8> sStampPending(1, 0);
 std::vector<U32> sStampSlots;               // slot indices whose stamp is to be sent
-std::vector<LLTexRecs::Result> sMainResults;
+std::vector<RKTexRecs::Result> sMainResults;
 U64 sSeenSeq = 0;
-LLTexRecs::Stats sStats;
+RKTexRecs::Stats sStats;
 
 // ---- shared (under sMtx)
 std::mutex sMtx;
 std::condition_variable sCv;
 Batch sPending;
-std::vector<LLTexRecs::Result> sResultsOut;
+std::vector<RKTexRecs::Result> sResultsOut;
 U64 sResultSeq = 0;
 bool sStop = false;
 std::thread* sThread = nullptr;
@@ -220,7 +220,7 @@ void worker_main()
     std::vector<Rec> recs(1);
     std::vector<U32> stamps(1, 0), handles(1, 0);
     Cam cam;
-    std::vector<LLTexRecs::Result> out;
+    std::vector<RKTexRecs::Result> out;
     while (true)
     {
         Batch b;
@@ -261,7 +261,7 @@ void worker_main()
         cam = b.mCam;
 
         const size_t slots = stamps.size();
-        out.assign(slots, LLTexRecs::Result());
+        out.assign(slots, RKTexRecs::Result());
         for (size_t s = 0; s < slots; ++s)
         {
             out[s].mStamp = stamps[s];
@@ -280,7 +280,7 @@ void worker_main()
             {
                 continue;
             }
-            LLTexRecs::Result& res = out[s];
+            RKTexRecs::Result& res = out[s];
             ++res.mFaces;
             if (r.mFlags & F_OCCLUDED)
             {
@@ -333,7 +333,7 @@ void worker_main()
 }
 }   // namespace
 
-void LLTexRecs::init()
+void RKTexRecs::init()
 {
     if (sThread)
     {
@@ -342,7 +342,7 @@ void LLTexRecs::init()
     sThread = new std::thread(worker_main);
 }
 
-void LLTexRecs::stop()
+void RKTexRecs::stop()
 {
     if (!sThread)
     {
@@ -358,7 +358,7 @@ void LLTexRecs::stop()
     sThread = nullptr;
 }
 
-void LLTexRecs::faceAdded(LLViewerTexture* tex, U32 ch, LLFace* face)
+void RKTexRecs::faceAdded(LLViewerTexture* tex, U32 ch, LLFace* face)
 {
     if (!tex || !face || ch >= LLRender::NUM_TEXTURE_CHANNELS)
     {
@@ -390,7 +390,7 @@ void LLTexRecs::faceAdded(LLViewerTexture* tex, U32 ch, LLFace* face)
     note_stamp(slot);
 }
 
-void LLTexRecs::faceRemoved(LLViewerTexture* tex, U32 ch, LLFace* face)
+void RKTexRecs::faceRemoved(LLViewerTexture* tex, U32 ch, LLFace* face)
 {
     if (!tex || !face || ch >= LLRender::NUM_TEXTURE_CHANNELS)
     {
@@ -409,7 +409,7 @@ void LLTexRecs::faceRemoved(LLViewerTexture* tex, U32 ch, LLFace* face)
     --sStats.mRecords;
 }
 
-void LLTexRecs::faceChanged(LLFace* face)
+void RKTexRecs::faceChanged(LLFace* face)
 {
     if (!face)
     {
@@ -425,7 +425,7 @@ void LLTexRecs::faceChanged(LLFace* face)
     }
 }
 
-void LLTexRecs::groupOcclusion(LLSpatialGroup* group, bool occluded)
+void RKTexRecs::groupOcclusion(LLSpatialGroup* group, bool occluded)
 {
     if (!group)
     {
@@ -465,7 +465,7 @@ void LLTexRecs::groupOcclusion(LLSpatialGroup* group, bool occluded)
     sStats.mGroupNs += now_ns() - t0;
 }
 
-void LLTexRecs::textureGone(LLViewerTexture* tex)
+void RKTexRecs::textureGone(LLViewerTexture* tex)
 {
     if (!tex || !tex->mRecSlot)
     {
@@ -480,7 +480,7 @@ void LLTexRecs::textureGone(LLViewerTexture* tex)
     tex->mRecSlot = 0;
 }
 
-void LLTexRecs::textureStamped(LLViewerTexture* tex)
+void RKTexRecs::textureStamped(LLViewerTexture* tex)
 {
     if (tex && tex->mRecSlot)
     {
@@ -488,7 +488,7 @@ void LLTexRecs::textureStamped(LLViewerTexture* tex)
     }
 }
 
-void LLTexRecs::frame()
+void RKTexRecs::frame()
 {
     const U64 t0 = now_ns();
     Batch b;
@@ -576,7 +576,7 @@ void LLTexRecs::frame()
     ++sStats.mFrames;
 }
 
-bool LLTexRecs::result(const LLViewerTexture* tex, Result& out)
+bool RKTexRecs::result(const LLViewerTexture* tex, Result& out)
 {
     if (!tex || !tex->mRecSlot)
     {
@@ -591,7 +591,7 @@ bool LLTexRecs::result(const LLViewerTexture* tex, Result& out)
     return true;
 }
 
-LLTexRecs::Stats LLTexRecs::stats()
+RKTexRecs::Stats RKTexRecs::stats()
 {
     Stats s = sStats;
     s.mPasses = sPasses.load(std::memory_order_relaxed);

@@ -125,7 +125,7 @@ struct PotentialReturnableObject
 class LLViewerObject
 :   public LLPrimitive,
     public LLRefCount,
-    public LLRenderUpdate
+    public RKRenderUpdate
 {
 protected:
     virtual ~LLViewerObject(); // use unref()

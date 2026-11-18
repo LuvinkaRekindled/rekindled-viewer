@@ -33,7 +33,7 @@
 class LLSpatialGroup;
 class LLViewerObject;
 
-class alignas(16) LLReflectionMap : public LLRefCount, public LLHizTarget
+class alignas(16) LLReflectionMap : public LLRefCount, public RKHizTarget
 {
     LL_ALIGN_NEW
 public:

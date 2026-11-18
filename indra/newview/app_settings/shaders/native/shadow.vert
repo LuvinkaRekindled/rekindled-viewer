@@ -1,4 +1,4 @@
-// shadow.vert: a shadow caster drawn from a record of shadow packets (the worker's packet table, LLVkBridge::shadowPackets): no vertex attributes and no bound vertex or index buffer. The worker writes one
+// shadow.vert: a shadow caster drawn from a record of shadow packets (the worker's packet table, RKVkBridge::shadowPackets): no vertex attributes and no bound vertex or index buffer. The worker writes one
 // packet a draw (the buffer addresses, the index range and the model matrix number) and draws every packet as a draw of its own whose instance index is the packet's number. Only the position is read (the vertex
 // buffers keep the positions first, as 16 byte vec4s), the indices are 16 bit.
 // Variants by define: HAS_SKIN (a rigged caster: the 48 byte packet that also names the weights and the joint palette; its vertex goes through the same skin function as the scene rows, lib/rows.glsl skin_vertex).
@@ -9,7 +9,7 @@
 
 #include "lib/rows.glsl"
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     uvec2 ll_packet_table;      // the packets of the record (written by the draw record)
     uvec2 ll_packet_models;     // the model matrices of the record

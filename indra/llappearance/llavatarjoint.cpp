@@ -248,8 +248,8 @@ void LLAvatarJointCollisionVolume::renderCollision()
 {
     updateWorldMatrix();
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &getWorldMatrix().mMatrix[0][0]);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, &getWorldMatrix().mMatrix[0][0]);
 
     gRender.diffuseColor3f( 0.f, 0.f, 1.f );
 
@@ -309,7 +309,7 @@ void LLAvatarJointCollisionVolume::renderCollision()
 
     gRender.end();
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 

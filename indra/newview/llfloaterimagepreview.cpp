@@ -966,24 +966,24 @@ bool LLImagePreviewAvatar::render()
     gRender.pushUIMatrix();
     gRender.loadUIIdentity();
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::ortho(RKRenderMatrix::Kind::Projection, 0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
 
 
-    LLRenderPresetUIDefault def;
+    RKRenderPresetUIDefault def;
     gRender.color4f(0.15f, 0.2f, 0.3f, 1.f);
 
     gUIProgram.bind();
 
     gl_rect_2d_simple( mFullWidth, mFullHeight );
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
     gRender.flush();
     LLVector3 target_pos = mTargetJoint->getWorldPosition();
@@ -1007,9 +1007,9 @@ bool LLImagePreviewAvatar::render()
 
     if (avatarp->mDrawable.notNull())
     {
-        LLRenderState::DepthScope gls_depth(true, true);
+        RKRenderState::DepthScope gls_depth(true, true);
         // make sure alpha=0 shows avatar material color
-        LLRenderState::BlendScope no_blend(false);
+        RKRenderState::BlendScope no_blend(false);
 
         LLFace* face = avatarp->mDrawable->getFace(0);
         if (face)
@@ -1160,17 +1160,17 @@ void LLImagePreviewSculpted::setPreviewTarget(LLImageRaw* imagep, F32 distance)
 bool LLImagePreviewSculpted::render()
 {
     mNeedsUpdate = false;
-    LLRenderPresetUIDefault def;
-    LLRenderState::BlendScope no_blend(false);
-    LLRenderState::CullScope cull(true);
-    LLRenderState::DepthScope depth(true);
+    RKRenderPresetUIDefault def;
+    RKRenderState::BlendScope no_blend(false);
+    RKRenderState::CullScope cull(true);
+    RKRenderState::DepthScope depth(true);
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::ortho(RKRenderMatrix::Kind::Projection, 0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
 
     gRender.color4f(0.15f, 0.2f, 0.3f, 1.f);
 
@@ -1178,9 +1178,9 @@ bool LLImagePreviewSculpted::render()
 
     gl_rect_2d_simple( mFullWidth, mFullHeight );
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
     gRender.clearBuffers(ClearBits::Depth);
 
@@ -1208,16 +1208,16 @@ bool LLImagePreviewSculpted::render()
     gObjectPreviewProgram.bind();
     gPipeline.enableLightsPreview();
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     const F32 SCALE = 1.25f;
-    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, SCALE, SCALE, SCALE);
+    RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, SCALE, SCALE, SCALE);
     const F32 BRIGHTNESS = 0.9f;
     gRender.diffuseColor3f(BRIGHTNESS, BRIGHTNESS, BRIGHTNESS);
 
     mVertexBuffer->setBuffer();
     mVertexBuffer->draw(LLRender::TRIANGLES, num_indices, 0);
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
     gObjectPreviewProgram.unbind();
 

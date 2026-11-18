@@ -1,11 +1,11 @@
 // vignette.frag: the vignette of the post effects: the picture darkened towards the corners. A line for line translation of "Vignette Post" (post/exoVignetteF.glsl); pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec3 vignette;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
 };

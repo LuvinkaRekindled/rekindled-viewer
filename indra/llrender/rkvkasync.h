@@ -22,7 +22,7 @@
 #include <vector>
 #include <string>
 
-namespace LLVkAsync
+namespace RKVkAsync
 {
     // true while the worker thread runs and GL calls are queued instead of translated inline
     extern bool gEnabled;
@@ -95,11 +95,11 @@ namespace LLVkAsync
     void bufferSubData(U32 name, S64 offset, S64 size, const void* data);
     // the vertex buffer pool gives a buffer name to another owner (or takes it back): what the name held is not what it will hold; the arena's epoch moves on
     void bufferRecycle(U32 name);
-    // LLShaderProgram::bind(): unbinds the vertex and index buffers, binds the program (null: unchanged) and enables / disables vertex attribute arrays (bit masks of attribute locations)
+    // RKShaderProgram::bind(): unbinds the vertex and index buffers, binds the program (null: unchanged) and enables / disables vertex attribute arrays (bit masks of attribute locations)
     void shaderBind(void* program);
     // render targets (LLRenderTarget): attach a texture to a framebuffer by name
     void framebufferAttach(U32 fbo, U32 slot, U32 texture);
-    // a query begins / ends in the command stream (rkvkquery.h; kind is an LLVkQuery::Kind)
+    // a query begins / ends in the command stream (rkvkquery.h; kind is an RKVkQuery::Kind)
     void queryBeginCmd(U32 kind, U32 id);
     void queryEndCmd(U32 kind);
     // clears the current target (the state block is written first): colour and/or depth with the given colour
@@ -134,7 +134,7 @@ namespace LLVkAsync
                                                             // (texture and glyph uploads, buffer writes, resource creation: what a draw did to the worker besides drawing)
     std::string describeSegmentDifference(const U8* a, size_t a_size, const U8* b, size_t b_size);       // the first record that differs (empty: equal)
     void uiCacheNameTextures(const U32* ids, size_t count);  // the ids a cached segment names: a freed one of these bumps the epoch
-    void uiCacheTextureFreed(U32 id);                        // LLImageTex::deleteTextures
+    void uiCacheTextureFreed(U32 id);                        // RKImageTex::deleteTextures
     void uiCacheNameBuffers(const U32* names, size_t count);
     void uiCacheBufferTouched(U32 name);                     // a named buffer is recycled, destroyed or written: a cached segment that draws from it is stale
     void uiCacheInvalidate();                                // every cached segment is stale (a skin or colour reload, a window resize)
@@ -168,7 +168,7 @@ namespace LLVkAsync
     bool mainOnlyProducer();            // the main thread, not inside a sub-stream: the only producer that owns the shaders' class block copies
     void uniformRange(void* program, U32 cls, U32 offset, U32 size, const void* data);
     // where the vertex attributes of a draw come from, as values: the buffers and, for each shader attribute location that is read from an array, how
-    struct BindAttr { S32 mSize; S32 mStride; U64 mOffset; U8 mType; U8 mNormalized; U8 mInteger; U8 mPad[5]; };       // mType: LLVkFormat::PType
+    struct BindAttr { S32 mSize; S32 mStride; U64 mOffset; U8 mType; U8 mNormalized; U8 mInteger; U8 mPad[5]; };       // mType: RKVkFormat::PType
     struct DrawBinding
     {
         U32 mArray = 0;             // vertex buffer id (0: none)
@@ -204,7 +204,7 @@ namespace LLVkAsync
         }
         return p;
     }
-    // the draw context of the calling producer: LLShaderProgram::bind/unbind and LLVertexBuffer::setBuffer/unbind write it (only when gDrawRec != 0)
+    // the draw context of the calling producer: RKShaderProgram::bind/unbind and LLVertexBuffer::setBuffer/unbind write it (only when gDrawRec != 0)
     void drawProgram(void* program);                                                             // the program of the next draws (null: none)
     void drawBindingClear();                                                                     // no buffers bound
     void drawBinding(U32 array_buffer, U32 elem_buffer, const VertexAttrib* attribs, U32 count); // the whole binding for the bound shader's attributes (GL type numbers as in setArrayState)
@@ -231,14 +231,14 @@ namespace LLVkAsync
         CMD_UPSCALE, CMD_PROGRAM_BIND, CMD_UNIFORM_SCALAR, CMD_UNIFORM_VECTOR, CMD_UNIFORM_MATRIX, CMD_SAMPLER_UNIT, CMD_PROGRAM_DESTROY,
         CMD_SYNC, CMD_ASYNC_CALL, CMD_STOP, CMD_WRAP,
         CMD_BUFFER_DATA, CMD_BUFFER_SUBDATA,       // named buffer storage (bufferData / bufferSubData)
-        CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (LLVkBridge::shadowPackets)
+        CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (RKVkBridge::shadowPackets)
         CMD_FBO_ATTACH, CMD_TARGET_STATE,          // render target commands (framebufferAttach, targetState)
         CMD_TEX_SLOTS,                             // texture ids that changed since the last draw, when something other than a draw comes first (a draw record carries them itself)
         CMD_GPU_ZONE,                              // a named GPU timing zone begins or ends here in the command stream (FSGpuZoneTimers)
         CMD_UNIFORM_BATCH,                         // loose uniform writes that were pending when something other than a draw came first (a draw carries them inside its own record)
         CMD_BUFFER_RECYCLE,                        // a pooled buffer name changes hands (bufferRecycle)
-        CMD_RT_SCENE,                              // the ray tracing scene of the frame is built from the casters named so far (LLVkBridge::rtScene)
-        CMD_STATE,                                 // F1.1: the render state block (LLVkState::Block) changed since the last one written
+        CMD_RT_SCENE,                              // the ray tracing scene of the frame is built from the casters named so far (RKVkBridge::rtScene)
+        CMD_STATE,                                 // F1.1: the render state block (RKVkState::Block) changed since the last one written
         CMD_TEX_IMAGE, CMD_TEX_PARAMS_ID, CMD_TEX_OP,  // F1.2: texture edits that name their texture (rkvktex.h): image data, parameters, small operations
         CMD_UNIFORM_BLOCK,                         // F1.3: a buffer becomes the contents of a numbered uniform block (rkvkbuf.h)
         CMD_CONST_ATTRIB,                          // F1.3: the constant value of a vertex attribute that has no array
@@ -249,8 +249,8 @@ namespace LLVkAsync
         CMD_UNIFORM_RANGE,                         // F2.5: inside a uniform batch: bytes of a program's class block (uniformRange)
         CMD_PASS,                                  // F3.5d: a render pass begins: target, colour attachment count and the load op (clear) in one record (passBegin)
         CMD_DRAW_SCRATCH,                          // F3.1: a non-indexed draw with its vertices inline (immediate mode: LLRender::flush); no vertex binding, the worker supplies the vertex scratch
-        CMD_DENOISE,                               // the AMD reflection denoiser runs on mirror-owned textures (LLVkBridge::denoiseReflections, PLAN-amd-denoiser.md)
-        // program bind + vertex buffer unbind + attribute array enables (LLShaderProgram::bind)
+        CMD_DENOISE,                               // the AMD reflection denoiser runs on mirror-owned textures (RKVkBridge::denoiseReflections, PLAN-amd-denoiser.md)
+        // program bind + vertex buffer unbind + attribute array enables (RKShaderProgram::bind)
     };
 
     // frame boundaries: the main thread may be at most two frames ahead of the worker
@@ -267,7 +267,7 @@ namespace LLVkAsync
     // occlusion query results published by the worker; false: ask the worker (sync call)
     bool query_get(int kind, unsigned id, unsigned pname, void* params);
 
-    // shader program commands (LLShaderProgram's mirror calls)
+    // shader program commands (RKShaderProgram's mirror calls)
     void programBind(void* program);
     void programDestroy(void* program);
     void samplerUnit(void* program, unsigned sampler_index, unsigned unit);

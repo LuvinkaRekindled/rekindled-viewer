@@ -1316,7 +1316,7 @@ static bool ui_view_clipped_out(const LLView* viewp, const LLRect& screen_rect)
 
 
 // ---- <FS> UI record cache (doc/vulkan/PLAN-ui-record-cache.md) ----
-// A view that costs enough to draw is recorded as a segment of draw records (LLVkSubStream on this thread, spliced at once: the stream is what a live draw writes) and, on most frames,
+// A view that costs enough to draw is recorded as a segment of draw records (RKVkSubStream on this thread, spliced at once: the stream is what a live draw writes) and, on most frames,
 // the saved records are played again instead of calling draw(). The segment is made self-contained by LLRender::segmentBoundary() before and after (what the producer believes about the
 // worker is sent again). A unit is drawn live when its key changed (rect, clip, scale, matrix, entry render state, epoch), while the mouse is over it, while it holds the keyboard focus or
 // the mouse capture (and for 15 frames after), and every Nth frame (N from the frame rate and LL_VK_UI_CACHE hz), staggered between the units.
@@ -1359,7 +1359,7 @@ struct UiUnit
 };
 
 std::unordered_map<const LLView*, UiUnit> sUiUnits;
-LLVkSubStream* sUiRecorder = nullptr;
+RKVkSubStream* sUiRecorder = nullptr;
 bool sUiRecording = false;
 U32 sUiPhaseCounter = 0;
 size_t sUiCacheBytes = 0;
@@ -1591,7 +1591,7 @@ void ui_cache_forget(const LLView* view)
 static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
 {
     const UiCacheCfg& cfg = ui_cache_cfg();
-    if (cfg.mMode == 0 || sUiRecording || !LLVkSubStream::usable() || LLView::sDepth < 3 || LLView::sDepth > 7)
+    if (cfg.mMode == 0 || sUiRecording || !RKVkSubStream::usable() || LLView::sDepth < 3 || LLView::sDepth > 7)
     {
         viewp->draw();
         return;
@@ -1656,9 +1656,9 @@ static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
     if (has_clip) key = ui_mix(key, &clip, sizeof(clip));
     key = ui_mix(key, LLUI::getScaleFactor().mV, sizeof(F32) * 2);
     key = ui_mix(key, &LLFontGL::sCurOrigin, sizeof(LLFontGL::sCurOrigin));
-    key = ui_mix(key, glm::value_ptr(LLRenderMatrix::get(LLRenderMatrix::Kind::Modelview)), sizeof(glm::mat4));
-    const U64 epoch = LLVkSubStream::cacheEpoch();
-    const bool key_ok = u.mValid && u.mKey == key && u.mEpoch == epoch && LLVkSubStream::stateEqual(u.mEntryState);
+    key = ui_mix(key, glm::value_ptr(RKRenderMatrix::get(RKRenderMatrix::Kind::Modelview)), sizeof(glm::mat4));
+    const U64 epoch = RKVkSubStream::cacheEpoch();
+    const bool key_ok = u.mValid && u.mKey == key && u.mEpoch == epoch && RKVkSubStream::stateEqual(u.mEntryState);
     if (u.mValid && !key_ok)
     {
         ++u.mKeyMiss;
@@ -1687,7 +1687,7 @@ static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
     {
         const double t0 = ui_now_us();
         LLRender::segmentBoundary();
-        LLVkSubStream::replay(u.mBytes.data(), u.mBytes.size());
+        RKVkSubStream::replay(u.mBytes.data(), u.mBytes.size());
         LLRender::segmentBoundary();
         const double us = ui_now_us() - t0;
         u.mReplayUs = u.mReplayUs == 0.f ? (float)us : u.mReplayUs + 0.1f * ((float)us - u.mReplayUs);
@@ -1701,7 +1701,7 @@ static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
         {
             // the live draw, recorded and not spliced: what a live frame would have written
             const double v0 = ui_now_us();
-            if (!sUiRecorder) sUiRecorder = new LLVkSubStream();
+            if (!sUiRecorder) sUiRecorder = new RKVkSubStream();
             sUiRecording = true;
             LLRender::segmentBoundary();
             sUiRecorder->reseed();
@@ -1715,7 +1715,7 @@ static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
             sUiRecorder->takeBytes(fresh);
             LLRender::segmentBoundary();
             // the draws of this recording are not played (the replay is on screen) but what the live draw did besides drawing is not undone: a glyph or an icon it uploaded is known to the CPU side from now on
-            LLVkSubStream::replaySideEffects(fresh.data(), fresh.size());
+            RKVkSubStream::replaySideEffects(fresh.data(), fresh.size());
             ++u.mChecked;
             if (fresh != u.mBytes)
             {
@@ -1725,7 +1725,7 @@ static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
                 {
                     ++said;
                     LL_DIAG("UiCache") << "verify: " << u.mName << " live " << fresh.size() << " bytes against the saved " << u.mBytes.size() << ": "
-                                        << LLVkSubStream::describeDifference(u.mBytes.data(), u.mBytes.size(), fresh.data(), fresh.size()) << LL_ENDL;
+                                        << RKVkSubStream::describeDifference(u.mBytes.data(), u.mBytes.size(), fresh.data(), fresh.size()) << LL_ENDL;
                 }
             }
             sUiFrame.mVerifyUs += ui_now_us() - v0;
@@ -1734,9 +1734,9 @@ static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
     }
 
     // a live draw: recorded and spliced at once
-    if (!sUiRecorder) sUiRecorder = new LLVkSubStream();
+    if (!sUiRecorder) sUiRecorder = new RKVkSubStream();
     std::vector<unsigned char> entry_state;
-    LLVkSubStream::stateSnapshot(entry_state);
+    RKVkSubStream::stateSnapshot(entry_state);
     const double t0 = ui_now_us();
     sUiRecording = true;
     LLRender::segmentBoundary();
@@ -1764,8 +1764,8 @@ static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
     sUiFrame.mRecordOverheadUs += (t1 - t0) - draw_us;
     ++sUiFrame.mLiveN;
 
-    LLVkSubStream::Scan scan;
-    LLVkSubStream::scan(bytes.data(), bytes.size(), scan);
+    RKVkSubStream::Scan scan;
+    RKVkSubStream::scan(bytes.data(), bytes.size(), scan);
     ++u.mRecordings;
     if (!scan.mCacheable || left)
     {
@@ -1802,8 +1802,8 @@ static void ui_draw_view(LLView* viewp, const LLRect& screen_rect)
     u.mBytes = std::move(bytes);
     u.mEntryState = std::move(entry_state);
     u.mTextures = scan.mTextures;
-    LLVkSubStream::nameTextures(scan.mTextures.data(), scan.mTextures.size());
-    LLVkSubStream::nameBuffers(scan.mBuffers.data(), scan.mBuffers.size());
+    RKVkSubStream::nameTextures(scan.mTextures.data(), scan.mTextures.size());
+    RKVkSubStream::nameBuffers(scan.mBuffers.data(), scan.mBuffers.size());
     u.mKey = key;
     u.mEpoch = epoch;
     u.mRecordedFrame = frame;

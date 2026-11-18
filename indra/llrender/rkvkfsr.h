@@ -12,7 +12,7 @@
 
 #include "rkvkupscale.h"    // Params
 
-namespace LLVkFsr
+namespace RKVkFsr
 {
     // before the device is created: the extensions the FSR backend assumes the application enabled (it loads their functions by the KHR names and calls them without a check: with
     // VK_KHR_get_memory_requirements2 not enabled the pointer is null and ffxCreateContext crashed, 2026-10-27). Only the ones the device has are added.
@@ -24,10 +24,10 @@ namespace LLVkFsr
     void shutdown();
 
     // Records the upscale into 'cmd'. The images must be in the layouts inputLayout()/outputLayout() name. Makes the FSR context on first use and whenever the sizes change.
-    bool evaluate(VkCommandBuffer cmd, const LLVkUpscale::Params& p);
+    bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p);
 
     // FSR reads every input as a sampled image and writes the output as a storage image
-    VkImageLayout inputLayout(const LLVk::Image& image);
+    VkImageLayout inputLayout(const RKVk::Image& image);
     VkImageLayout outputLayout();
 }
 

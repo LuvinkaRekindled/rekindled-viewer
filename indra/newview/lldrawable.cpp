@@ -121,10 +121,10 @@ void LLDrawable::init(bool new_entry)
     // mXform
     mParent = NULL;
     // <FS> C1a: the row (flags 0, radius 0, render type 0, scale 1,1,1) comes cleared from the table
-    mInstance = LLInstances::acquire(this);
+    mInstance = RKInstances::acquire(this);
     if (!mInstance)
     {
-        LL_ERRS() << "the instance table is full (" << LLInstances::kCapacity << " drawables)" << LL_ENDL;
+        LL_ERRS() << "the instance table is full (" << RKInstances::kCapacity << " drawables)" << LL_ENDL;
     }
     mDistanceWRTCamera = 0.0f;
 
@@ -682,7 +682,7 @@ void LLDrawable::makeActive()
 void LLDrawable::makeActiveShared()
 {
     {
-        for (S32 fi = 0; fi < getNumFaces(); ++fi) LLTexRecs::faceChanged(getFace(fi));        // <FS> H6: its faces' texture records are volatile from now on
+        for (S32 fi = 0; fi < getNumFaces(); ++fi) RKTexRecs::faceChanged(getFace(fi));        // <FS> H6: its faces' texture records are volatile from now on
 
         //parent must be made active first
         if (!isRoot() && !mParent->isActive())
@@ -727,7 +727,7 @@ void LLDrawable::makeStatic(bool warning_enabled)
         !mVObjp->isAnimatedObject())
     {
         clearState(ACTIVE | ANIMATED_CHILD);
-        for (S32 fi = 0; fi < getNumFaces(); ++fi) LLTexRecs::faceChanged(getFace(fi));        // <FS> H6
+        for (S32 fi = 0; fi < getNumFaces(); ++fi) RKTexRecs::faceChanged(getFace(fi));        // <FS> H6
 
         //drawable became static with active parent, not acceptable
         llassert(mParent.isNull() || !mParent->isActive() || !warning_enabled);
@@ -903,7 +903,7 @@ F32 LLDrawable::updateXform(bool undamped)
 
 void LLDrawable::setRadius(F32 radius)
 {
-    LLInstances::row(mInstance).radius = radius;
+    RKInstances::row(mInstance).radius = radius;
 }
 
 void LLDrawable::moveUpdatePipeline(bool moved)
@@ -962,7 +962,7 @@ void LLDrawable::movePartition()
 bool LLDrawable::updateMove()
 {
     LL_CPU_ZONE("drawable: updateMove");
-    LLAttCensus::Scope att_census(LLAttCensus::sDrawableMove, this);
+    RKAttCensus::Scope att_census(RKAttCensus::sDrawableMove, this);
     if (isDead())
     {
         LL_WARNS() << "Update move on dead drawable!" << LL_ENDL;
@@ -1598,7 +1598,7 @@ void LLSpatialBridge::updateSpatialExtents()
     pos.setAdd(newMin,newMax);
     pos.mul(0.5f);
     updateBinRadius();
-    LLCullShadow::touchBridge(this);        // <FS> stage 2 of doc/vulkan/PLAN-visible-set-owner.md: the rows of the bridge's groups hold world boxes made with its matrix
+    RKCullShadow::touchBridge(this);        // <FS> stage 2 of doc/vulkan/PLAN-visible-set-owner.md: the rows of the bridge's groups hold world boxes made with its matrix
 }
 
 bool LLSpatialBridge::sphereInsideBox(const F32* boxMin, const F32* boxMax, F32 tolerance)
@@ -2035,7 +2035,7 @@ void LLSpatialBridge::move(LLDrawable *drawablep, LLSpatialGroup *curp, bool imm
 bool LLSpatialBridge::updateMove()
 {
     LL_CPU_ZONE("bridge: updateMove");
-    LLAttCensus::Scope att_census(LLAttCensus::sBridgeMove, mDrawable);
+    RKAttCensus::Scope att_census(RKAttCensus::sBridgeMove, mDrawable);
     llassert_always(mDrawable);
     llassert_always(mDrawable->mVObjp);
     llassert_always(mDrawable->getRegion());

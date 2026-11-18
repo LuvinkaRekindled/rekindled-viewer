@@ -209,7 +209,7 @@ private:
 private:
     mutable LLSharedMutex mDataMutex;
 
-    // <FS> native-vk: the render thread reads the pixels of an image that was handed over to it (see LLImageTex::PixelHandover) after the call that
+    // <FS> native-vk: the render thread reads the pixels of an image that was handed over to it (see RKImageTex::PixelHandover) after the call that
     // handed them over has returned. Whatever takes the exclusive data lock (every call that reallocates, resizes or writes the pixels) first waits
     // until the render thread has let go. Shared locks (readers) do not wait.
     mutable std::atomic<S32> mPixelHolds{ 0 };
@@ -383,17 +383,17 @@ public:
     // last; width, height and components are the finest level's, getDataSize() the chain's bytes. The pixel operations of this class refuse a compressed image with a warning:
     // the needs-raw policy of the texture fetch keeps them from ever meeting one.
     bool isCompressed() const { return mCompressedFormat != 0; }
-    U8 getCompressedFormat() const { return mCompressedFormat; }        // LLImageBC7::FORMAT_BC7
+    U8 getCompressedFormat() const { return mCompressedFormat; }        // RKImageBC7::FORMAT_BC7
     U8 getLevelCount() const { return mLevels; }
-    S8 getAlphaIsMask() const { return mAlphaIsMask; }                  // -1 unknown or no alpha, 0 blend, 1 mask: the classification LLImageTex::analyzeAlpha would have made
-    // <FS> the upload analysis (PLAN-aurora-ideas.md section 6.2): what LLImageTex::analyzeAlpha and updatePickMask would compute from these texels on the main thread at upload,
+    S8 getAlphaIsMask() const { return mAlphaIsMask; }                  // -1 unknown or no alpha, 0 blend, 1 mask: the classification RKImageTex::analyzeAlpha would have made
+    // <FS> the upload analysis (PLAN-aurora-ideas.md section 6.2): what RKImageTex::analyzeAlpha and updatePickMask would compute from these texels on the main thread at upload,
     // computed instead where the texels already are (the decode pool), and adopted by the texture at create time. Any pixel operation on this image drops it.
     void analyzeForUpload();                                            // texels: the alpha class (4 or 2 components) and the pick mask (4 components); a compressed image: nothing to do
     bool hasUploadAnalysis() const { return mUploadAnalysed; }
-    const std::vector<U8>& getPickMask() const { return mPickMask; }  // LLImageTex's layout: a bit per 2x2 block, rows of width/2 + 1, set where alpha > 32; empty when there is none
-    U16 getPickMaskWidth() const { return mPickMaskWidth; }            // LLImageTex::mPickMaskWidth (width/2)
+    const std::vector<U8>& getPickMask() const { return mPickMask; }  // RKImageTex's layout: a bit per 2x2 block, rows of width/2 + 1, set where alpha > 32; empty when there is none
+    U16 getPickMaskWidth() const { return mPickMaskWidth; }            // RKImageTex::mPickMaskWidth (width/2)
     U16 getPickMaskHeight() const { return mPickMaskHeight; }
-    const U8* getFinestLevelData() const;                                 // the last level of the chain (LLImageTex::setImage(data_hasmips) walks down from it)
+    const U8* getFinestLevelData() const;                                 // the last level of the chain (RKImageTex::setImage(data_hasmips) walks down from it)
     // takes ownership of data (ll_aligned_malloc_16, size bytes)
     void setCompressedChain(U8* data, S32 size, U16 width, U16 height, S8 components, U8 format, U8 levels, S8 alpha_is_mask);
 private:
@@ -492,7 +492,7 @@ public:
 };
 
 // <FS> 2026-11-14 (Adam: the eyes and ears bake slots show another texture's image): a sampled hash of a buffer (size, then up to 4096 evenly spaced 8 byte words): the same function hashes what a server bake's decode
-// made (the BakeTex log, lltexturefetch.cpp) and what a texture object last uploaded (LLImageTex::getUploadHash, printed with the bake slots by Show Textures), so the two can be compared
+// made (the BakeTex log, lltexturefetch.cpp) and what a texture object last uploaded (RKImageTex::getUploadHash, printed with the bake slots by Show Textures), so the two can be compared
 inline U64 fs_sparse_hash(const U8* data, size_t size)
 {
     U64 h = 1469598103934665603ull ^ (U64)size;

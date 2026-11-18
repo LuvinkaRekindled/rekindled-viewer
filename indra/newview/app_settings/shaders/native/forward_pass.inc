@@ -2,7 +2,7 @@
 // previews of the appearance editor and the animation / image preview floaters draw with). Both stages declare the same blocks, so both include this file. FWD_AVATAR: the skinned avatar (the matrix palette,
 // the projection matrix); otherwise the object with the matrices of the draw.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     // the sky (the old lighting chain: atmospherics of the vertex, the haze colour of the fragment)
     vec3 sun_dir;
@@ -37,7 +37,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #endif
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
 #ifndef FWD_AVATAR
     mat3 normal_matrix;

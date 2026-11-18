@@ -8,7 +8,7 @@
 
 #include "avatar_shadow.inc"
 
-layout(std140, set = 0, binding = 8) uniform LLLooseSkin
+layout(std140, set = 0, binding = 8) uniform RKLooseSkin
 {
     vec4 matrixPalette[45];     // joint i: rows at i, i + 15 and i + 30
 };

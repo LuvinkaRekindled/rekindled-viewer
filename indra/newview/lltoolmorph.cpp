@@ -230,22 +230,22 @@ bool LLVisualParamHint::render()
     gRender.pushUIMatrix();
     gRender.loadUIIdentity();
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, 0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::ortho(RKRenderMatrix::Kind::Projection, 0.0f, (F32)mFullWidth, 0.0f, (F32)mFullHeight, -1.0f, 1.0f);
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
 
     gUIProgram.bind();
 
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     //LLGLState::verify(true);
     mBackgroundp->draw(0, 0, mFullWidth, mFullHeight);
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
     mNeedsUpdate = false;
     mIsVisible = true;
@@ -295,7 +295,7 @@ bool LLVisualParamHint::render()
             << " dirtyMesh=" << gAgentAvatarp->mDirtyMesh
             << " mMeshValid=" << gAgentAvatarp->mMeshValid
             << LL_ENDL;
-        LLRenderState::DepthScope gls_depth(true, true);
+        RKRenderState::DepthScope gls_depth(true, true);
         gRender.flush();
         gRender.setSceneBlendType(LLRender::BT_REPLACE);
         gPipeline.generateImpostor(gAgentAvatarp, true);
@@ -333,7 +333,7 @@ void LLVisualParamHint::draw(F32 alpha)
 
     gRender.color4f(1.f, 1.f, 1.f, alpha);
 
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gRender.begin(LLRender::TRIANGLES);
     {
         gRender.texCoord2i(0, 1);

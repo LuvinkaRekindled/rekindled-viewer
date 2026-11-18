@@ -413,15 +413,15 @@ void LLSceneMonitor::calcDiffAggregate()
         gRender.genQueries(1, &mQueryObject);
     }
 
-    LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Always);
+    RKRenderState::DepthScope depth(true, false, RKRenderState::CompareOp::Always);
     if(!mDebugViewerVisible)
     {
         gRender.setColorMask(false, false, false, false);
     }
 
-    LLShaderProgram* cur_shader = NULL;
+    RKShaderProgram* cur_shader = NULL;
 
-    cur_shader = LLShaderProgram::sCurBoundShaderPtr;
+    cur_shader = RKShaderProgram::sCurBoundShaderPtr;
     gOneTextureFilterProgram.bind();
     gOneTextureFilterProgram.uniform1f(sTolerance, mDiffTolerance);
 

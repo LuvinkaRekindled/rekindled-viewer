@@ -17,7 +17,7 @@
 #include "rkvkasync.h"
 #include "rkvkstate.h"
 
-namespace LLVkBuf
+namespace RKVkBuf
 {
     // handles: the producer allocates the ids, the worker makes and destroys the buffers in stream order
     void create(S32 count, U32* ids);
@@ -31,16 +31,16 @@ namespace LLVkBuf
     void setConstantAttribute(U32 location, F32 x, F32 y, F32 z, F32 w);
 }
 
-namespace LLVkWorker
+namespace RKVkWorker
 {
     void uniform_block_bind(unsigned binding, unsigned buffer);
     void draw_arrays(unsigned mode, int first, int count);
     void draw_elements(unsigned mode, unsigned start, unsigned end, int count, unsigned type, const void* indices);
-    // F3.1: a non-indexed draw whose vertices are given (see LLVkAsync::drawScratch for the layout of `bytes`); they are copied to the frame's vertex scratch
+    // F3.1: a non-indexed draw whose vertices are given (see RKVkAsync::drawScratch for the layout of `bytes`); they are copied to the frame's vertex scratch
     void draw_scratch(unsigned mode, int count, unsigned mask, const void* bytes);
     void constant_attribute(unsigned location, float x, float y, float z, float w);
     // F2.4 draw records: the worker makes the program and (when given) the vertex binding of a CMD_DRAW2 current, in place of the shader bind / array run records
-    void draw_context_apply(void* program, const LLVkAsync::DrawBinding* binding);
+    void draw_context_apply(void* program, const RKVkAsync::DrawBinding* binding);
     // F2.6: a draw record's texture slot: the unit holds this texture (no target)
     void slot_set(unsigned unit, unsigned name);
 }

@@ -1,12 +1,12 @@
 // objectskin.glsl: the skin of a rigged mesh object drawn from its own vertex buffer (the attribute fed draws of the debug views: the skinned highlight, the skinned flat colour of the debug draws). A line for line
 // translation of the viewer's avatar/objectSkinV.glsl (getObjectSkinnedTransform): the vertex's four joints (`weight4`: the joint in the integer part, the share in the fraction) blend the joint palette, the
-// result is the transform of the mesh's skin in eye space (the viewer sends the palette as 3x4 matrices, uploadMatrixPalette). The palette is the LLLooseSkin block: joint j has its three columns (each a vec4:
+// result is the transform of the mesh's skin in eye space (the viewer sends the palette as 3x4 matrices, uploadMatrixPalette). The palette is the RKLooseSkin block: joint j has its three columns (each a vec4:
 // the matrix column and one component of the translation in w) at 3 * j, 3 * j + 1, 3 * j + 2 (the viewer's matrix upload puts a 3x4 matrix in 48 bytes: LL_MAX_JOINTS_PER_MESH_OBJECT = 110 of them).
 // The includer needs no declarations: this file declares the attribute and the block.
 
 layout(location = 10) in vec4 weight4;
 
-layout(std140, set = 0, binding = 8) uniform LLLooseSkin
+layout(std140, set = 0, binding = 8) uniform RKLooseSkin
 {
     vec4 matrixPalette[330];
 };

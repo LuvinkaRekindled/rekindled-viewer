@@ -533,10 +533,10 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
     //allocate raw scratch space
     LLPointer<LLImageRaw> scratch = new LLImageRaw(1024, 512, 3);
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::identity(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::ortho(LLRenderMatrix::Kind::Projection, -0.05f, 1.05f, -0.05f, 1.05f, -1.0f, 1.0f);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::identity(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::ortho(RKRenderMatrix::Kind::Projection, -0.05f, 1.05f, -0.05f, 1.05f, -1.0f, 1.0f);
 
     //render charts
     gRender.getTexUnit(0)->bindWhite();
@@ -637,7 +637,7 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
 
             last_p.clear();
 
-            LLRenderState::CullScope cull(false);
+            RKRenderState::CullScope cull(false);
 
             LLVector3 base_col(0, 0.7f, 0.f);
             LLVector3 cur_col(1.f, 0.f, 0.f);
@@ -661,7 +661,7 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
 
             last_p.clear();
             {
-                LLRenderState::BlendScope blend(true);
+                RKRenderState::BlendScope blend(true);
 
                 gRender.color3fv(cur_col.mV);
                 for (U32 i = 0; i < cur_times.size(); ++i)
@@ -702,7 +702,7 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
             gRender.flush();
 
             {
-                LLRenderState::BlendScope blend(true);
+                RKRenderState::BlendScope blend(true);
                 gRender.color3fv(cur_col.mV);
                 last_p.clear();
 
@@ -749,7 +749,7 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
             last_p.clear();
 
             {
-                LLRenderState::BlendScope blend(true);
+                RKRenderState::BlendScope blend(true);
                 gRender.color3fv(cur_col.mV);
                 count = 0;
                 total_count = static_cast<U32>(cur_execution.size());
@@ -774,8 +774,8 @@ void LLFastTimerView::exportCharts(const std::string& base, const std::string& t
 
     }
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 //static

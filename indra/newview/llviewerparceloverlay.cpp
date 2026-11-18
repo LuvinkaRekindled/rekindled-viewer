@@ -686,9 +686,9 @@ void LLViewerParcelOverlay::renderPropertyLines()
     bool render_water = gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_WATER);
     F32 water_z = render_water ? land.getWaterHeight() + 0.01f : 0;
 
-    LLRenderPresetUIDefault gls_ui; // called from pipeline
+    RKRenderPresetUIDefault gls_ui; // called from pipeline
     gRender.getTexUnit(0)->bindWhite();
-    LLRenderState::DepthScope mDepthTest(true);
+    RKRenderState::DepthScope mDepthTest(true);
 
     // Find camera height off the ground (not from zero)
     F32 ground_height_at_camera = land.resolveHeightGlobal( gAgentCamera.getCameraPositionGlobal() );
@@ -706,13 +706,13 @@ void LLViewerParcelOverlay::renderPropertyLines()
     // Always fudge a little vertically.
     pull_toward_camera.mV[VZ] += 0.01f;
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
     // Move to appropriate region coords
     LLVector3 origin = mRegion->getOriginAgent();
-    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, origin.mV[VX], origin.mV[VY], origin.mV[VZ]);
+    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, origin.mV[VX], origin.mV[VY], origin.mV[VZ]);
 
-    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, pull_toward_camera.mV[VX], pull_toward_camera.mV[VY],
+    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, pull_toward_camera.mV[VX], pull_toward_camera.mV[VY],
         pull_toward_camera.mV[VZ]);
 
     // Stomp the camera into two dimensions
@@ -768,7 +768,7 @@ void LLViewerParcelOverlay::renderPropertyLines()
 
         if (render_hidden)
         {
-            LLRenderState::DepthScope depth(true, false, LLRenderState::CompareOp::Greater);
+            RKRenderState::DepthScope depth(true, false, RKRenderState::CompareOp::Greater);
 
             gRender.begin(LLRender::TRIANGLE_STRIP);
 
@@ -785,7 +785,7 @@ void LLViewerParcelOverlay::renderPropertyLines()
         }
     }
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 // Draw half of a single cell (no fill) in a grid drawn from left to right and from bottom to top

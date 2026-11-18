@@ -41,7 +41,7 @@
 #include "llenvironment.h"
 
 S32 LLDrawPoolTree::sDiffTex = 0;
-static LLShaderProgram* shader = NULL;
+static RKShaderProgram* shader = NULL;
 // <FS> the G-buffer pass of the Linden trees is the geometry packet path (one record of all the pool's faces instead of a bind, a matrix and a draw a face)
 
 LLDrawPoolTree::LLDrawPoolTree(LLViewerTexture *texturep) :

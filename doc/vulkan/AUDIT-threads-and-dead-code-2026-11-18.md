@@ -27,7 +27,7 @@ Correction to earlier notes: the render worker is created at `llrender/rkvkasync
 | Async pool, 2 | rkasyncpool.h:187 | condition variable | normal | bind job pipeline.cpp:13139, shadow skin and alpha :20130, :20137 |
 | Pipeline build pool, 2 | rkvkrenderer.cpp:189-195 | condition variable | below normal | |
 | Texture recs | rkviewertexturerecs.cpp:342 | wait 250 ms, sleep 33 ms a pass | normal | |
-| LLImageTex, 1 | rkimagetex.cpp:2442 | work queue | normal | texture creation off main |
+| RKImageTex, 1 | rkimagetex.cpp:2442 | work queue | normal | texture creation off main |
 | ImageDecode, clamp(cores - 4, 2, 8) | llimageworker.cpp:75 | work queue | normal | |
 | General, 3 | llappviewer.cpp:2814 | work queue | normal | audio decode, assets, glTF, plugins |
 | Mesh repo, mesh LOD 2, physics decomp | llmeshrepository.cpp | signal | normal | |
@@ -43,7 +43,7 @@ Findings on the organization:
 2. **T1 is not done (V).** Kinds 21, 29 and 16 still run on the render worker; only the consumers' part of the main derive moved (`derive_publish`, rkvkworker.cpp:11403).
 3. **T2 is not done (V).** Two table copies (`sCullShadow` :11069, `DeriveThread::mS` :11790). A delta row is copied four times: main table to ring blob, ring to the worker's table (:11937), to three new job vectors (:11950-11962), to the derive thread's table (:11836).
 4. **There is no render to derive join today (V).** The derive thread publishes to three mailboxes the main thread reads (`gLodMutex`, `gConsMutex`, `gViewSetMutex`, rkvkbridge.cpp:1721-1800). The worker never waits for it. Requests are dropped over a queue of 400 (:11796). The join of section 8 of the thread plan does not exist yet.
-5. **Streaming is not below the frame threads (C for the priorities).** The only `SetThreadPriority` calls below normal are the pipeline build pool and the shadow LOD thread. On 16 logical cores: main, worker, derive, 7 pool, 2 async, LLImageTex = 13 frame path threads, then 8 ImageDecode, 3 General, 2 mesh LOD, fetch, cache, LFS, HTTP, texture recs at normal. The pool budget (hw/2) does not count the other frame threads. U: the effect while textures load in the turn.
+5. **Streaming is not below the frame threads (C for the priorities).** The only `SetThreadPriority` calls below normal are the pipeline build pool and the shadow LOD thread. On 16 logical cores: main, worker, derive, 7 pool, 2 async, RKImageTex = 13 frame path threads, then 8 ImageDecode, 3 General, 2 mesh LOD, fetch, cache, LFS, HTTP, texture recs at normal. The pool budget (hw/2) does not count the other frame threads. U: the effect while textures load in the turn.
 6. **Two pools on the frame path (V use, U merge).** The async pool runs 2 to 4 jobs a frame; the fork-join pool's `launch()` / `join()` has the same contract. Not checked: whether `quiesce()` or job lifetime blocks a merge.
 7. **Two threads woken every frame for nothing (C).** `LLQueuedThread::updateQueue` (`llcommon/llqueuedthread.cpp:164`) posts a `threadedUpdate` lambda on every call from `llappviewer.cpp:2076`, `:2081`. Only `LLTextureFetch` overrides `threadedUpdate`; the texture cache and LFS threads wake and do nothing.
 8. **Locks shared by main and the worker each frame (V), low.** `gPaceMutex` twice in `frameBegin` and at each present and idle wait; the gap vectors it guards are read only under `LL_VK_PHASES`. `gLodMutex` is held across a copy of table/32 words on both sides (rkvkbridge.cpp:1728-1742).
@@ -123,10 +123,10 @@ Compiled, never called (V):
 
 - `llrender/llrendernavprim.cpp/.h` (59 lines).
 - `llrender/llpostprocess.cpp` (388 lines): only `initClass`, cleanup and `invalidate()` are called; nothing applies it.
-- `llvertexbuffer.cpp:84-256`: `GLWorkQueue` and `LLRenderWorkerThread` (about 190 lines) under `ENABLE_GL_WORK_QUEUE 0`.
+- `llvertexbuffer.cpp:84-256`: `GLWorkQueue` and `RKRenderWorkerThread` (about 190 lines) under `ENABLE_GL_WORK_QUEUE 0`.
 - `LLPipeline::replayMember`, `replayAdopted` (pipeline.cpp:4034-4060), `clearRebuildDrawables` (:4348), `bindScreenToTexture` (:20171). `replayMemberShadow` is live.
 - The render worker's dead kinds of section 3.
-- Stale header: `rkcullshadow.h` says "Measurement only... Off unless LL_VK_CULL_SHADOW=1"; `LLCullShadow::build` runs at the end of every world cull (pipeline.cpp:3852).
+- Stale header: `rkcullshadow.h` says "Measurement only... Off unless LL_VK_CULL_SHADOW=1"; `RKCullShadow::build` runs at the end of every world cull (pipeline.cpp:3852).
 
 Switches: 292 `getenv("LL_VK_` / `"FS_` sites (pipeline.cpp 67, rkvkworker.cpp 30, llviewershadermgr.cpp 24, rkvkrenderer.cpp 23, llvoavatar.cpp 18), plus 43 `GetEnvironmentVariableA` and about 22 `env_u64`. No uncached per frame read was found; no compare mode is on by default; not all 292 were opened.
 
@@ -144,4 +144,4 @@ A study's claim that was wrong, dropped: `LLDrawable::mGeneration` is read (`get
 
 ## 7. Not covered
 
-`rkvkrt.cpp` (`buildScene`, `res_ray_membership`), the generic `CMD_DRAW` path, texture upload, `probe_run`, `rkvknative.cpp`; `LLHiz::apply`, `ownersCollect`, `shadowPrepMark` / `Rebuild` / `RenderMap`, `ll_scene_geo_frame`, the alpha pool's draw body, the terrain, water, sky and tree pools, the planar mirror view, `renderFinalize`, `LLViewerWindow::draw` and the name tags, the spot block of `generateSunShadow`; `updateCharacter` internals and the baked texture bookkeeping, voice and media internals, `gatherInput`; the shader program uniform maps, `llrendertarget`, the `LLTexUnit` shadowing; whether the CPU particle sim still steps particles the GPU owns; the twin and copy-vs-native status (the audit doc is from 2026-10-07). About 0.13 ms of `idle()` has no zone. `MAINTHREAD-candidates.md` was read only as far as its sorted table by the `display()` study, so items 2, 6, 7 of section 4 (display) were not checked against its later sections.
+`rkvkrt.cpp` (`buildScene`, `res_ray_membership`), the generic `CMD_DRAW` path, texture upload, `probe_run`, `rkvknative.cpp`; `RKHiz::apply`, `ownersCollect`, `shadowPrepMark` / `Rebuild` / `RenderMap`, `ll_scene_geo_frame`, the alpha pool's draw body, the terrain, water, sky and tree pools, the planar mirror view, `renderFinalize`, `LLViewerWindow::draw` and the name tags, the spot block of `generateSunShadow`; `updateCharacter` internals and the baked texture bookkeeping, voice and media internals, `gatherInput`; the shader program uniform maps, `llrendertarget`, the `LLTexUnit` shadowing; whether the CPU particle sim still steps particles the GPU owns; the twin and copy-vs-native status (the audit doc is from 2026-10-07). About 0.13 ms of `idle()` has no zone. `MAINTHREAD-candidates.md` was read only as far as its sorted table by the `display()` study, so items 2, 6, 7 of section 4 (display) were not checked against its later sections.

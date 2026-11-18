@@ -50,7 +50,7 @@ U32 LLViewerOctreeEntryData::sCurVisible = 10; //reserve the low numbers for spe
 // 2026-11-18 (inventory item 4 of doc/vulkan/PLAN-visible-set-owner.md): the stamp counter used to be a counter of its own, ticked once a display after the geometry update, that happened to keep in step with gFrameCount (the
 // display's own counter) at an offset of 10 (the reserved low numbers); a reader that compared a stamp with gFrameCount, or measured seconds a frame on one and applied it to the other, was right only while the two stayed
 // in step. It follows gFrameCount now: the same tick site, and the value is gFrameCount + 10 (never less than the old value + 1: it only goes up), so the offset is a constant by construction. The counters of the idle
-// loop (LLFrameTimer, which runs ahead while the login screen draws) and of the image deletion (LLImageTex) stay what they are: timers, not stamps.
+// loop (LLFrameTimer, which runs ahead while the login screen draws) and of the image deletion (RKImageTex) stay what they are: timers, not stamps.
 void LLViewerOctreeEntryData::incrementVisible()
 {
     sCurVisible = std::max(sCurVisible + 1, (U32)gFrameCount + 10u);
@@ -472,25 +472,25 @@ void LLViewerOctreeEntryData::resetVisible() const
 
 LLViewerOctreeGroup::~LLViewerOctreeGroup()
 {
-    LLCullShadow::forget(this);         // <FS> S7 C1b: the slot is freed
-    LLGroupRows::release(mRowId, DEAD);     // <FS> C1b: the row goes back (a stale pointer to this group reads "dead")
+    RKCullShadow::forget(this);         // <FS> S7 C1b: the slot is freed
+    RKGroupRows::release(mRowId, DEAD);     // <FS> C1b: the row goes back (a stale pointer to this group reads "dead")
 }
 
 LLViewerOctreeGroup::LLViewerOctreeGroup(OctreeNode* node)
 :   mOctreeNode(node)
 {
-    mRowId = LLGroupRows::acquire(this);    // <FS> C1b: a cleared row: stamps 0, state CLEAN, boxes 0
+    mRowId = RKGroupRows::acquire(this);    // <FS> C1b: a cleared row: stamps 0, state CLEAN, boxes 0
     if (!mRowId)
     {
-        LL_ERRS() << "the group table is full (" << LLGroupRows::kCapacity << " groups)" << LL_ENDL;
+        LL_ERRS() << "the group table is full (" << RKGroupRows::kCapacity << " groups)" << LL_ENDL;
     }
-    static_assert(LLGroupRows::kCameras == LLViewerCamera::NUM_CAMERAS, "the group row holds one stamp per camera");
+    static_assert(RKGroupRows::kCameras == LLViewerCamera::NUM_CAMERAS, "the group row holds one stamp per camera");
 
     row().bounds[0] = node->getCenter();
     row().bounds[1] = node->getSize();
 
     mOctreeNode->addListener(this);
-    LLCullShadow::added(this);          // <FS> S7 C1b
+    RKCullShadow::added(this);          // <FS> S7 C1b
 }
 
 bool LLViewerOctreeGroup::hasElement(LLViewerOctreeEntryData* data)
@@ -552,7 +552,7 @@ void LLViewerOctreeGroup::unbound()
 
     setState(DIRTY);
     bumpPartitionEpoch();               // <FS> C4.3
-    LLCullShadow::touch(this);          // <FS> S7 C1b: the bounds will change at the next rebound
+    RKCullShadow::touch(this);          // <FS> S7 C1b: the bounds will change at the next rebound
 
     //all the parent nodes need to rebound this child
     if (mOctreeNode)
@@ -568,7 +568,7 @@ void LLViewerOctreeGroup::unbound()
 
             group->setState(DIRTY);
             group->bumpPartitionEpoch();    // <FS> C4.3
-            LLCullShadow::touch(group);
+            RKCullShadow::touch(group);
             parent = (OctreeNode*) parent->getParent();
         }
     }
@@ -596,7 +596,7 @@ void LLViewerOctreeGroup::rebound()
 
         if (!group->hasState(SKIP_FRUSTUM_CHECK))
         {
-            LLCullShadow::touch(group);     // <FS> S7 C1b: the flag shows in its row
+            RKCullShadow::touch(group);     // <FS> S7 C1b: the flag shows in its row
         }
         group->setState(SKIP_FRUSTUM_CHECK);
     }
@@ -613,7 +613,7 @@ void LLViewerOctreeGroup::rebound()
         LLViewerOctreeGroup* group = (LLViewerOctreeGroup*) mOctreeNode->getChild(0)->getListener(0);
         if (group->hasState(SKIP_FRUSTUM_CHECK))
         {
-            LLCullShadow::touch(group);     // <FS> S7 C1b
+            RKCullShadow::touch(group);     // <FS> S7 C1b
         }
         group->clearState(SKIP_FRUSTUM_CHECK);
         group->rebound();
@@ -627,7 +627,7 @@ void LLViewerOctreeGroup::rebound()
             group = (LLViewerOctreeGroup*) mOctreeNode->getChild(i)->getListener(0);
             if (group->hasState(SKIP_FRUSTUM_CHECK))
             {
-                LLCullShadow::touch(group);     // <FS> S7 C1b
+                RKCullShadow::touch(group);     // <FS> S7 C1b
             }
             group->clearState(SKIP_FRUSTUM_CHECK);
             group->rebound();
@@ -678,7 +678,7 @@ void LLViewerOctreeGroup::handleDestruction(const TreeNode* node)
     }
     setState(DEAD);
     bumpPartitionEpoch();               // <FS> C4.3
-    LLCullShadow::touch(this);          // <FS> S7 C1b: the row shows it dead until the slot is freed
+    RKCullShadow::touch(this);          // <FS> S7 C1b: the row shows it dead until the slot is freed
     for (OctreeNode::element_iter i = mOctreeNode->getDataBegin(); i != mOctreeNode->getDataEnd(); ++i)
     {
         LLViewerOctreeEntry* obj = *i;
@@ -728,7 +728,7 @@ void LLViewerOctreeGroup::handleChildRemoval(const OctreeNode* parent, const Oct
 void LLViewerOctreeGroup::handleParentChange(const OctreeNode* node)
 {
     bumpPartitionEpoch();               // <FS> C4.3
-    LLCullShadow::touch(this);          // <FS> S7 C1b: the row names the parent
+    RKCullShadow::touch(this);          // <FS> S7 C1b: the row names the parent
 }
 
 LLViewerOctreeGroup* LLViewerOctreeGroup::getParent()
@@ -847,16 +847,16 @@ void LLViewerOctreeGroup::checkStates()
 // <FS> S7 H3: the Hi-Z targets by id, the boxes of the pass being collected, and the batches sent whose results have not been applied yet
 namespace
 {
-std::unordered_map<U32, LLHizTarget*> sHizTargets;
+std::unordered_map<U32, RKHizTarget*> sHizTargets;
 U32 sHizNextId = 0;
 U32 sHizBatchSeq = 0;
-std::vector<LLVkBridge::HizBox> sHizBoxes;
-std::vector<LLHizTarget*> sHizBoxTargets;
+std::vector<RKVkBridge::HizBox> sHizBoxes;
+std::vector<RKHizTarget*> sHizBoxTargets;
 struct HizPending { U32 mSerial; U32 mFrame; std::vector<U32> mIds; F32 mEye[3] = {}; F32 mAt[3] = {}; };     // mEye, mAt: the camera the boxes were tested with (plan 8.38)
 std::deque<HizPending> sHizPending;
 }
 
-LLHizTarget::~LLHizTarget()
+RKHizTarget::~RKHizTarget()
 {
     if (mHizId)
     {
@@ -864,14 +864,14 @@ LLHizTarget::~LLHizTarget()
     }
 }
 
-void LLHiz::begin()
+void RKHiz::begin()
 {
     sHizBoxes.clear();
     sHizBoxTargets.clear();
     ++sHizBatchSeq;
 }
 
-void LLHiz::add(LLHizTarget* target, const LLVector4a& center, F32 half_x, F32 half_y, F32 half_z, bool water)
+void RKHiz::add(RKHizTarget* target, const LLVector4a& center, F32 half_x, F32 half_y, F32 half_z, bool water)
 {
     if (target->mHizBatch == sHizBatchSeq)
     {
@@ -883,7 +883,7 @@ void LLHiz::add(LLHizTarget* target, const LLVector4a& center, F32 half_x, F32 h
         target->mHizId = ++sHizNextId;
         sHizTargets[target->mHizId] = target;
     }
-    LLVkBridge::HizBox box;
+    RKVkBridge::HizBox box;
     box.mCenter[0] = center[0]; box.mCenter[1] = center[1]; box.mCenter[2] = center[2];
     box.mFlags = water ? 1u : 0u;
     box.mHalf[0] = half_x; box.mHalf[1] = half_y; box.mHalf[2] = half_z;
@@ -892,13 +892,13 @@ void LLHiz::add(LLHizTarget* target, const LLVector4a& center, F32 half_x, F32 h
     sHizBoxTargets.push_back(target);
 }
 
-void LLHiz::send(const F32* view_proj)
+void RKHiz::send(const F32* view_proj)
 {
     if (sHizBoxes.empty())
     {
         return;
     }
-    const U32 serial = LLVkBridge::hizSend(sHizBoxes.data(), (U32)sHizBoxes.size(), view_proj);
+    const U32 serial = RKVkBridge::hizSend(sHizBoxes.data(), (U32)sHizBoxes.size(), view_proj);
     if (!serial)
     {
         return;         // nothing was sent: the targets are not awaiting anything, the next pass adds them again
@@ -914,7 +914,7 @@ void LLHiz::send(const F32* view_proj)
         for (int a = 0; a < 3; ++a) { p.mEye[a] = eye.mV[a]; p.mAt[a] = at.mV[a]; }
     }
     p.mIds.reserve(sHizBoxTargets.size());
-    for (LLHizTarget* t : sHizBoxTargets)
+    for (RKHizTarget* t : sHizBoxTargets)
     {
         p.mIds.push_back(t->mHizId);
         t->mHizSerial = serial;
@@ -928,7 +928,7 @@ const bool sHizKeepVerdicts = getenv("LL_VK_BLINK") != nullptr;         // (diag
 std::unordered_map<U32, std::array<U32, 5>> sHizLastVerdict;
 }
 
-bool LLHiz::lastVerdict(const LLHizTarget* target, U32* out5)
+bool RKHiz::lastVerdict(const RKHizTarget* target, U32* out5)
 {
     if (!sHizKeepVerdicts || !target->mHizId)
     {
@@ -946,7 +946,7 @@ bool LLHiz::lastVerdict(const LLHizTarget* target, U32* out5)
     return true;
 }
 
-void LLHiz::apply()
+void RKHiz::apply()
 {
     if (sHizPending.empty())
     {
@@ -958,7 +958,7 @@ void LLHiz::apply()
         HizPending& p = sHizPending.front();
         const size_t all_boxes = p.mIds.size();
         words.resize(3 * all_boxes);
-        S32 r = LLVkBridge::hizRead(p.mSerial, (U32)all_boxes, words.data());
+        S32 r = RKVkBridge::hizRead(p.mSerial, (U32)all_boxes, words.data());
         if (r == 0)
         {
             // (2026-11-17: the worker takes the records in order: one that a later record has been published for is lost, not late. It held every verdict behind it for up to 60 frames)
@@ -969,7 +969,7 @@ void LLHiz::apply()
                 static std::vector<U32> probe;
                 const size_t q_boxes = q.mIds.size();
                 probe.resize(3 * q_boxes);
-                later_published = LLVkBridge::hizRead(q.mSerial, (U32)q_boxes, probe.data()) == 1;
+                later_published = RKVkBridge::hizRead(q.mSerial, (U32)q_boxes, probe.data()) == 1;
             }
             if (later_published || (U32)gFrameCount - p.mFrame > 60)
             {
@@ -990,7 +990,7 @@ void LLHiz::apply()
                     it->second->mHizSerial = 0;
                 }
             }
-            LLVkBridge::hizDone(p.mSerial);
+            RKVkBridge::hizDone(p.mSerial);
             sHizPending.pop_front();
             continue;
         }
@@ -1015,7 +1015,7 @@ void LLHiz::apply()
             {
                 continue;
             }
-            LLHizTarget* t = it->second;
+            RKHizTarget* t = it->second;
             if (t->mHizSerial != p.mSerial)
             {
                 continue;       // a later box of the target is the one awaited (it was discarded and added again)
@@ -1030,7 +1030,7 @@ void LLHiz::apply()
             static const bool ignore = getenv("LL_VK_HIZ_IGNORE") != nullptr;       // (a test: the verdicts are computed and not used)
             t->hizResult(ignore ? false : occluded);
         }
-        LLVkBridge::hizDone(p.mSerial);
+        RKVkBridge::hizDone(p.mSerial);
         sHizPending.pop_front();
     }
 }
@@ -1073,10 +1073,10 @@ public:
 namespace
 {
 // <FS> one bit per group row: the world camera's OCCLUDED state is set (see LLOcclusionCullingGroup::worldOccluded)
-std::atomic<U64> sWorldOccBits[LLGroupRows::kCapacity / 64];
+std::atomic<U64> sWorldOccBits[RKGroupRows::kCapacity / 64];
 inline void world_occ_bit(U32 row_id, bool on)
 {
-    if (row_id && row_id < LLGroupRows::kCapacity)
+    if (row_id && row_id < RKGroupRows::kCapacity)
     {
         const U64 bit = 1ull << (row_id & 63u);
         if (on) { sWorldOccBits[row_id >> 6].fetch_or(bit, std::memory_order_relaxed); }
@@ -1088,11 +1088,11 @@ inline void world_occ_bit(U32 row_id, bool on)
 void LLOcclusionCullingGroup::worldOccluded(std::vector<LLOcclusionCullingGroup*>& out)
 {
     out.clear();
-    if (!LLGroupRows::sChunks)
+    if (!RKGroupRows::sChunks)
     {
         return;
     }
-    for (U32 w = 0; w < LLGroupRows::kCapacity / 64; ++w)
+    for (U32 w = 0; w < RKGroupRows::kCapacity / 64; ++w)
     {
         U64 bits = sWorldOccBits[w].load(std::memory_order_relaxed);
         while (bits)
@@ -1101,9 +1101,9 @@ void LLOcclusionCullingGroup::worldOccluded(std::vector<LLOcclusionCullingGroup*
             _BitScanForward64(&b, bits);
             bits &= bits - 1;
             const U32 id = (w << 6) + (U32)b;
-            LLGroupRows::Row* chunk = LLGroupRows::sChunks[id >> LLGroupRows::kChunkShift];
-            const void* owner = chunk ? chunk[id & (LLGroupRows::kChunkRows - 1)].owner : nullptr;
-            if (!owner || !(chunk[id & (LLGroupRows::kChunkRows - 1)].occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+            RKGroupRows::Row* chunk = RKGroupRows::sChunks[id >> RKGroupRows::kChunkShift];
+            const void* owner = chunk ? chunk[id & (RKGroupRows::kChunkRows - 1)].owner : nullptr;
+            if (!owner || !(chunk[id & (RKGroupRows::kChunkRows - 1)].occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
                 world_occ_bit(id, false);       // (a group that is gone, a row handed out again, a state cleared where nothing noted it)
                 continue;
@@ -1180,11 +1180,11 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         }
         if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED))
         {
-            LLCullShadow::touch(this);      // <FS> S7 C1b
+            RKCullShadow::touch(this);      // <FS> S7 C1b
         }
         if (mSpatialPartition && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
         {
-            LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6: the texture records of its faces are filled again
+            RKTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6: the texture records of its faces are filled again
         }
         row().occlusion[LLViewerCamera::sCurCameraID] |= state;
         if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
@@ -1212,11 +1212,11 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
     case STATE_MODE_ALL_CAMERAS:
         if ((state & OCCLUDED) && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
         {
-            LLCullShadow::touch(this);      // <FS> S7 C1b
+            RKCullShadow::touch(this);      // <FS> S7 C1b
         }
         if (mSpatialPartition && (state & OCCLUDED) && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
         {
-            LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6
+            RKTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6
         }
         for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
         {
@@ -1276,12 +1276,12 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             }
             if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && (row().occlusion[LLViewerCamera::sCurCameraID] & OCCLUDED))
             {
-                LLCullShadow::touch(this);  // <FS> S7 C1b
+                RKCullShadow::touch(this);  // <FS> S7 C1b
             }
             if (mSpatialPartition && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
                 LLViewerTextureList::wakeGroupTextures(static_cast<LLSpatialGroup*>(this));     // <FS> H6: it came into view: its textures are looked at again
-                LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), false);
+                RKTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), false);
             }
             row().occlusion[LLViewerCamera::sCurCameraID] &= ~state;
             if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
@@ -1309,12 +1309,12 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
         case STATE_MODE_ALL_CAMERAS:
             if ((state & OCCLUDED) && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
-                LLCullShadow::touch(this);  // <FS> S7 C1b
+                RKCullShadow::touch(this);  // <FS> S7 C1b
             }
             if (mSpatialPartition && (state & OCCLUDED) && (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
             {
                 LLViewerTextureList::wakeGroupTextures(static_cast<LLSpatialGroup*>(this));     // <FS> H6
-                LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), false);
+                RKTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), false);
             }
             for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
             {
@@ -1432,7 +1432,7 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
     mHizStale = false;
     // Water is depth clamped (as the cubes were) so it is not rejected for being behind the far clip plane
     const bool water = mSpatialPartition->mDrawableType == LLPipeline::RENDER_TYPE_WATER || mSpatialPartition->mDrawableType == LLPipeline::RENDER_TYPE_VOIDWATER;
-    LLHiz::add(this, bounds[0], bounds[1][0] + SG_OCCLUSION_FUDGE, bounds[1][1] + SG_OCCLUSION_FUDGE, bounds[1][2] + OCCLUSION_FUDGE_Z, water);
+    RKHiz::add(this, bounds[0], bounds[1][0] + SG_OCCLUSION_FUDGE, bounds[1][1] + SG_OCCLUSION_FUDGE, bounds[1][2] + OCCLUSION_FUDGE_Z, water);
 }
 
 void LLOcclusionCullingGroup::hizEntryMoved(const LLVector4a* entry_extents)

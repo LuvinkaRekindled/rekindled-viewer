@@ -40,7 +40,7 @@ The only things that stop the work are a look decision that is Adam's (a program
   the sizes of their blocks (MAX_NODES_PER_GLTF_OBJECT, MAX_MATERIALS_PER_GLTF_OBJECT, MAX_UBO_VEC4S) are global defines of the native programs from the device. Checked: all 16 variants compile offline in a plain, an RT and a
   no-shadow session (and in the matrix), laps s80 (RT, GLTFEnabled forced: 16 programs, the blended ones 42,856 SPIR-V words) and s81 (RT off: 33,132): no errors, ground 142 / 143, ground regions within 2 levels of the
   baseline. Not checked: a glTF scene drawn (needs a region with GLTFEnabled).
-- The old stock loader is GONE (2026-11-13, the end of A): `LLShaderProgram::createShader` / `link` build native programs only (a program without a native source is a visible warning and a failed program: the stock path, `mShaderFiles`,
+- The old stock loader is GONE (2026-11-13, the end of A): `RKShaderProgram::createShader` / `link` build native programs only (a program without a native source is a visible warning and a failed program: the stock path, `mShaderFiles`,
   `attachObject` and friends are deleted); llshadermgr.cpp lost `attachShaderFeatures`, the pull rewriting and `loadShaderFile` (1,100 lines) and the dead GL shader binary cache (`initShaderCache`, the settings
   RenderShaderCacheEnabled / Version and the menu toggle); the stock translator rkvkshader.cpp (GL GLSL to Vulkan GLSL, 1,670 lines) is deleted, rkvkshader.h keeps the program info types and `debugShadersEnabled`;
   `loadBasicShaders` loads no library files; the directories class1, class2, class3 and the error fallbacks errorF / errorV are deleted (the frozen units, `freeze_stock.py` / `freeze_gltf.py`, were made from them: the generated

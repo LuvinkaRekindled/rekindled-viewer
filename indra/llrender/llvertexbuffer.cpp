@@ -97,7 +97,7 @@ static U32 gen_buffer()
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("gen buffer");
         sIndex = pool_size;
-        LLVkBuf::create(pool_size, sNamePool);
+        RKVkBuf::create(pool_size, sNamePool);
     }
 
     ret = sNamePool[--sIndex];
@@ -113,18 +113,18 @@ static void delete_buffers(S32 count, U32* buffers)
 
     if (gDeviceCaps.mInited)
     {
-        U32 idx = LLImageTex::sFrameCount % 4;
+        U32 idx = RKImageTex::sFrameCount % 4;
 
         for (S32 i = 0; i < count; ++i)
         {
             sFreeList[idx].push_back(buffers[i]);
         }
 
-        idx = (LLImageTex::sFrameCount + 3) % 4;
+        idx = (RKImageTex::sFrameCount + 3) % 4;
 
         if (!sFreeList[idx].empty())
         {
-            LLVkBuf::destroy((S32)sFreeList[idx].size(), sFreeList[idx].data());
+            RKVkBuf::destroy((S32)sFreeList[idx].size(), sFreeList[idx].data());
             sFreeList[idx].resize(0);
         }
     }
@@ -262,7 +262,7 @@ public:
             mMisses++;
             name = gen_buffer();
             // <FS> the storage is specified for the buffer by name; nothing is bound
-            LLVkAsync::bufferData(name, type, size, nullptr);
+            RKVkAsync::bufferData(name, type, size, nullptr);
 
             data = (U8*)ll_aligned_malloc_16(size);
         }
@@ -286,7 +286,7 @@ public:
         }
         if (recycled)
         {
-            LLVkAsync::bufferRecycle(name);     // <FS> the name comes back without glBufferData: whatever was built over its old contents is stale
+            RKVkAsync::bufferRecycle(name);     // <FS> the name comes back without glBufferData: whatever was built over its old contents is stale
         }
 
         clean();
@@ -324,7 +324,7 @@ public:
             iter->second.push_front({ data, name, std::chrono::steady_clock::now() });
         }
         {
-            LLVkAsync::bufferRecycle(name);     // <FS> back in the pool: nothing may keep building over it
+            RKVkAsync::bufferRecycle(name);     // <FS> back in the pool: nothing may keep building over it
         }
     }
 
@@ -433,19 +433,19 @@ void LLVertexBufferData::drawWithMatrix()
         gRender.getTexUnit(0)->bindWhite();
     }
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, glm::value_ptr(mModelView));
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Projection, glm::value_ptr(mProjection));
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Texture0);
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Texture0, glm::value_ptr(mTexture0));
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, glm::value_ptr(mModelView));
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Projection, glm::value_ptr(mProjection));
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Texture0);
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Texture0, glm::value_ptr(mTexture0));
 
     mVB->setBuffer();
     mVB->drawArrays(mMode, 0, mCount);
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Texture0);
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Projection);
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Texture0);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Projection);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 void LLVertexBufferData::draw()
@@ -560,7 +560,7 @@ void LLVertexBuffer::drawArrays(U32 mode, const std::vector<LLVector3>& pos)
 void LLVertexBuffer::drawElements(U32 mode, const LLVector4a* pos, const LLVector2* tc, U32 num_indices, const U16* indicesp)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VERTEX;
-    llassert(LLShaderProgram::sCurBoundShaderPtr != NULL);
+    llassert(RKShaderProgram::sCurBoundShaderPtr != NULL);
 
     // <FS:Beq> FIRE-29679 trap empty calls that cause crashes when rezzing in OpenSim.
     if(pos == nullptr || indicesp == nullptr )
@@ -652,7 +652,7 @@ bool LLVertexBuffer::validateRange(U32 start, U32 end, U32 count, U32 indices_of
             }
         }
 
-        LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+        RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
 
         if (shader && shader->mFeatures.mIndexedTextureChannels > 1)
         {
@@ -695,7 +695,7 @@ void LLVertexBuffer::clone(LLVertexBuffer& target) const
 // the record. The uniforms the program keeps besides them are written as before (syncMatrices); the state, texture units and uniforms of the draw ride in the stream in front of the record.
 bool LLVertexBuffer::pullDraw(U32 mode, bool indexed, U32 first, U32 count) const
 {
-    LLShaderProgram* program = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* program = RKShaderProgram::sCurBoundShaderPtr;
     if (!program || !program->isVertexPull())
     {
         return false;
@@ -727,12 +727,12 @@ bool LLVertexBuffer::pullDraw(U32 mode, bool indexed, U32 first, U32 count) cons
         matrices[32 + 4 * col + 2] = n[col][2];
         matrices[32 + 4 * col + 3] = 0.f;
     }
-    LLVkBridge::GeoEntry e = {};
+    RKVkBridge::GeoEntry e = {};
     e.mVertexBuffer = mVertexBufferId;
     e.mIndexBuffer = indexed ? mIndexBufferId : 0;
     e.mFirstIndex = first;
     e.mIndexCount = count;
-    e.mFlags = (indexed ? 0u : (U32)LLVkBridge::GEO_NO_INDEX) | (mode == LLRender::TRIANGLE_STRIP ? (U32)LLVkBridge::GEO_STRIP : 0u);
+    e.mFlags = (indexed ? 0u : (U32)RKVkBridge::GEO_NO_INDEX) | (mode == LLRender::TRIANGLE_STRIP ? (U32)RKVkBridge::GEO_STRIP : 0u);
     e.mNormalOffset = hasDataType(TYPE_NORMAL) ? getOffset(TYPE_NORMAL) : 0;
     e.mTexcoordOffset = hasDataType(TYPE_TEXCOORD0) ? getOffset(TYPE_TEXCOORD0) : 0;
     e.mColorOffset = hasDataType(TYPE_COLOR) ? getOffset(TYPE_COLOR) : 0;
@@ -741,31 +741,31 @@ bool LLVertexBuffer::pullDraw(U32 mode, bool indexed, U32 first, U32 count) cons
     e.mTexcoord2Offset = hasDataType(TYPE_TEXCOORD2) ? getOffset(TYPE_TEXCOORD2) : 0;
     e.mWeightOffset = hasDataType(TYPE_WEIGHT) ? getOffset(TYPE_WEIGHT) : 0;
     // a texture matrix on the stack (a draw with a texture animation or a flip) is the one entry's slot 1 of the table after the matrices (the pull programs read texture_matrix0 from it)
-    const glm::mat4& texture_matrix = LLRenderMatrix::get(LLRenderMatrix::Kind::Texture0);
+    const glm::mat4& texture_matrix = RKRenderMatrix::get(RKRenderMatrix::Kind::Texture0);
     const bool has_texture_matrix = texture_matrix != glm::mat4(1.f);
     if (has_texture_matrix)
     {
         e.mPad3 = 1;
     }
-    U8 blob[sizeof(LLVkBridge::GeoEntry) + sizeof(matrices) + 64];
+    U8 blob[sizeof(RKVkBridge::GeoEntry) + sizeof(matrices) + 64];
     memcpy(blob, &e, sizeof(e));
     memcpy(blob + sizeof(e), matrices, sizeof(matrices));
     if (has_texture_matrix)
     {
         memcpy(blob + sizeof(e) + sizeof(matrices), glm::value_ptr(texture_matrix), 64);
     }
-    LLVkBridge::ShadowPacketsHeader header;
+    RKVkBridge::ShadowPacketsHeader header;
     header.mKind = 32;
     header.mEntries = 1;
     header.mMatrices = 1;
     header.mFragment = has_texture_matrix ? 1 : 0;
-    LLVkBridge::shadowPackets(header, blob, sizeof(e) + sizeof(matrices) + (has_texture_matrix ? 64 : 0));
+    RKVkBridge::shadowPackets(header, blob, sizeof(e) + sizeof(matrices) + (has_texture_matrix ? 64 : 0));
     return true;
 }
 
 void LLVertexBuffer::drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indices_offset) const
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_DRAW);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_DRAW);
     ++sDrawCalls;
     llassert(validateRange(start, end, count, indices_offset));
     llassert(mVertexBufferId == sRenderBufferId);
@@ -775,14 +775,14 @@ void LLVertexBuffer::drawRange(U32 mode, U32 start, U32 end, U32 count, U32 indi
         return;
     }
     gRender.syncMatrices();
-    LLVkAsync::drawRangeElements(sPrimitive[mode], start, end, count, mIndicesType, (const void*)(indices_offset * (size_t) mIndicesStride));
+    RKVkAsync::drawRangeElements(sPrimitive[mode], start, end, count, mIndicesType, (const void*)(indices_offset * (size_t) mIndicesStride));
 }
 
 void LLVertexBuffer::drawRangeFast(U32 mode, U32 start, U32 end, U32 count, U32 indices_offset) const
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_DRAW);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_DRAW);
     ++sDrawCalls;
-    LLVkAsync::drawRangeElements(sPrimitive[mode], start, end, count, mIndicesType, (const void*)(indices_offset * (size_t)mIndicesStride));
+    RKVkAsync::drawRangeElements(sPrimitive[mode], start, end, count, mIndicesType, (const void*)(indices_offset * (size_t)mIndicesStride));
 }
 
 
@@ -794,7 +794,7 @@ void LLVertexBuffer::draw(U32 mode, U32 count, U32 indices_offset) const
 
 void LLVertexBuffer::drawArrays(U32 mode, U32 first, U32 count) const
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_DRAW);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_DRAW);
     ++sDrawCalls;
     llassert(first + count <= mNumVerts);
     llassert(mVertexBufferId == sRenderBufferId);
@@ -805,7 +805,7 @@ void LLVertexBuffer::drawArrays(U32 mode, U32 first, U32 count) const
         return;
     }
     gRender.syncMatrices();
-    LLVkAsync::drawArrays(sPrimitive[mode], first, count);
+    RKVkAsync::drawArrays(sPrimitive[mode], first, count);
 }
 
 //static
@@ -831,7 +831,7 @@ void LLVertexBuffer::drawNoAttributes(U32 mode, U32 first, U32 count)
 {
     ++sDrawCalls;
     gRender.syncMatrices();
-    LLVkAsync::drawArrays(sPrimitive[mode], first, count);
+    RKVkAsync::drawArrays(sPrimitive[mode], first, count);
 }
 
 //static
@@ -844,7 +844,7 @@ void LLVertexBuffer::forgetBoundBuffers()
 //static
 void LLVertexBuffer::unbind()
 {
-    LLVkAsync::drawBindingClear();
+    RKVkAsync::drawBindingClear();
     sRenderBufferId = 0;
     sRenderIndicesId = 0;
 }
@@ -867,7 +867,7 @@ void LLVertexBuffer::cleanupClass()
 struct LLVertexBuffer::VkBindCache
 {
     U32 mNumVerts = 0, mTypeMask = 0, mMask = 0, mArray = 0, mElem = 0;
-    LLVkAsync::DrawBinding mBinding;
+    RKVkAsync::DrawBinding mBinding;
 };
 
 LLVertexBuffer::LLVertexBuffer(U32 typemask)
@@ -944,7 +944,7 @@ U32 LLVertexBuffer::calcVertexSize(const U32& typemask)
 //virtual
 LLVertexBuffer::~LLVertexBuffer()
 {
-    LLVBHandles::release(mRenderHandle.v.load(std::memory_order_acquire));       // <FS> C3.5: handles of this buffer stop resolving
+    RKVBHandles::release(mRenderHandle.v.load(std::memory_order_acquire));       // <FS> C3.5: handles of this buffer stop resolving
     delete mVkBindCache;
     if (mMapped)
     { // is on the mapped buffer list but doesn't need to be flushed
@@ -1302,7 +1302,7 @@ void LLVertexBuffer::flush_vbo(BufferKind target, U32 start, U32 end, void* data
                 else if (flagged++ < 40)
                 {
                     LL_WARNS("VertexCheck") << "vertex buffer " << mVertexBufferId << " (" << getNumVerts() << " vertices, type mask " << mTypeMask << ") is flushed with " << bad << " bad positions of " << (last_v - first_v)
-                                            << " flushed (first at vertex " << first_bad << " = " << first_vals[0] << ", " << first_vals[1] << ", " << first_vals[2] << ", " << first_vals[3] << "; components: " << nan_comp << " NaN, " << inf_comp << " infinite, " << huge_comp << " huge; region bytes " << start << ".." << end << "); the code that filled it:\n" << LLVkAsync::stackHere(1, 14) << LL_ENDL;
+                                            << " flushed (first at vertex " << first_bad << " = " << first_vals[0] << ", " << first_vals[1] << ", " << first_vals[2] << ", " << first_vals[3] << "; components: " << nan_comp << " NaN, " << inf_comp << " infinite, " << huge_comp << " huge; region bytes " << start << ".." << end << "); the code that filled it:\n" << RKVkAsync::stackHere(1, 14) << LL_ENDL;
                 }
             }
         }
@@ -1317,7 +1317,7 @@ void LLVertexBuffer::flush_vbo(BufferKind target, U32 start, U32 end, void* data
         {
             U32 tend = llmin(i + block_size, end);
             U32 size = tend - i + 1;
-            LLVkAsync::bufferSubData(target == BufferKind::Vertex ? mVertexBufferId : mIndexBufferId, i, size, (U8*)data + (i - start));
+            RKVkAsync::bufferSubData(target == BufferKind::Vertex ? mVertexBufferId : mIndexBufferId, i, size, (U8*)data + (i - start));
         }
     }
 }
@@ -1544,7 +1544,7 @@ namespace
 {
     struct AttribSink
     {
-        LLVkAsync::VertexAttrib mAttribs[24];
+        RKVkAsync::VertexAttrib mAttribs[24];
         U32 mCount = 0;
     };
     thread_local AttribSink* sAttribSink = nullptr;
@@ -1578,7 +1578,7 @@ static inline void ll_attribIPointer(U32 index, S32 size, ComponentType type, S3
 // Set for rendering
 void LLVertexBuffer::setBuffer()
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SET_BUFFER);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_SET_BUFFER);
 
     if (mMapped)
     {
@@ -1591,9 +1591,9 @@ void LLVertexBuffer::setBuffer()
     llassert(mMappedIndexRegions.empty());
 
     // a shader must be bound
-    llassert(LLShaderProgram::sCurBoundShaderPtr);
+    llassert(RKShaderProgram::sCurBoundShaderPtr);
 
-    U32 data_mask = LLShaderProgram::sCurBoundShaderPtr->mAttributeMask;
+    U32 data_mask = RKShaderProgram::sCurBoundShaderPtr->mAttributeMask;
 
     // this Vertex Buffer must provide all necessary attributes for currently bound shader
     llassert_msg((data_mask & mTypeMask) == data_mask,
@@ -1608,7 +1608,7 @@ void LLVertexBuffer::setBuffer()
         const bool cache_hit = c && c->mNumVerts == mNumVerts && c->mTypeMask == mTypeMask && c->mMask == data_mask && c->mArray == mVertexBufferId && c->mElem == mIndexBufferId;
         if (cache_hit)
         {
-            LLVkAsync::drawBindingSet(c->mBinding);
+            RKVkAsync::drawBindingSet(c->mBinding);
         }
         else
         {
@@ -1616,7 +1616,7 @@ void LLVertexBuffer::setBuffer()
             sAttribSink = &sink;
             setupVertexBuffer();
             sAttribSink = nullptr;
-            LLVkAsync::drawBinding(mVertexBufferId, mIndexBufferId, sink.mAttribs, sink.mCount);
+            RKVkAsync::drawBinding(mVertexBufferId, mIndexBufferId, sink.mAttribs, sink.mCount);
             if (!mVkBindCache)
             {
                 mVkBindCache = new VkBindCache();
@@ -1626,7 +1626,7 @@ void LLVertexBuffer::setBuffer()
             mVkBindCache->mMask = data_mask;
             mVkBindCache->mArray = mVertexBufferId;
             mVkBindCache->mElem = mIndexBufferId;
-            LLVkAsync::drawBindingGet(mVkBindCache->mBinding);
+            RKVkAsync::drawBindingGet(mVkBindCache->mBinding);
         }
         sRenderBufferId = mVertexBufferId;
         sRenderIndicesId = mIndexBufferId;
@@ -1640,7 +1640,7 @@ void LLVertexBuffer::setupVertexBuffer()
 {
     U8* base = nullptr;
 
-    U32 data_mask = LLShaderProgram::sCurBoundShaderPtr->mAttributeMask;
+    U32 data_mask = RKShaderProgram::sCurBoundShaderPtr->mAttributeMask;
 
     if (data_mask & MAP_NORMAL)
     {
@@ -1853,7 +1853,7 @@ void LLVertexBuffer::setIndexData(const U32* data, U32 offset, U32 count)
 
 
 // ---- <FS> C3.5: the handle, the retire hook and the stand-in of the vertex buffer (llvertexbuffer.h)
-std::atomic<U64> LLVBRef::sDeadResolved{0};
+std::atomic<U64> RKVBRef::sDeadResolved{0};
 
 U32 LLVertexBuffer::getRenderHandle() const
 {
@@ -1862,7 +1862,7 @@ U32 LLVertexBuffer::getRenderHandle() const
     {
         return handle;
     }
-    const U32 fresh = LLVBHandles::acquire(const_cast<LLVertexBuffer*>(this));
+    const U32 fresh = RKVBHandles::acquire(const_cast<LLVertexBuffer*>(this));
     if (!fresh)
     {
         return 0;
@@ -1870,7 +1870,7 @@ U32 LLVertexBuffer::getRenderHandle() const
     U32 expected = 0;
     if (!mRenderHandle.v.compare_exchange_strong(expected, fresh, std::memory_order_acq_rel))
     {
-        LLVBHandles::release(fresh);       // another thread asked first
+        RKVBHandles::release(fresh);       // another thread asked first
         return expected;
     }
     return fresh;
@@ -1878,11 +1878,11 @@ U32 LLVertexBuffer::getRenderHandle() const
 
 bool LLVertexBuffer::retireOnLastRef() const
 {
-    return LLRetireList::park(const_cast<LLVertexBuffer*>(this));
+    return RKRetireList::park(const_cast<LLVertexBuffer*>(this));
 }
 
 // static
-LLVertexBuffer* LLVBRef::deadBuffer()
+LLVertexBuffer* RKVBRef::deadBuffer()
 {
     ++sDeadResolved;
     static LLVertexBuffer* dead = new LLVertexBuffer(LLVertexBuffer::MAP_VERTEX);       // (never destroyed; never allocated: no GPU buffer, id 0)

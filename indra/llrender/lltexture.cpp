@@ -40,5 +40,5 @@ void LLTexture::setActive() { llassert(false);  }
 S32  LLTexture::getWidth(S32 discard_level) const { llassert(false); return 0; }
 S32  LLTexture::getHeight(S32 discard_level) const { llassert(false); return 0; }
 bool LLTexture::isActiveFetching() { llassert(false); return false; }
-LLImageTex* LLTexture::getImageTexture() const { llassert(false); return nullptr; }
+RKImageTex* LLTexture::getImageTexture() const { llassert(false); return nullptr; }
 void LLTexture::updateBindStatsForTester() { }

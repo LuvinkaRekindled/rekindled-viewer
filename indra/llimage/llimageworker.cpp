@@ -94,9 +94,9 @@ size_t LLImageDecodeThread::getPending()
 }
 
 // <FS> the decoded cache (rkdecodedtexturecache.cpp)
-static LLDecodedImageCache* sDecodedCache = nullptr;
-void LLImageDecodeThread::setDecodedCache(LLDecodedImageCache* cache) { sDecodedCache = cache; }
-LLDecodedImageCache* LLImageDecodeThread::getDecodedCache() { return sDecodedCache; }
+static RKDecodedImageCache* sDecodedCache = nullptr;
+void LLImageDecodeThread::setDecodedCache(RKDecodedImageCache* cache) { sDecodedCache = cache; }
+RKDecodedImageCache* LLImageDecodeThread::getDecodedCache() { return sDecodedCache; }
 
 LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
     const LLPointer<LLImageFormatted>& image,
@@ -174,17 +174,17 @@ ImageRequest::~ImageRequest()
 // returns true when the check ran and kept the texels (the caller may record that so the check is not run again on a cache hit)
 static bool compress_if_wanted(LLPointer<LLImageRaw>& raw)
 {
-    if (raw.isNull() || raw->isCompressed() || !raw->getData() || !LLImageBC7::enabled()
-        || !LLImageBC7::eligible(raw->getWidth(), raw->getHeight(), raw->getComponents()))
+    if (raw.isNull() || raw->isCompressed() || !raw->getData() || !RKImageBC7::enabled()
+        || !RKImageBC7::eligible(raw->getWidth(), raw->getHeight(), raw->getComponents()))
     {
         return false;
     }
     const U32 w = raw->getWidth(), h = raw->getHeight(), c = raw->getComponents();
     std::vector<std::vector<U8>> chain;
-    LLImageBC7::buildChain(raw->getData(), w, h, c, chain);
-    const S8 alpha_is_mask = LLImageBC7::classifyAlpha(raw->getData(), w, h, c);
+    RKImageBC7::buildChain(raw->getData(), w, h, c, chain);
+    const S8 alpha_is_mask = RKImageBC7::classifyAlpha(raw->getData(), w, h, c);
     F32 harmed = 0.f;
-    LLPointer<LLImageRaw> compressed = LLImageBC7::compress(chain, w, h, c, LLImageBC7::MAX_HARMED_PERCENT, harmed, alpha_is_mask);
+    LLPointer<LLImageRaw> compressed = RKImageBC7::compress(chain, w, h, c, RKImageBC7::MAX_HARMED_PERCENT, harmed, alpha_is_mask);
     if (compressed.notNull())
     {
         compressed->mComment = raw->mComment;
@@ -228,7 +228,7 @@ bool ImageRequest::processRequest()
                 mFormattedImage->setDiscardLevel(mDiscardLevel);
             }
             // <FS> the decoded cache first: a hit is the image this decode would have produced, at this discard level (no aux channel through the cache)
-            LLDecodedImageCache* cache = sDecodedCache;
+            RKDecodedImageCache* cache = sDecodedCache;
             if (cache && mCacheID.notNull() && !mNeedsAux)
             {
                 const S32 discard = llmax(0, (S32)mFormattedImage->getDiscardLevel());
@@ -289,7 +289,7 @@ bool ImageRequest::processRequest()
         // <FS> what the decode produced goes to the decoded cache (it copies)
         if (mDecodedRaw && mCacheID.notNull() && !mNeedsAux)
         {
-            if (LLDecodedImageCache* cache = sDecodedCache)
+            if (RKDecodedImageCache* cache = sDecodedCache)
             {
                 cache->write(mCacheID, llmax(0, (S32)mFormattedImage->getDiscardLevel()), mDecodedImageRaw, checked_raw);
             }

@@ -21,9 +21,9 @@
 #include <cstring>
 #include "rkvkplatform.h"
 
-using namespace LLVk;
+using namespace RKVk;
 
-namespace LLVkState
+namespace RKVkState
 {
 
 // the state as the producer holds it: the block, plus the viewer's separate inputs that one block field is derived from
@@ -121,7 +121,7 @@ inline bool ownThread(const char* what)
     return true;
 }
 
-#define CTX_CALL() if (!ownThread(__func__)) return; ++C().mCalls; if (LLRenderState::sWhy && !LLRenderState::sInGuard && !tlsCtx) LLRenderState::noteDirect(__func__)
+#define CTX_CALL() if (!ownThread(__func__)) return; ++C().mCalls; if (RKRenderState::sWhy && !RKRenderState::sInGuard && !tlsCtx) RKRenderState::noteDirect(__func__)
 static bool scissor_trace_now();
 
 void setDepthMask(bool flag)
@@ -160,9 +160,9 @@ void setStencilMask(U32 mask)
 // F3.2: typed overloads (rkrenderstate.h). The enums are in Vulkan's order, so the conversion is a table of one line each
 namespace
 {
-VkCompareOp toVk(LLRenderState::CompareOp op)
+VkCompareOp toVk(RKRenderState::CompareOp op)
 {
-    using LLRenderState::CompareOp;
+    using RKRenderState::CompareOp;
     switch (op)
     {
     case CompareOp::Never: return VK_COMPARE_OP_NEVER;
@@ -176,9 +176,9 @@ VkCompareOp toVk(LLRenderState::CompareOp op)
     }
 }
 
-LLRenderState::CompareOp fromVk(VkCompareOp op)
+RKRenderState::CompareOp fromVk(VkCompareOp op)
 {
-    using LLRenderState::CompareOp;
+    using RKRenderState::CompareOp;
     switch (op)
     {
     case VK_COMPARE_OP_NEVER: return CompareOp::Never;
@@ -192,9 +192,9 @@ LLRenderState::CompareOp fromVk(VkCompareOp op)
     }
 }
 
-VkStencilOp toVk(LLRenderState::StencilOp op)
+VkStencilOp toVk(RKRenderState::StencilOp op)
 {
-    using LLRenderState::StencilOp;
+    using RKRenderState::StencilOp;
     switch (op)
     {
     case StencilOp::Zero: return VK_STENCIL_OP_ZERO;
@@ -208,9 +208,9 @@ VkStencilOp toVk(LLRenderState::StencilOp op)
     }
 }
 
-VkBlendFactor toVk(LLRenderState::BlendFactor f)
+VkBlendFactor toVk(RKRenderState::BlendFactor f)
 {
-    using LLRenderState::BlendFactor;
+    using RKRenderState::BlendFactor;
     switch (f)
     {
     case BlendFactor::Zero: return VK_BLEND_FACTOR_ZERO;
@@ -283,7 +283,7 @@ void setDepthClamp(bool on)
     C().mBlock.mRaster.mDepthClamp = on;
 }
 
-void setBlendFunc(LLRenderState::BlendFactor src_rgb, LLRenderState::BlendFactor dst_rgb, LLRenderState::BlendFactor src_a, LLRenderState::BlendFactor dst_a)
+void setBlendFunc(RKRenderState::BlendFactor src_rgb, RKRenderState::BlendFactor dst_rgb, RKRenderState::BlendFactor src_a, RKRenderState::BlendFactor dst_a)
 {
     CTX_CALL();
     BlendState& bs = C().mBlock.mBlend;
@@ -297,9 +297,9 @@ namespace
 {
 }
 
-void setCullFace(LLRenderState::CullFace face)
+void setCullFace(RKRenderState::CullFace face)
 {
-    using LLRenderState::CullFace;
+    using RKRenderState::CullFace;
     if (face == CullFace::None)
     {
         return;
@@ -309,20 +309,20 @@ void setCullFace(LLRenderState::CullFace face)
     recomputeCull();
 }
 
-void setPolygonMode(LLRenderState::PolygonMode mode)
+void setPolygonMode(RKRenderState::PolygonMode mode)
 {
-    using LLRenderState::PolygonMode;
+    using RKRenderState::PolygonMode;
     CTX_CALL();
     C().mBlock.mRaster.mPolygonMode = mode == PolygonMode::Line ? VK_POLYGON_MODE_LINE : (mode == PolygonMode::Point ? VK_POLYGON_MODE_POINT : VK_POLYGON_MODE_FILL);
 }
 
-void setDepthFunc(LLRenderState::CompareOp op)
+void setDepthFunc(RKRenderState::CompareOp op)
 {
     CTX_CALL();
     C().mBlock.mDepth.mDepthOp = toVk(op);
 }
 
-void setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask)
+void setStencilFunc(RKRenderState::CompareOp op, S32 ref, U32 mask)
 {
     CTX_CALL();
     DepthStencilState& ds = C().mBlock.mDepth;
@@ -331,7 +331,7 @@ void setStencilFunc(LLRenderState::CompareOp op, S32 ref, U32 mask)
     ds.mCompareMask = mask;
 }
 
-void setStencilOp(LLRenderState::StencilOp sfail, LLRenderState::StencilOp dpfail, LLRenderState::StencilOp dppass)
+void setStencilOp(RKRenderState::StencilOp sfail, RKRenderState::StencilOp dpfail, RKRenderState::StencilOp dppass)
 {
     CTX_CALL();
     DepthStencilState& ds = C().mBlock.mDepth;
@@ -473,9 +473,9 @@ bool takeChanged(Block& out)
     {
         return false;
     }
-    if (LLRenderState::sWhy && !tlsCtx)
+    if (RKRenderState::sWhy && !tlsCtx)
     {
-        LLRenderState::whyEmit(c.mTakenValid ? describeDifference(c.mTaken, c.mBlock) : std::string("first"));
+        RKRenderState::whyEmit(c.mTakenValid ? describeDifference(c.mTaken, c.mBlock) : std::string("first"));
     }
     c.mTaken = c.mBlock;
     c.mTakenValid = true;
@@ -532,20 +532,20 @@ std::string statsReport()
     char buf[260];
     snprintf(buf, sizeof(buf), "state context: %llu setter calls, %llu blocks written, %llu setter calls from other threads (ignored), %llu unknown blend factors", c.mCalls, c.mBlocks, c.mOffThread, c.mUnknownFactor);
     c.mCalls = c.mBlocks = c.mOffThread = c.mUnknownFactor = 0;
-    return std::string(buf) + LLRenderState::guardReport();
+    return std::string(buf) + RKRenderState::guardReport();
 }
 
-} // namespace LLVkState
+} // namespace RKVkState
 
 // ---- F3.2: the scoped guards of rkrenderstate.h ----
-namespace LLRenderState
+namespace RKRenderState
 {
 
 bool sGuardCheck = []() { const char* e = getenv("LL_VK_STATE_GUARD_CHECK"); return e && e[0] == '1'; }();
 
 namespace
 {
-using LLVkState::C;
+using RKVkState::C;
 
 const char* kindName(Kind k)
 {
@@ -627,7 +627,7 @@ void dumpTop(const char* what, std::map<std::string, U64>& m)
 
 void noteWriter(const char* file, int line, int kind)
 {
-    if (!sWhy || LLVkState::tlsCtx)
+    if (!sWhy || RKVkState::tlsCtx)
     {
         return;
     }
@@ -707,7 +707,7 @@ void whyEmit(const std::string& diff)
 
 U32 read(Kind kind)
 {
-    const LLVkState::Block& b = C().mBlock;
+    const RKVkState::Block& b = C().mBlock;
     switch (kind)
     {
     case Kind::Blend: return b.mBlend.mEnable;
@@ -722,7 +722,7 @@ U32 read(Kind kind)
         return packCull(C().mCullOn, face);
     }
     case Kind::Depth:
-        return packDepth(b.mDepth.mDepthTest, b.mDepthMask, LLVkState::fromVk(b.mDepth.mDepthOp));
+        return packDepth(b.mDepth.mDepthTest, b.mDepthMask, RKVkState::fromVk(b.mDepth.mDepthOp));
     case Kind::DepthTest: return b.mDepth.mDepthTest;
     case Kind::DepthReadOnly: return b.mDepthReadOnly;
     default: return 0;
@@ -731,7 +731,7 @@ U32 read(Kind kind)
 
 U32 exchange(Kind kind, U32 value, const char* file, int line)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_GLSTATE);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_GLSTATE);
     const U32 old = read(kind);
     if (kind == Kind::Cull && !(value & 6))
     {
@@ -745,35 +745,35 @@ U32 exchange(Kind kind, U32 value, const char* file, int line)
     sInGuard = true;
     switch (kind)
     {
-    case Kind::Blend: LLVkState::setBlendEnable(value != 0); break;
-    case Kind::Scissor: LLVkState::setScissorTest(value != 0); break;
-    case Kind::Stencil: LLVkState::setStencilTest(value != 0); break;
-    case Kind::PolygonOffset: LLVkState::setPolygonOffsetFill(value != 0); break;
-    case Kind::DepthClamp: LLVkState::setDepthClamp(value != 0); break;
-    case Kind::DepthTest: LLVkState::setDepthTest(value != 0); break;
-    case Kind::DepthReadOnly: LLVkState::setDepthReadOnly(value != 0); break;
+    case Kind::Blend: RKVkState::setBlendEnable(value != 0); break;
+    case Kind::Scissor: RKVkState::setScissorTest(value != 0); break;
+    case Kind::Stencil: RKVkState::setStencilTest(value != 0); break;
+    case Kind::PolygonOffset: RKVkState::setPolygonOffsetFill(value != 0); break;
+    case Kind::DepthClamp: RKVkState::setDepthClamp(value != 0); break;
+    case Kind::DepthTest: RKVkState::setDepthTest(value != 0); break;
+    case Kind::DepthReadOnly: RKVkState::setDepthReadOnly(value != 0); break;
     case Kind::Cull:
         if ((old & 1) != (value & 1))
         {
-            LLVkState::setCullEnable((value & 1) != 0);
+            RKVkState::setCullEnable((value & 1) != 0);
         }
         if ((old & 6) != (value & 6))
         {
-            LLVkState::setCullFace((CullFace)((value >> 1) & 3));
+            RKVkState::setCullFace((CullFace)((value >> 1) & 3));
         }
         break;
     case Kind::Depth:
         if ((old & 1) != (value & 1))
         {
-            LLVkState::setDepthTest((value & 1) != 0);
+            RKVkState::setDepthTest((value & 1) != 0);
         }
         if ((old & 28) != (value & 28))
         {
-            LLVkState::setDepthFunc((CompareOp)((value >> 2) & 7));
+            RKVkState::setDepthFunc((CompareOp)((value >> 2) & 7));
         }
         if ((old & 2) != (value & 2))
         {
-            LLVkState::setDepthMask((value & 2) != 0);
+            RKVkState::setDepthMask((value & 2) != 0);
         }
         break;
     default: break;

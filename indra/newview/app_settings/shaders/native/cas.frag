@@ -8,7 +8,7 @@
 #define CAS_BETTER_DIAGONALS
 #define CAS_SLOW
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec2 out_screen_res;
     uvec4 cas_param_0;
@@ -18,7 +18,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #endif
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
 };

@@ -2470,11 +2470,11 @@ bool LLImportMaterial::operator<(const LLImportMaterial &rhs) const
 
 
 // ---- <FS> C2.4c: the handle and the retire hook of LLMeshSkinInfo (llmodel.h)
-std::atomic<U64> LLSkinRef::sDeadResolved{0};
+std::atomic<U64> RKSkinRef::sDeadResolved{0};
 
 LLMeshSkinInfo::~LLMeshSkinInfo()
 {
-    LLSkinHandles::release(mRenderHandle.v.load(std::memory_order_acquire));
+    RKSkinHandles::release(mRenderHandle.v.load(std::memory_order_acquire));
 }
 
 U32 LLMeshSkinInfo::getRenderHandle() const
@@ -2484,7 +2484,7 @@ U32 LLMeshSkinInfo::getRenderHandle() const
     {
         return handle;
     }
-    const U32 fresh = LLSkinHandles::acquire(const_cast<LLMeshSkinInfo*>(this));
+    const U32 fresh = RKSkinHandles::acquire(const_cast<LLMeshSkinInfo*>(this));
     if (!fresh)
     {
         return 0;
@@ -2492,7 +2492,7 @@ U32 LLMeshSkinInfo::getRenderHandle() const
     U32 expected = 0;
     if (!mRenderHandle.v.compare_exchange_strong(expected, fresh, std::memory_order_acq_rel))
     {
-        LLSkinHandles::release(fresh);       // another thread asked first
+        RKSkinHandles::release(fresh);       // another thread asked first
         return expected;
     }
     return fresh;
@@ -2500,5 +2500,5 @@ U32 LLMeshSkinInfo::getRenderHandle() const
 
 bool LLMeshSkinInfo::retireOnLastRef() const
 {
-    return LLRetireList::park(const_cast<LLMeshSkinInfo*>(this));
+    return RKRetireList::park(const_cast<LLMeshSkinInfo*>(this));
 }

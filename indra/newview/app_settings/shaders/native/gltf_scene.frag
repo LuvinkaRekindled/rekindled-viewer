@@ -9,7 +9,7 @@
 #endif
 
 #define transparent_surface (transparent_surface_ll_b != 0u)
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 projection_matrix;
     int gltf_material_id;
@@ -82,7 +82,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float waterFogDensity;
     float waterFogKS;
 };
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_matrix;
     uint ll_ti_diffuseMap;
@@ -107,11 +107,11 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
     uint ll_ti_heroProbes;
     uint ll_ti_mirrorView;
 };
-layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
+layout(std140, set = 0, binding = 6) uniform RKLooseMaterial
 {
     vec3 color;
 };
-layout(std140, set = 0, binding = 7) uniform LLLooseLight
+layout(std140, set = 0, binding = 7) uniform RKLooseLight
 {
     vec3 lightnorm;
     mat4 proj_mat;
@@ -1432,14 +1432,14 @@ float rtSunBlockerT()
 // Opaque casters commit their hit at once; alpha masked ones (instance mask 2) hand each candidate triangle to rtAlphaHit, which repeats the test of shadowAlphaPullF.glsl
 // with the texture of the geometry record (set 3 binding 1) read through the frame's bindless table. Rigged avatars are not in the scene yet (PLAN-rt-shadows.md stage C).
 // <FS> a translucent glTF mesh (an avatar's shell: base colour alpha blended) is a layer for the traced reflection only (rtTraceHitEx); a sun ray goes through it, as it did before such draws were named to the ray scene
-bool rtRecordGltfBlend(LLRtGeom g)
+bool rtRecordGltfBlend(RKRtGeom g)
 {
     uint mat_id = g.material;
     if (mat_id == 0u || mat_id >= 16384u)
     {
         return false;
     }
-    uint mf = floatBitsToUint(LLRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id].params.z);
+    uint mf = floatBitsToUint(RKRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id].params.z);
     return (mf & 10u) == 10u;
 }
 
@@ -1451,7 +1451,7 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     {
         return false;
     }
-    LLRtGeom g = ll_rt_geoms.g[record];
+    RKRtGeom g = ll_rt_geoms.g[record];
     if ((g.flags & 256u) != 0u)
     {
         return false;                       // a record the scene could not vouch for this frame: nothing is read
@@ -1461,7 +1461,7 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
         return false;
     }
     vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
-    LLRtIndices ib = LLRtIndices(g.indices);
+    RKRtIndices ib = RKRtIndices(g.indices);
     uint ix[3];
     for (uint k = 0u; k < 3u; ++k)
     {
@@ -1472,11 +1472,11 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     vec2 uv = vec2(0.0);
     if ((g.flags & 8u) != 0u)
     {
-        LLRtTexcoords tc = LLRtTexcoords(g.texcoords);
+        RKRtTexcoords tc = RKRtTexcoords(g.texcoords);
         uv = tc.t[ix[0]] * w.x + tc.t[ix[1]] * w.y + tc.t[ix[2]] * w.z;
         uv = g.uv0 * uv.x + g.uv1 * uv.y + g.uv2;          // the texture animation / glTF transform of the draw
     }
-    uint tex_index = ((g.flags & 4u) != 0u) ? 0u : (floatBitsToUint(LLRtPositions(g.positions).v[ix[0]].w) & 3u);
+    uint tex_index = ((g.flags & 4u) != 0u) ? 0u : (floatBitsToUint(RKRtPositions(g.positions).v[ix[0]].w) & 3u);
     uint pair = (tex_index < 2u) ? g.slots.x : g.slots.y;
     uint slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
     const bool slot_assigned = slot != 0u;      // <FS> 0: the record has no texture (plain white, by design: the CPU side names such a draw); a pin index or handle that resolves to 0 below is a texture without a descriptor
@@ -1493,7 +1493,7 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
         // glTF alpha mask: texture alpha times vertex alpha against the material's cutoff, no dithering (pbrShadowAlphaMaskF.glsl)
         if ((g.flags & 16u) != 0u)
         {
-            LLRtColors col = LLRtColors(g.colors);
+            RKRtColors col = RKRtColors(g.colors);
             alpha *= (float(col.c[ix[0]] >> 24) * w.x + float(col.c[ix[1]] >> 24) * w.y + float(col.c[ix[2]] >> 24) * w.z) * (1.0 / 255.0);
         }
         return alpha >= g.cutoff;
@@ -1506,7 +1506,7 @@ bool rtAlphaHit(uint record, uint prim, vec2 bary, vec2 pos_screen, float lod)
     {
         if ((g.flags & 1u) == 0u && (g.flags & 16u) != 0u)
         {
-            LLRtColors col = LLRtColors(g.colors);
+            RKRtColors col = RKRtColors(g.colors);
             alpha *= (float(col.c[ix[0]] >> 24) * w.x + float(col.c[ix[1]] >> 24) * w.y + float(col.c[ix[2]] >> 24) * w.z) * (1.0 / 255.0);
         }
         if (alpha < 0.05)
@@ -1534,7 +1534,7 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
     {
         return 0.0;
     }
-    LLRtGeom g = ll_rt_geoms.g[record];
+    RKRtGeom g = ll_rt_geoms.g[record];
     if ((g.flags & 256u) != 0u)
     {
         return 0.0;
@@ -1544,7 +1544,7 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
         return 0.0;
     }
     vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
-    LLRtIndices ib = LLRtIndices(g.indices);
+    RKRtIndices ib = RKRtIndices(g.indices);
     uint ix[3];
     for (uint k = 0u; k < 3u; ++k)
     {
@@ -1555,11 +1555,11 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
     vec2 uv = vec2(0.0);
     if ((g.flags & 8u) != 0u)
     {
-        LLRtTexcoords tc = LLRtTexcoords(g.texcoords);
+        RKRtTexcoords tc = RKRtTexcoords(g.texcoords);
         uv = tc.t[ix[0]] * w.x + tc.t[ix[1]] * w.y + tc.t[ix[2]] * w.z;
         uv = g.uv0 * uv.x + g.uv1 * uv.y + g.uv2;
     }
-    uint tex_index = ((g.flags & 4u) != 0u) ? 0u : (floatBitsToUint(LLRtPositions(g.positions).v[ix[0]].w) & 3u);
+    uint tex_index = ((g.flags & 4u) != 0u) ? 0u : (floatBitsToUint(RKRtPositions(g.positions).v[ix[0]].w) & 3u);
     uint pair = (tex_index < 2u) ? g.slots.x : g.slots.y;
     uint slot = (pair >> ((tex_index & 1u) * 16u)) & 0xFFFFu;
     const bool slot_assigned = slot != 0u;      // <FS> 0: the record has no texture (plain white, by design: the CPU side names such a draw); a pin index or handle that resolves to 0 below is a texture without a descriptor
@@ -1575,7 +1575,7 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
     {
         if ((g.flags & 16u) != 0u)
         {
-            LLRtColors col = LLRtColors(g.colors);
+            RKRtColors col = RKRtColors(g.colors);
             alpha *= (float(col.c[ix[0]] >> 24) * w.x + float(col.c[ix[1]] >> 24) * w.y + float(col.c[ix[2]] >> 24) * w.z) * (1.0 / 255.0);
         }
     }
@@ -1592,7 +1592,7 @@ float rtAlphaCover(uint record, uint prim, vec2 bary, float lod)
 // moves from eye space into that space: a rotation (3 columns) and the camera's place in it (12 floats packed into the first 48 bytes of the record).
 void rtSceneFrame(out mat3 to_scene, out vec3 camera)
 {
-    LLRtGeom h = ll_rt_geoms.g[0];
+    RKRtGeom h = ll_rt_geoms.g[0];
     to_scene = mat3(uintBitsToFloat(uvec3(h.positions.x, h.positions.y, h.indices.x)), uintBitsToFloat(uvec3(h.indices.y, h.texcoords.x, h.texcoords.y)),
                     uintBitsToFloat(uvec3(h.colors.x, h.colors.y, h.slots.x)));
     camera = uintBitsToFloat(uvec3(h.slots.y, h.flags, floatBitsToUint(h.cutoff)));
@@ -1924,13 +1924,13 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     {
         return false;
     }
-    LLRtGeom g = ll_rt_geoms.g[record];
+    RKRtGeom g = ll_rt_geoms.g[record];
     if ((g.flags & 256u) != 0u || (g.indices.x == 0u && g.indices.y == 0u) || (g.positions.x == 0u && g.positions.y == 0u))
     {
         return false;
     }
     vec3 w = vec3(1.0 - bary.x - bary.y, bary.x, bary.y);
-    LLRtIndices ib = LLRtIndices(g.indices);
+    RKRtIndices ib = RKRtIndices(g.indices);
     uint ix[3];
     for (uint k = 0u; k < 3u; ++k)
     {
@@ -1938,12 +1938,12 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
         uint word = ib.w[i >> 1];
         ix[k] = rtClampVertex(g, ((i & 1u) != 0u) ? (word >> 16) : (word & 0xFFFFu));
     }
-    LLRtPositions pb = LLRtPositions(g.positions);
+    RKRtPositions pb = RKRtPositions(g.positions);
     vec3 p0 = pb.v[ix[0]].xyz, p1 = pb.v[ix[1]].xyz, p2 = pb.v[ix[2]].xyz;
     n_obj = normalize(cross(p1 - p0, p2 - p0));
     if ((g.flags & 1024u) != 0u)
     {
-        LLRtNormals nb = LLRtNormals(g.normals);
+        RKRtNormals nb = RKRtNormals(g.normals);
         vec3 ns = nb.n[ix[0]].xyz * w.x + nb.n[ix[1]].xyz * w.y + nb.n[ix[2]].xyz * w.z;
         n_obj = dot(ns, ns) > 1e-8 ? normalize(ns) : n_obj;
     }
@@ -1953,12 +1953,12 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     {
         return true;                    // no material: a neutral grey
     }
-    LLRtMaterial m = LLRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id];
+    RKRtMaterial m = RKRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id];
     uint mflags = floatBitsToUint(m.params.z);
     vec2 uv = vec2(0.0);
     if ((g.flags & 8u) != 0u)
     {
-        LLRtTexcoords tc = LLRtTexcoords(g.texcoords);
+        RKRtTexcoords tc = RKRtTexcoords(g.texcoords);
         uv = tc.t[ix[0]] * w.x + tc.t[ix[1]] * w.y + tc.t[ix[2]] * w.z;
         uv = m.uv0 * uv.x + m.uv1 * uv.y + m.uv2;
     }
@@ -1974,7 +1974,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
     vec4 vcol = vec4(1.0);
     if ((g.flags & 16u) != 0u)
     {
-        LLRtColors col = LLRtColors(g.colors);
+        RKRtColors col = RKRtColors(g.colors);
         vcol = (unpackUnorm4x8(col.c[ix[0]]) * w.x + unpackUnorm4x8(col.c[ix[1]]) * w.y + unpackUnorm4x8(col.c[ix[2]]) * w.z);
     }
     if ((mflags & 64u) != 0u)
@@ -2038,7 +2038,7 @@ bool rtShadeSurfaceEx(uint record, uint prim, vec2 bary, float lod, bool full, o
             }
             else if (normal_slot != 0u)
             {
-                LLRtTexcoords tcn = LLRtTexcoords(g.texcoords);
+                RKRtTexcoords tcn = RKRtTexcoords(g.texcoords);
                 vec2 a0 = tcn.t[ix[0]], a1 = tcn.t[ix[1]], a2 = tcn.t[ix[2]];
                 a0 = m.uv0 * a0.x + m.uv1 * a0.y + m.uv2;
                 a1 = m.uv0 * a1.x + m.uv1 * a1.y + m.uv2;
@@ -2107,7 +2107,7 @@ bool rtRecordBlended(uint record)
     {
         return false;
     }
-    uint mf = floatBitsToUint(LLRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id].params.z);
+    uint mf = floatBitsToUint(RKRtMaterials(ll_rt_geoms.g[0].normals).m[mat_id].params.z);
     return (mf & 8u) != 0u;         // <FS> glTF blends too (the translucent shell of an avatar): a layer over what is behind it, lit like any hit
 }
 

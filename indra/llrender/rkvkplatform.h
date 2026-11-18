@@ -131,7 +131,7 @@ inline void WakeByAddressSingle(void* address) { syscall(SYS_futex, (uint32_t*)a
 inline void WakeByAddressAll(void* address) { syscall(SYS_futex, (uint32_t*)address, FUTEX_WAKE_PRIVATE, 0x7FFFFFFF, nullptr, nullptr, 0); }
 
 // threads: CreateThread / WaitForSingleObject / CloseHandle over pthreads (the worker thread is the only user)
-struct LLVkThreadHandle
+struct RKVkThreadHandle
 {
     pthread_t mThread;
     DWORD (*mProc)(LPVOID);
@@ -139,13 +139,13 @@ struct LLVkThreadHandle
 };
 inline void* ll_vk_thread_entry(void* p)
 {
-    LLVkThreadHandle* h = (LLVkThreadHandle*)p;
+    RKVkThreadHandle* h = (RKVkThreadHandle*)p;
     h->mProc(h->mParam);
     return nullptr;
 }
 inline HANDLE CreateThread(void*, size_t, DWORD (*proc)(LPVOID), LPVOID param, DWORD, DWORD*)
 {
-    LLVkThreadHandle* h = new LLVkThreadHandle{ {}, proc, param };
+    RKVkThreadHandle* h = new RKVkThreadHandle{ {}, proc, param };
     if (pthread_create(&h->mThread, nullptr, ll_vk_thread_entry, h) != 0)
     {
         delete h;
@@ -155,7 +155,7 @@ inline HANDLE CreateThread(void*, size_t, DWORD (*proc)(LPVOID), LPVOID param, D
 }
 inline DWORD WaitForSingleObject(HANDLE handle, DWORD ms)
 {
-    LLVkThreadHandle* h = (LLVkThreadHandle*)handle;
+    RKVkThreadHandle* h = (RKVkThreadHandle*)handle;
     timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     ts.tv_sec += ms / 1000;
@@ -163,7 +163,7 @@ inline DWORD WaitForSingleObject(HANDLE handle, DWORD ms)
     if (ts.tv_nsec >= 1000000000L) { ts.tv_sec += 1; ts.tv_nsec -= 1000000000L; }
     return pthread_timedjoin_np(h->mThread, nullptr, &ts) == 0 ? 0 : 0x102;
 }
-inline BOOL CloseHandle(HANDLE handle) { delete (LLVkThreadHandle*)handle; return 1; }
+inline BOOL CloseHandle(HANDLE handle) { delete (RKVkThreadHandle*)handle; return 1; }
 inline HANDLE GetCurrentThread() { return nullptr; }
 #define THREAD_PRIORITY_BELOW_NORMAL (-1)
 inline BOOL SetThreadPriority(HANDLE, int priority)

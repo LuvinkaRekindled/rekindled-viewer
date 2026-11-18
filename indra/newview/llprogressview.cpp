@@ -283,10 +283,10 @@ void LLProgressView::fade(bool in)
 
 void LLProgressView::drawStartTexture(F32 alpha)
 {
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     if (gStartTexture)
     {
-        LLRenderPresetUIDefault gls_ui;
+        RKRenderPresetUIDefault gls_ui;
         gRender.getTexUnit(0)->bind(gStartTexture.get());
         gRender.color4f(1.f, 1.f, 1.f, alpha);
         F32 image_aspect = (F32)gStartImageWidth / (F32)gStartImageHeight;
@@ -296,13 +296,13 @@ void LLProgressView::drawStartTexture(F32 alpha)
         // stretch image to maintain aspect ratio
         if (image_aspect > view_aspect)
         {
-            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, -0.5f * (image_aspect / view_aspect - 1.f) * width, 0.f, 0.f);
-            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, image_aspect / view_aspect, 1.f, 1.f);
+            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, -0.5f * (image_aspect / view_aspect - 1.f) * width, 0.f, 0.f);
+            RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, image_aspect / view_aspect, 1.f, 1.f);
         }
         else
         {
-            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, 0.f, -0.5f * (view_aspect / image_aspect - 1.f) * height, 0.f);
-            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, 1.f, view_aspect / image_aspect, 1.f);
+            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, 0.f, -0.5f * (view_aspect / image_aspect - 1.f) * height, 0.f);
+            RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, 1.f, view_aspect / image_aspect, 1.f);
         }
         gl_rect_2d_simple_tex( getRect().getWidth(), getRect().getHeight() );
         gRender.getTexUnit(0)->bindWhite();
@@ -313,7 +313,7 @@ void LLProgressView::drawStartTexture(F32 alpha)
         gRender.color4f(0.f, 0.f, 0.f, alpha);      // ## Zi: Fade teleport screens
         gl_rect_2d(getRect());
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 void LLProgressView::drawLogos(F32 alpha)

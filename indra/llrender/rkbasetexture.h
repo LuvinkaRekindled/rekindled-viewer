@@ -37,7 +37,7 @@ class LLImageRaw;
 //this the parent for the class LLViewerTexture
 //through the following virtual functions, the class LLViewerTexture can be reached from /llrender.
 //
-class LLBaseTexture : public LLTexture
+class RKBaseTexture : public LLTexture
 {
 public:
     enum
@@ -87,13 +87,13 @@ public:
     } LLGLTextureState;
 
 protected:
-    virtual ~LLBaseTexture();
-    LOG_CLASS(LLBaseTexture);
+    virtual ~RKBaseTexture();
+    LOG_CLASS(RKBaseTexture);
 
 public:
-    LLBaseTexture(bool usemipmaps = true);
-    LLBaseTexture(const LLImageRaw* raw, bool usemipmaps) ;
-    LLBaseTexture(const U32 width, const U32 height, const U8 components, bool usemipmaps) ;
+    RKBaseTexture(bool usemipmaps = true);
+    RKBaseTexture(const LLImageRaw* raw, bool usemipmaps) ;
+    RKBaseTexture(const U32 width, const U32 height, const U8 components, bool usemipmaps) ;
 
     virtual void dump();    // debug info to LL_INFOS()
 
@@ -113,7 +113,7 @@ public:
     void destroyImageTexture() ;
 
     //---------------------------------------------------------------------------------------------
-    //functions to access LLImageTex
+    //functions to access RKImageTex
     //---------------------------------------------------------------------------------------------
     /*virtual*/S32         getWidth(S32 discard_level = -1) const;
     /*virtual*/S32         getHeight(S32 discard_level = -1) const;
@@ -127,10 +127,10 @@ public:
     // imageraw - the image to copy from
     // usename - explicit GL name override
     // to_create - set to false to force gl texture to not be created
-    // category - LLBaseTexture category for this LLBaseTexture
+    // category - RKBaseTexture category for this RKBaseTexture
     // defer_copy - set to true to allocate GL texture but NOT initialize with imageraw data
     // tex_name - if not null, will be set to the GL name of the texture created
-    bool       createImageTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true, S32 category = LLBaseTexture::OTHER, bool defer_copy = false, U32* tex_name = nullptr);
+    bool       createImageTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true, S32 category = RKBaseTexture::OTHER, bool defer_copy = false, U32* tex_name = nullptr);
 
     void       setFilteringOption(LLTexUnit::eTextureFilterOptions option);
     void       setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format = ComponentType::None, const char* file = __builtin_FILE(), int line = __builtin_LINE());
@@ -164,7 +164,7 @@ public:
     LLGLTextureState getTextureState() const { return mTextureState; }
 
     //---------------------------------------------------------------------------------------------
-    //end of functions to access LLImageTex
+    //end of functions to access RKImageTex
     //---------------------------------------------------------------------------------------------
 
     //-----------------
@@ -183,7 +183,7 @@ protected:
     void setTexelsPerImage();
 
 public:
-    /*virtual*/ LLImageTex* getImageTexture() const ;
+    /*virtual*/ RKImageTex* getImageTexture() const ;
 
 protected:
     S32 mBoostLevel;                // enum describing priority level
@@ -198,7 +198,7 @@ protected:
     mutable S8  mNeedsImageTexture;
 
     //GL texture
-    LLPointer<LLImageTex> mImageTexp ;
+    LLPointer<RKImageTex> mImageTexp ;
     S8 mDontDiscard;            // Keep full res version of this image (for UI, etc)
 
 protected:

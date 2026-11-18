@@ -1,6 +1,6 @@
 // smaa_blend.vert: the vertex stage of SMAA's neighbourhood blending. A line for line translation of "SMAA Neighborhood Blending" (deferred/SMAANeighborhoodBlendV.glsl); pairs with smaa_blend.frag.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec4 SMAA_RT_METRICS;
 };

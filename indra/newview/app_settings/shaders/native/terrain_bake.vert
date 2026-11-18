@@ -1,7 +1,7 @@
 // terrain_bake.vert: the vertex stage of the PBR terrain's paint bake: the patch's vertices with the coordinates the alpha ramp is sampled at. A line for line translation of "Terrain Bake Shader"
 // (interface/pbrTerrainBakeV.glsl); pairs with terrain_bake.frag. (the draw block is declared the same in both stages)
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
     uint ll_ti_alpha_ramp;

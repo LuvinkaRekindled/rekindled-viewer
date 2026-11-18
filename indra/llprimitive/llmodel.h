@@ -46,10 +46,10 @@ class domMesh;
 #define MAX_MODEL_FACES 8
 
 class LLMeshSkinInfo;
-using LLSkinHandles = LLHandleTable<LLMeshSkinInfo>;       // <FS> C2.4c: the handles of mesh skin infos (rkhandletable.h)
+using RKSkinHandles = RKHandleTable<LLMeshSkinInfo>;       // <FS> C2.4c: the handles of mesh skin infos (rkhandletable.h)
 
 LL_ALIGN_PREFIX(16)
-class LLMeshSkinInfo : public LLAssetRefCount
+class LLMeshSkinInfo : public RKAssetRefCount
 {
     LL_ALIGN_NEW
 public:
@@ -57,7 +57,7 @@ public:
     LLMeshSkinInfo(LLSD& data);
     LLMeshSkinInfo(const LLUUID& mesh_id, LLSD& data);
     virtual ~LLMeshSkinInfo();
-    // <FS> C2.4c (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLSkinRef), and the retire list (llcommon/rkretirelist.h): the last owner letting go parks the skin info for a
+    // <FS> C2.4c (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (RKSkinRef), and the retire list (llcommon/rkretirelist.h): the last owner letting go parks the skin info for a
     // few frames, so a draw info that still reads it through its handle finds it intact (the LocalMesh use-after-free of earlier sessions was a draw info outliving its skin info)
     U32 getRenderHandle() const;
     /*virtual*/ bool retireOnLastRef() const override;
@@ -99,33 +99,33 @@ public:
     U64 mHash = 0;
 } LL_ALIGN_POSTFIX(16);
 
-// <FS> C2.4c: a skin info reference that is a handle, not a counted pointer (the skin counterpart of LLTexRef and LLGLTFMatRef). It holds no reference count and owns nothing: the owners (the volume, the
+// <FS> C2.4c: a skin info reference that is a handle, not a counted pointer (the skin counterpart of RKTexRef and RKGLTFMatRef). It holds no reference count and owns nothing: the owners (the volume, the
 // faces, the mesh repository) keep the skin info alive and the retire list keeps it intact for the frames that could still read it after the last owner let go. get() resolves the handle each time and
 // answers nullptr for a skin info that is gone; isNull() / notNull() / explicit bool are dead-aware (a draw whose skin info is gone reads as "no skin": the callers already skip those), and get() counts
 // the resolutions that found a gone skin info (sDeadResolved: in a healthy run it stays 0).
-class LLSkinRef
+class RKSkinRef
 {
 public:
-    LLSkinRef() = default;
-    LLSkinRef(std::nullptr_t) {}
-    LLSkinRef(const LLMeshSkinInfo* skin) : mHandle(skin ? skin->getRenderHandle() : 0) {}
-    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, LLSkinRef>::value && !std::is_convertible<P, const LLMeshSkinInfo*>::value, decltype(std::declval<const P&>().get())>>
-    LLSkinRef(const P& p) : LLSkinRef(static_cast<const LLMeshSkinInfo*>(p.get())) {}
-    LLSkinRef& operator=(const LLMeshSkinInfo* skin) { mHandle = skin ? skin->getRenderHandle() : 0; return *this; }
-    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, LLSkinRef>::value && !std::is_convertible<P, const LLMeshSkinInfo*>::value, decltype(std::declval<const P&>().get())>>
-    LLSkinRef& operator=(const P& p) { return *this = static_cast<const LLMeshSkinInfo*>(p.get()); }
+    RKSkinRef() = default;
+    RKSkinRef(std::nullptr_t) {}
+    RKSkinRef(const LLMeshSkinInfo* skin) : mHandle(skin ? skin->getRenderHandle() : 0) {}
+    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, RKSkinRef>::value && !std::is_convertible<P, const LLMeshSkinInfo*>::value, decltype(std::declval<const P&>().get())>>
+    RKSkinRef(const P& p) : RKSkinRef(static_cast<const LLMeshSkinInfo*>(p.get())) {}
+    RKSkinRef& operator=(const LLMeshSkinInfo* skin) { mHandle = skin ? skin->getRenderHandle() : 0; return *this; }
+    template <class P, class = std::enable_if_t<!std::is_same<std::decay_t<P>, RKSkinRef>::value && !std::is_convertible<P, const LLMeshSkinInfo*>::value, decltype(std::declval<const P&>().get())>>
+    RKSkinRef& operator=(const P& p) { return *this = static_cast<const LLMeshSkinInfo*>(p.get()); }
 
     const LLMeshSkinInfo* get() const
     {
         if (!mHandle) return nullptr;
-        const LLMeshSkinInfo* skin = LLSkinHandles::resolve(mHandle);
+        const LLMeshSkinInfo* skin = RKSkinHandles::resolve(mHandle);
         if (!skin) ++sDeadResolved;
         return skin;
     }
     operator const LLMeshSkinInfo*() const { return get(); }
     const LLMeshSkinInfo* operator->() const { return get(); }
     const LLMeshSkinInfo& operator*() const { return *get(); }
-    bool isNull() const { return !mHandle || !LLSkinHandles::resolve(mHandle); }
+    bool isNull() const { return !mHandle || !RKSkinHandles::resolve(mHandle); }
     bool notNull() const { return !isNull(); }
     explicit operator bool() const { return notNull(); }
     U32 handle() const { return mHandle; }

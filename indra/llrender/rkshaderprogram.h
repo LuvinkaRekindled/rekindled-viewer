@@ -39,7 +39,7 @@
 class LLShaderFeatures
 {
 public:
-    // (the fields the code reads: llrender.cpp syncMatrices, llvertexbuffer.cpp, lldrawpoolbump.cpp and LLShaderProgram::createShader; the other 20 were set by the shader manager and read by nothing)
+    // (the fields the code reads: llrender.cpp syncMatrices, llvertexbuffer.cpp, lldrawpoolbump.cpp and RKShaderProgram::createShader; the other 20 were set by the shader manager and read by nothing)
     S32 mIndexedTextureChannels = 0;
     bool calculatesLighting = false;
     bool calculatesAtmospherics = false;
@@ -48,9 +48,9 @@ public:
 };
 
 // ============= Structure for caching shader uniforms ===============
-namespace LLVk { class Program; }
+namespace RKVk { class Program; }
 
-class LLShaderProgram;
+class RKShaderProgram;
 
 class LLShaderUniforms
 {
@@ -106,7 +106,7 @@ public:
         mVector3s.push_back({ index, LLVector3(value) });
     }
 
-    void apply(LLShaderProgram* shader);
+    void apply(RKShaderProgram* shader);
 
 
     std::vector<IntSetting> mIntegers;
@@ -114,7 +114,7 @@ public:
     std::vector<VectorSetting> mVectors;
     std::vector<Vector3Setting> mVector3s;
 };
-class LLShaderProgram
+class RKShaderProgram
 {
 public:
     // enum primarily used to control application sky settings uniforms
@@ -137,15 +137,15 @@ public:
     };
 
 
-    static std::set<LLShaderProgram*> sInstances;
+    static std::set<RKShaderProgram*> sInstances;
     static bool sProfileEnabled;
     static bool sCanProfile;
 
-    LLShaderProgram();
-    ~LLShaderProgram();
+    RKShaderProgram();
+    ~RKShaderProgram();
 
     static U32 sCurBoundShader;
-    static LLShaderProgram* sCurBoundShaderPtr;
+    static RKShaderProgram* sCurBoundShaderPtr;
     static void announceBound();                // S6.2: a pass began: the program that is bound sends its uniform class blocks again (the others do at their bind)
     static S32 sIndexedTextureChannels;
 
@@ -293,7 +293,7 @@ public:
     S32 mActiveTextureChannels;
     S32 mShaderLevel;
     bool mVertexPull = false;
-    S32 mShaderGroup; // see LLShaderProgram::eGroup
+    S32 mShaderGroup; // see RKShaderProgram::eGroup
     bool mUniformsDirty;
     // <FS> (mirror 2026-11-11) the environment's uniforms (sky, water, the eye space water and mirror planes) are rebuilt by LLEnvironment::update, which bumps sEnvUniformEpoch; a program takes them at its first bind after that.
     // This replaces a list of programs the environment marked dirty: a program missing from the list (the opaque scene table programs: diffuse, PBR, tree, bump...) never got mirror_flag and clipPlane, so a hero probe face
@@ -313,8 +313,8 @@ public:
 
     // <FS> Vulkan mirror: a Vulkan twin of this program, and the map from this program's GL uniform locations to
     // the twin's uniforms (>= 0: index into its uniform list) or samplers (< 0: ~index into its sampler list)
-    LLVk::Program* mVkProgram = nullptr;
-    LLVk::Program* mVkProgramPending = nullptr;     // built by link(); becomes mVkProgram once the viewer-side mapping is done (mirrorCreate)
+    RKVk::Program* mVkProgram = nullptr;
+    RKVk::Program* mVkProgramPending = nullptr;     // built by link(); becomes mVkProgram once the viewer-side mapping is done (mirrorCreate)
     // a uniform location is the program's own uniform index (>= 0), or SAMPLER_LOCATION_BASE + the sampler index
     static constexpr S32 SAMPLER_LOCATION_BASE = 0x40000000;
     S32 vkTwinOf(S32 location) const;
@@ -329,7 +329,7 @@ public:
     // F2.5: this shader's copy of the program's uniform class blocks; a write is resolved to a byte range, compared with the copy and sent as the bytes that changed
     struct VkUni { U8 mClass = 0; U32 mOffset = 0; U32 mArraySize = 0; };
     std::vector<VkUni> mVkUni;                  // by the program's own uniform index
-    std::vector<U8> mVkShadow[5];               // by class (LLVk::UC_COUNT)
+    std::vector<U8> mVkShadow[5];               // by class (RKVk::UC_COUNT)
     std::vector<S32> mVkSamplerUnits;           // the texture unit last sent for each sampler (-1: not yet)
     bool vkWriteFloats(S32 twin, const F32* data, U32 components, U32 count);
     bool vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 rows, bool transpose, U32 count);
@@ -355,7 +355,7 @@ public:
     static void dumpProgramCensus();            // <FS> LL_VK_PROGRAM_CENSUS=1: one log line (tag ProgramCensus) for every loaded program: name, binds, shader level, files, native files
 
     // this pointer should be set to whichever shader represents this shader's rigged variant
-    LLShaderProgram* mRiggedVariant = nullptr;
+    RKShaderProgram* mRiggedVariant = nullptr;
 
     // variants for use by GLTF renderer
     // bit 0 = alpha mode blend (1) or opaque (0)
@@ -372,7 +372,7 @@ public:
 
     constexpr static U8 NUM_GLTF_VARIANTS = 16;
 
-    std::vector<LLShaderProgram> mGLTFVariants;
+    std::vector<RKShaderProgram> mGLTFVariants;
 
     //helper to bind GLTF variant
     void bind(U8 variant);
@@ -382,7 +382,7 @@ public:
 
     const char* getName() const { return mName.c_str(); }
 
-    LLUniCensus::ProgStats mCensus;     // <FS> U0 counters (LL_VK_UNICENSUS=1)
+    RKUniCensus::ProgStats mCensus;     // <FS> U0 counters (LL_VK_UNICENSUS=1)
     void censusProgram();               // registers the program with the census (first call)
     void censusUniform(S32 twin, bool changed);
     const std::string* censusUniformName(size_t index) const;       // the name and class of the program's uniform number index (null when there is none)
@@ -402,11 +402,11 @@ private:
 };
 
 //UI shader (declared here so llui_libtest will link properly)
-extern LLShaderProgram         gUIProgram;
+extern RKShaderProgram         gUIProgram;
 //output vec4(color.rgb,color.a*tex0[tc0].a)
-extern LLShaderProgram         gSolidColorProgram;
+extern RKShaderProgram         gSolidColorProgram;
 //Alpha mask shader (declared here so llappearance can access properly)
-extern LLShaderProgram         gAlphaMaskProgram;
+extern RKShaderProgram         gAlphaMaskProgram;
 
 #if LL_PROFILER_ENABLE_RENDER_DOC
 #define LL_SET_SHADER_LABEL(shader) shader.setLabel(#shader)

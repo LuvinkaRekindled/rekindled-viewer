@@ -5,7 +5,7 @@
 #include "lib/gbuffer.glsl"
 #include "lib/viewpos.glsl"
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     mat4 inv_proj;
     vec3 kern[4];
@@ -17,7 +17,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     vec4 half_src;              // the blur of the half resolution lightmap: xy the size of the G-buffer, zw the pixel of its 2x2 block a lightmap pixel was computed at (sun_lightmap.frag, half_offset); x = 0: the lightmap has the G-buffer's size
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_lightMap;
     uint ll_ti_normalMap;

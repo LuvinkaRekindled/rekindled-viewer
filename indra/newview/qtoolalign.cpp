@@ -185,42 +185,42 @@ void setup_transforms_bbox(LLBBox bbox)
 {
     // translate to center
     LLVector3 center = bbox.getCenterAgent();
-    LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
+    RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
 
     // rotate
     LLQuaternion rotation = bbox.getRotation();
     F32 angle_radians, x, y, z;
     rotation.getAngleAxis(&angle_radians, &x, &y, &z);
     gRender.flush();
-    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
+    RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
     // scale
     LLVector3 scale = bbox.getMaxLocal() - bbox.getMinLocal();
-    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, scale.mV[VX], scale.mV[VY], scale.mV[VZ]);
+    RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, scale.mV[VX], scale.mV[VY], scale.mV[VZ]);
 }
 
 void render_bbox(LLBBox bbox)
 {
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
     setup_transforms_bbox(bbox);
 
     gRender.flush();
     gBox.render();
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 void render_cone_bbox(LLBBox bbox)
 {
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
     setup_transforms_bbox(bbox);
 
     gRender.flush();
     gCone.render();
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 // the selection bbox isn't axis aligned, so we must construct one
@@ -370,10 +370,10 @@ void QToolAlign::render()
         mBBox = get_selection_axis_aligned_bbox();
 
         // Draw bounding box
-        LLRenderPresetUIDefault gls_ui;
-        LLRenderState::BlendScope gl_blend(true);
+        RKRenderPresetUIDefault gls_ui;
+        RKRenderState::BlendScope gl_blend(true);
         // F3.2: LLGLEnable(GL_ALPHA_TEST) had no effect on the render state block (never mapped); dropped
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
         gRender.getTexUnit(0)->bindWhite();
 
         // render box

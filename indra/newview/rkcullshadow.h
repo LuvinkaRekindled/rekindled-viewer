@@ -15,7 +15,7 @@ class LLCamera;
 class LLViewerOctreeGroup;
 class LLSpatialBridge;
 
-namespace LLCullShadow
+namespace RKCullShadow
 {
     void poseLog(LLCamera& camera);
 

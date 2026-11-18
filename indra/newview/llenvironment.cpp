@@ -1805,9 +1805,9 @@ void LLEnvironment::update(const LLViewerCamera * cam)
 
     updateSettingsUniforms();
 
-    // <FS> every program takes the environment's uniforms at its first bind after this update (LLShaderProgram::bind compares its epoch). This replaces the loop over the shader manager's list and a hand written list of the
+    // <FS> every program takes the environment's uniforms at its first bind after this update (RKShaderProgram::bind compares its epoch). This replaces the loop over the shader manager's list and a hand written list of the
     // scene table's pull programs: the programs the lists missed (diffuse, PBR opaque, tree, bump, diffuse alpha mask pull) never got mirror_flag and clipPlane, so a hero probe face did not clip them.
-    ++LLShaderProgram::sEnvUniformEpoch;
+    ++RKShaderProgram::sEnvUniformEpoch;
 }
 
 void LLEnvironment::updateCloudScroll()
@@ -1839,7 +1839,7 @@ void LLEnvironment::updateRenderVariablesForSettings(LLShaderUniforms* uniforms,
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
-    for (int i = 0; i < LLShaderProgram::SG_COUNT; ++i)
+    for (int i = 0; i < RKShaderProgram::SG_COUNT; ++i)
     {
         uniforms[i].clear();
     }
@@ -1849,13 +1849,13 @@ void LLEnvironment::updateRenderVariablesForSettings(LLShaderUniforms* uniforms,
     psetting->applySpecial(uniforms);
 }
 
-void LLEnvironment::updateShaderUniforms(LLShaderProgram* shader)
+void LLEnvironment::updateShaderUniforms(RKShaderProgram* shader)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
     // apply uniforms that should be applied to all shaders
-    mSkyUniforms[LLShaderProgram::SG_ANY].apply(shader);
-    mWaterUniforms[LLShaderProgram::SG_ANY].apply(shader);
+    mSkyUniforms[RKShaderProgram::SG_ANY].apply(shader);
+    mWaterUniforms[RKShaderProgram::SG_ANY].apply(shader);
 
     // apply uniforms specific to the given shader's shader group
     auto group = shader->mShaderGroup;

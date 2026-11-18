@@ -225,7 +225,7 @@ std::string LLAudioEngine::getInternetStreamURL()
 
 void LLAudioEngine::updateChannels()
 {
-    LLAudioStallTimer stall("LLAudioEngine::updateChannels");
+    RKAudioStallTimer stall("LLAudioEngine::updateChannels");
     S32 i;
     for (i = 0; i < LL_MAX_AUDIO_CHANNELS; i++)
     {
@@ -245,7 +245,7 @@ void LLAudioEngine::idle()
     // Primarily does position updating, cleanup of unused audio sources.
     // Also does regeneration of the current priority of each audio source.
 
-    LLAudioStallTimer stall_idle("LLAudioEngine::idle (all)");
+    RKAudioStallTimer stall_idle("LLAudioEngine::idle (all)");
     S32 i;
     for (i = 0; i < LL_MAX_AUDIO_BUFFERS; i++)
     {
@@ -459,7 +459,7 @@ void LLAudioEngine::idle()
 
     // Sync up everything that the audio engine needs done.
     {
-        LLAudioStallTimer stall("LLAudioEngine::commitDeferredChanges (backend update)");
+        RKAudioStallTimer stall("LLAudioEngine::commitDeferredChanges (backend update)");
         commitDeferredChanges();
     }
 
@@ -490,7 +490,7 @@ void LLAudioEngine::idle()
 
     // Decode audio files
     {
-        LLAudioStallTimer stall("LLAudioDecodeMgr::processQueue");
+        RKAudioStallTimer stall("LLAudioDecodeMgr::processQueue");
         LLAudioDecodeMgr::getInstance()->processQueue();
     }
 
@@ -498,12 +498,12 @@ void LLAudioEngine::idle()
     // missed picking it up in all the places that can add
     // or request new data.
     {
-        LLAudioStallTimer stall("LLAudioEngine::startNextTransfer");
+        RKAudioStallTimer stall("LLAudioEngine::startNextTransfer");
         startNextTransfer();
     }
 
     {
-        LLAudioStallTimer stall("LLAudioEngine::updateInternetStream");
+        RKAudioStallTimer stall("LLAudioEngine::updateInternetStream");
         updateInternetStream();
     }
 }
@@ -1972,7 +1972,7 @@ bool LLAudioData::load()
         return false;
     }
 
-    LLAudioStallTimer stall_load("LLAudioData::load (buffer + file)");
+    RKAudioStallTimer stall_load("LLAudioData::load (buffer + file)");
     stall_load.setId(mID);
     mBufferp = gAudiop->getFreeBuffer();
     if (!mBufferp)

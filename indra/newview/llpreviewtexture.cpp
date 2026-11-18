@@ -102,7 +102,7 @@ LLPreviewTexture::LLPreviewTexture(const LLSD& key)
       mAspectRatio(0.f),
       mPreviewToSave(false),
       mImage(NULL),
-      mImageOldBoostLevel(LLBaseTexture::BOOST_NONE),
+      mImageOldBoostLevel(RKBaseTexture::BOOST_NONE),
       mShowingButtons(false),
       mDisplayNameCallback(false),
       mAvatarNameCallbackConnection()
@@ -142,7 +142,7 @@ LLPreviewTexture::~LLPreviewTexture()
     if (mImage.notNull())
     {
         mImage->setBoostLevel(mImageOldBoostLevel);
-        // <FS:Ansariel> Remove NO_DELETE texture state so image gets removed from memory (set by calling setBoostLevel(LLBaseTexture::BOOST_PREVIEW))
+        // <FS:Ansariel> Remove NO_DELETE texture state so image gets removed from memory (set by calling setBoostLevel(RKBaseTexture::BOOST_PREVIEW))
         mImage->forceActive();
         // </FS:Ansariel>
         mImage = NULL;
@@ -285,7 +285,7 @@ void LLPreviewTexture::draw()
 
     if (!isMinimized())
     {
-        LLRenderPresetUIDefault gls_ui;
+        RKRenderPresetUIDefault gls_ui;
         gRender.getTexUnit(0)->bindWhite();
 
         const LLRect& border = mClientRect;
@@ -1096,11 +1096,11 @@ void LLPreviewTexture::onAspectRatioCommit(LLUICtrl* ctrl, void* userdata)
 void LLPreviewTexture::loadAsset()
 {
     // <FS:Beq> FIRE-30559 texture fetch speedup for user previews (based on patches from Oren Hurvitz)
-    // mImage = LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, MIPMAP_TRUE, LLBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+    // mImage = LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, MIPMAP_TRUE, RKBaseTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
     // mImageOldBoostLevel = mImage->getBoostLevel();
-    // mImage->setBoostLevel(LLBaseTexture::BOOST_PREVIEW);
-    mImage = LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, MIPMAP_TRUE, LLBaseTexture::BOOST_PREVIEW, LLViewerTexture::LOD_TEXTURE);
-    mImageOldBoostLevel = LLBaseTexture::BOOST_NONE;
+    // mImage->setBoostLevel(RKBaseTexture::BOOST_PREVIEW);
+    mImage = LLViewerTextureManager::getFetchedTexture(mImageID, FTT_DEFAULT, MIPMAP_TRUE, RKBaseTexture::BOOST_PREVIEW, LLViewerTexture::LOD_TEXTURE);
+    mImageOldBoostLevel = RKBaseTexture::BOOST_NONE;
     // </FS:Beq>
     mImage->forceToSaveRawImage(0) ;
     // <FS:Techwolf Lupindo> texture comment decoder

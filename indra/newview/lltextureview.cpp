@@ -193,7 +193,7 @@ void LLTextureBar::draw()
     S32 bottom = top + 6;
     LLColor4 clr;
 
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
 
     // Name, pixel_area, requested pixel area, decode priority
     std::string uuid_str;
@@ -328,7 +328,7 @@ void LLTextureBar::draw()
 
 
     {
-        LLRenderPresetUIDefault gls_ui;
+        RKRenderPresetUIDefault gls_ui;
         // draw the image size at the end
         {
             std::string num_str = llformat("%3dx%3d (%2d) %7d", mImagep->getWidth(), mImagep->getHeight(),
@@ -403,7 +403,7 @@ void LLAvatarTexBar::draw()
     const S32 l_offset = 3;
 
     //----------------------------------------------------------------------------
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     LLColor4 color;
 
     U32 line_num = 1;
@@ -552,12 +552,12 @@ void LLGLTexMemBar::draw()
    F64 raw_image_bytes_MB = raw_image_bytes / (1024.0 * 1024.0);
    F64 saved_raw_image_bytes_MB = saved_raw_image_bytes / (1024.0 * 1024.0);
    F64 aux_raw_image_bytes_MB = aux_raw_image_bytes / (1024.0 * 1024.0);
-   F64 texture_bytes_alloc = LLImageTex::getTextureBytesAllocated() / 1024.0 / 512.0;
+   F64 texture_bytes_alloc = RKImageTex::getTextureBytesAllocated() / 1024.0 / 512.0;
    F64 vertex_bytes_alloc = LLVertexBuffer::getBytesAllocated() / 1024.0 / 512.0;
    F64 render_bytes_alloc = LLRenderTarget::sBytesAllocated / 1024.0 / 512.0;
 
     //----------------------------------------------------------------------------
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     LLColor4 text_color(1.f, 1.f, 1.f, 0.75f);
     LLColor4 color;
 
@@ -589,7 +589,7 @@ void LLGLTexMemBar::draw()
     text = llformat("Est. Free: %d MB Sys Free: %d MB GL Tex: %d MB FBO: %d MB Probe#: %d Probe Mem: %d MB Bias: %.2f Cache: %.1f/%.1f MB",
                     (S32)LLViewerTexture::sFreeVRAMMegabytes,
                     LLMemory::getAvailableMemKB()/1024,
-                    LLImageTex::getTextureBytesAllocated() / 1024 / 1024,
+                    RKImageTex::getTextureBytesAllocated() / 1024 / 1024,
                     LLRenderTarget::sBytesAllocated/(1024*1024),
                     gPipeline.mReflectionMapManager.probeCount(),
                     gPipeline.mReflectionMapManager.probeMemory(),
@@ -840,15 +840,15 @@ bool LLGLTexSizeBar::handleHover(S32 x, S32 y, MASK mask, bool set_pick_size)
 {
     if(y > mBottom && (y < mBottom + (S32)(mTopLoaded * mScale) || y < mBottom + (S32)(mTopBound * mScale)))
     {
-        LLImageTex::setCurTexSizebar(mIndex, set_pick_size);
+        RKImageTex::setCurTexSizebar(mIndex, set_pick_size);
     }
     return true ;
 }
 void LLGLTexSizeBar::draw()
 {
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
 
-    if(LLImageTex::sCurTexSizeBar == mIndex)
+    if(RKImageTex::sCurTexSizeBar == mIndex)
     {
         LLColor4 text_color(1.f, 1.f, 1.f, 0.75f);
         std::string text;

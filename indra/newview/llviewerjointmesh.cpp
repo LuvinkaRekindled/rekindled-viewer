@@ -206,19 +206,19 @@ void LLViewerJointMesh::uploadJointMatrices()
 {
     F32 mat[45*4];
     computeJointPalette(mat, true);
-        if (LLShaderProgram::sCurBoundShaderPtr)
+        if (RKShaderProgram::sCurBoundShaderPtr)
         {
-            LLShaderProgram::sCurBoundShaderPtr->uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, mat);
+            RKShaderProgram::sCurBoundShaderPtr->uniform4fv(LLViewerShaderMgr::AVATAR_MATRIX, 45, mat);
             // <FS> velocity fold: the body part writes its own motion: the world space palettes of this frame and of the last (the history follows the frames the main view draws the mesh:
             // updatePaletteHistory) and the camera matrices of both frames. Not in the shadow, impostor and probe renders (their targets have no motion attachment).
             if (mMesh && mMesh->hasWeights() && mPaletteComputed && mPaletteFrame == gFrameCount && LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)
             {
-                extern bool ll_motion_fold_uniforms(LLShaderProgram* program);
-                if (ll_motion_fold_uniforms(LLShaderProgram::sCurBoundShaderPtr))
+                extern bool ll_motion_fold_uniforms(RKShaderProgram* program);
+                if (ll_motion_fold_uniforms(RKShaderProgram::sCurBoundShaderPtr))
                 {
                     static LLStaticHashedString palette_world_s("matrixPaletteWorld"), palette_prev_s("matrixPalettePrev");
-                    LLShaderProgram::sCurBoundShaderPtr->uniform4fv(palette_world_s, 45, mWorldPalette);
-                    LLShaderProgram::sCurBoundShaderPtr->uniform4fv(palette_prev_s, 45, mPrevWorldPalette);
+                    RKShaderProgram::sCurBoundShaderPtr->uniform4fv(palette_world_s, 45, mWorldPalette);
+                    RKShaderProgram::sCurBoundShaderPtr->uniform4fv(palette_prev_s, 45, mPrevWorldPalette);
                 }
             }
         }
@@ -233,7 +233,7 @@ static bool rt_body_log_wanted()
 
 void LLViewerJointMesh::noteRecentBodyMeshes()
 {
-    if (!LLVkBridge::rtShadowMode())
+    if (!RKVkBridge::rtShadowMode())
     {
         return;
     }
@@ -312,11 +312,11 @@ void LLViewerJointMesh::noteRayShadow()
         return;
     }
     LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(drawable->getVObj().get());
-    if (!avatar || (!avatar->isFullyLoaded() && LLVkBridge::rtLoadingGates()))
+    if (!avatar || (!avatar->isFullyLoaded() && RKVkBridge::rtLoadingGates()))
     {
         return;                             // (an avatar still loading in is not traced until it is loaded)
     }
-    LLVkBridge::ShadowBodyEntry e = {};
+    RKVkBridge::ShadowBodyEntry e = {};
     e.mVertexBuffer = buff->getVertexBufferId();
     e.mIndexBuffer = buff->getIndexBufferId();
     e.mFirstIndex = mMesh->mFaceIndexOffset;
@@ -360,7 +360,7 @@ void LLViewerJointMesh::noteRayShadow()
             }
             if (masked && tex)
             {
-                e.mAlphaFlags = LLVkBridge::ALPHA_TREE | LLVkBridge::ALPHA_NO_INDEX | LLVkBridge::ALPHA_HAS_TEXCOORD;
+                e.mAlphaFlags = RKVkBridge::ALPHA_TREE | RKVkBridge::ALPHA_NO_INDEX | RKVkBridge::ALPHA_HAS_TEXCOORD;
                 e.mTexture = gRender.getTexUnit(0)->prepareFast(tex);
                 e.mCutoff = soft_cut ? 0.5f : 0.2f;
             }
@@ -402,7 +402,7 @@ void LLViewerJointMesh::noteRayShadow()
         const LLMatrix4 joint_to_world = getWorldMatrix();
         memcpy(e.mModel, joint_to_world.mMatrix, sizeof(e.mModel));
     }
-    LLVkBridge::ShadowPacketsHeader header;
+    RKVkBridge::ShadowPacketsHeader header;
     header.mKind = 4;
     header.mEntries = 1;
     header.mPaletteFloats = (U32)palette.size();
@@ -412,7 +412,7 @@ void LLViewerJointMesh::noteRayShadow()
     {
         memcpy(blob.data() + sizeof(e), palette.data(), palette.size() * sizeof(F32));
     }
-    LLVkBridge::shadowPackets(header, blob.data(), blob.size());
+    RKVkBridge::shadowPackets(header, blob.data(), blob.size());
 }
 
 
@@ -444,7 +444,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         !mFace->getVertexBuffer() ||
         mMesh->getNumFaces() == 0 ||
         mMesh->mFaceVertexCount == 0 ||
-        LLShaderProgram::sCurBoundShaderPtr == NULL)
+        RKShaderProgram::sCurBoundShaderPtr == NULL)
     {
         return 0;
     }
@@ -452,7 +452,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     U32 triangle_count = 0;
 
     // the ray scene wants the avatars every frame: named by the shadow passes (which the far sun cascades run only every few frames) and by the main view
-    if (LLVkBridge::rtShadowMode()
+    if (RKVkBridge::rtShadowMode()
         && (LLDrawPoolAvatar::sShadowPass == LLDrawPoolAvatar::SHADOW_PASS_AVATAR_OPAQUE || (LLDrawPoolAvatar::sShadowPass < 0 && !LLPipeline::sShadowRender && !LLPipeline::sImpostorRender && !gCubeSnapshot)))
     {
         noteRayShadow();
@@ -570,7 +570,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
                 << (mTestImageName ? "test" : (!is_dummy && layerset) ? (layerset->hasComposite() ? "composite" : "composite-missing") : (!is_dummy && mTexture.notNull()) ? "texture" : "default")
                 << " color " << mColor.mV[0] << "," << mColor.mV[1] << "," << mColor.mV[2] << "," << mColor.mV[3] << " transparent " << (mIsTransparent ? 1 : 0)
                 << " range " << start << ".." << end << " idx " << offset << "+" << count
-                << " types " << (buff ? buff->getTypeMask() : 0) << " program " << (LLShaderProgram::sCurBoundShaderPtr ? LLShaderProgram::sCurBoundShaderPtr->mName : std::string("none"))
+                << " types " << (buff ? buff->getTypeMask() : 0) << " program " << (RKShaderProgram::sCurBoundShaderPtr ? RKShaderProgram::sCurBoundShaderPtr->mName : std::string("none"))
                 << " minalpha " << LLDrawPoolAvatar::sMinimumAlpha;
             std::string& was = told[this];
             if (was != sig.str())
@@ -623,7 +623,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
             uploadJointMatrices();
         }
 
-        if (LLShaderProgram::sCurBoundShaderPtr && LLShaderProgram::sCurBoundShaderPtr->isVertexPull())
+        if (RKShaderProgram::sCurBoundShaderPtr && RKShaderProgram::sCurBoundShaderPtr->isVertexPull())
         {
             ll_pull_draw_range(buff, offset, count);        // S6.6d
         }
@@ -634,10 +634,10 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
     }
     else
     {
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
         LLMatrix4 jointToWorld = getWorldMatrix();
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)jointToWorld.mMatrix);
-        if (LLShaderProgram::sCurBoundShaderPtr && LLShaderProgram::sCurBoundShaderPtr->isVertexPull())
+        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)jointToWorld.mMatrix);
+        if (RKShaderProgram::sCurBoundShaderPtr && RKShaderProgram::sCurBoundShaderPtr->isVertexPull())
         {
             ll_pull_draw_range(buff, offset, count);        // S6.6d
         }
@@ -645,7 +645,7 @@ U32 LLViewerJointMesh::drawShape( F32 pixelArea, bool first_pass, bool is_dummy)
         {
             ll_pool_draw_dropped("avatar body part (rigid)", 1);        // (the old direct draw is gone: no pull program bound)
         }
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
     gPipeline.addTrianglesDrawn(count);
 

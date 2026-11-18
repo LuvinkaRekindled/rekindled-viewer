@@ -11,5 +11,5 @@ layout(set = 2, binding = 0) uniform sampler2D ll_tbl2d[];
 layout(set = 2, binding = 1) uniform samplerCube ll_tblcube[];
 layout(set = 2, binding = 2) uniform samplerCubeArray ll_tblcubearray[];
 layout(set = 2, binding = 3) uniform sampler2DShadow ll_tbl2dshadow[];
-layout(std430, set = 2, binding = 4) readonly buffer LlHandleMap { uint ll_hm[]; };
+layout(std430, set = 2, binding = 4) readonly buffer RkHandleMap { uint ll_hm[]; };
 #define LL_HM(id) ll_hm[(id)]

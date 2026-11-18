@@ -4,7 +4,7 @@
  *
  * A thread that calls begin() writes its render state, texture binds, uniforms and draws into a private buffer of records (its own render state context, its own pending
  * slots and uniform writes); the main thread calls splice() at the point of the frame where that work would have run, and the buffer joins the queue, in order. See
- * LLVkAsync::SubStream. The sub-stream starts from the render state the main producer has when it is constructed, so build it on the main thread where the work belongs.
+ * RKVkAsync::SubStream. The sub-stream starts from the render state the main producer has when it is constructed, so build it on the main thread where the work belongs.
  */
 
 #ifndef LL_LLVKSUBSTREAM_H
@@ -14,14 +14,14 @@
 #include <string>
 #include <cstddef>
 
-class LLVkSubStream
+class RKVkSubStream
 {
 public:
     // true when records can be written at all (the Vulkan worker runs)
     static bool usable();
 
-    LLVkSubStream();                // main thread
-    ~LLVkSubStream();
+    RKVkSubStream();                // main thread
+    ~RKVkSubStream();
     void begin();                   // the thread that records
     void end();                     // the same thread
     void splice();                  // main thread: the buffer joins the queue here
@@ -45,8 +45,8 @@ public:
     static bool stateEqual(const std::vector<unsigned char>& snapshot);
 
 private:
-    LLVkSubStream(const LLVkSubStream&) = delete;
-    LLVkSubStream& operator=(const LLVkSubStream&) = delete;
+    RKVkSubStream(const RKVkSubStream&) = delete;
+    RKVkSubStream& operator=(const RKVkSubStream&) = delete;
     void* mImpl;
 };
 

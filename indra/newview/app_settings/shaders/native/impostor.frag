@@ -2,7 +2,7 @@
 // against minimum_alpha, the normal image's first three channels are written with the flag HAS_ATMOS (0.34). The slots of the three images come from the row (impostor.vert).
 // Stands in for "Deferred Impostor Shader" (deferred/impostorF.glsl).
 
-layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
+layout(std140, set = 0, binding = 6) uniform RKLooseMaterial
 {
     float minimum_alpha;
 };

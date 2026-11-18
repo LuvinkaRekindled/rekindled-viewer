@@ -46,14 +46,14 @@ void LLDrawPoolGlow::renderPostDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
 
-    LLRenderState::BlendScope blend(true);
+    RKRenderState::BlendScope blend(true);
     gRender.flush();
     /// Get rid of z-fighting with non-glow pass.
-    LLRenderState::PolygonOffsetScope polyOffset(true);
+    RKRenderState::PolygonOffsetScope polyOffset(true);
     gRender.setPolygonOffset(-1.0f, -1.0f);
     gRender.setSceneBlendType(LLRender::BT_ADD);
 
-    LLRenderState::DepthScope depth(true, false);
+    RKRenderState::DepthScope depth(true, false);
     gRender.setColorMask(false, true);
 
     // <FS> J1 K6 A3: the glow draws come from the scene table (the emissive pull programs of the alpha glow, the same rows); a HUD has no glow pool
@@ -107,7 +107,7 @@ S32 LLDrawPoolSimple::getNumDeferredPasses()
 void LLDrawPoolSimple::renderDeferred(S32 pass)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL; //LL_RECORD_BLOCK_TIME(FTM_RENDER_SIMPLE_DEFERRED);
-    LLRenderState::BlendScope blend(false);
+    RKRenderState::BlendScope blend(false);
 
     // <FS> J1 K6 A3: the static and the rigged draws, each as one draw record of the scene table
     gDeferredDiffusePullProgram.bind();
@@ -194,7 +194,7 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
     LL::GLTFSceneManager::instance().render(true, false, true);
     LL::GLTFSceneManager::instance().render(true, true, true);
 
-    LLRenderState::BlendScope blend(false);
+    RKRenderState::BlendScope blend(false);
 
     if (LLPipeline::sRenderingHUDs)
     {

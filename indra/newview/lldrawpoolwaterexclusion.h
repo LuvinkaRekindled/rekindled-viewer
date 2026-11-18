@@ -35,8 +35,8 @@
 #include "lldrawpool.h"
 
 class LLViewerTexture;
-class LLDrawBatch;
-class LLShaderProgram;
+class RKDrawBatch;
+class RKShaderProgram;
 
 class LLDrawPoolWaterExclusion : public LLRenderPass
 {

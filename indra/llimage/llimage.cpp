@@ -1552,7 +1552,7 @@ void LLImageRaw::tint( const LLColor3& color )
 const U8* LLImageRaw::getFinestLevelData() const
 {
     if (!isCompressed() || !getData()) return getData();
-    const U64 finest = LLImageBC7::blockBytes(getWidth(), getHeight());
+    const U64 finest = RKImageBC7::blockBytes(getWidth(), getHeight());
     return finest <= (U64)getDataSize() ? getData() + (getDataSize() - finest) : getData();
 }
 
@@ -1566,8 +1566,8 @@ void LLImageRaw::setCompressedChain(U8* data, S32 size, U16 width, U16 height, S
     mAlphaIsMask = alpha_is_mask;
 }
 
-// <FS> the upload analysis (PLAN-aurora-ideas.md section 6.2): the alpha class exactly as LLImageTex::analyzeAlpha decides it (LLImageBC7::classifyAlpha is that port),
-// and the pick mask exactly as LLImageTex::updatePickMask builds it (createPickMask's layout: pick_width = w/2 + 1 columns, pick_height = h/2 + 1 rows, one bit per 2x2 block
+// <FS> the upload analysis (PLAN-aurora-ideas.md section 6.2): the alpha class exactly as RKImageTex::analyzeAlpha decides it (RKImageBC7::classifyAlpha is that port),
+// and the pick mask exactly as RKImageTex::updatePickMask builds it (createPickMask's layout: pick_width = w/2 + 1 columns, pick_height = h/2 + 1 rows, one bit per 2x2 block
 // in row order, set where the block's top-left alpha is above 32). Computed on the decode pool, where the texels already are, instead of on the main thread at upload.
 void LLImageRaw::analyzeForUpload()
 {
@@ -1579,7 +1579,7 @@ void LLImageRaw::analyzeForUpload()
         return;
     }
     const U32 w = getWidth(), h = getHeight(), c = getComponents();
-    mAlphaIsMask = LLImageBC7::classifyAlpha(getData(), w, h, c);
+    mAlphaIsMask = RKImageBC7::classifyAlpha(getData(), w, h, c);
     if (c == 4)
     {
         const U32 pick_width = w / 2 + 1, pick_height = h / 2 + 1;

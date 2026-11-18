@@ -119,7 +119,7 @@ LLViewerRegion::vocache_entry_map_t LLViewerRegion::sRegionCacheCleanup;
 // <FS> LL_VK_EXPIRY=4, the object kill stage (doc/vulkan/RESEARCH-after-turn-dgc-mesh.md section 1). Counters, and the entries it killed (only the pointers, to count how many were instantiated again).
 namespace
 {
-    struct FsKillStats
+    struct RkKillStats
     {
         U64 mCalls = 0, mMovingCalls = 0, mLooked = 0, mWanted = 0, mKilled = 0, mRecreated = 0;
     } sFsKill;

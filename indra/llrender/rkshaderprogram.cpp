@@ -62,32 +62,32 @@ using std::pair;
 using std::make_pair;
 using std::string;
 
-U32 LLShaderProgram::sEnvUniformEpoch = 1;      // (programs start at 0: the first bind of any program takes the environment's uniforms)
-U32 LLShaderProgram::sCurBoundShader = 0;
-LLShaderProgram* LLShaderProgram::sCurBoundShaderPtr = NULL;
-S32 LLShaderProgram::sIndexedTextureChannels = 0;
-U32 LLShaderProgram::sMaxGLTFMaterials = 0;
-U32 LLShaderProgram::sMaxGLTFNodes = 0;
-bool LLShaderProgram::sProfileEnabled = false;
-bool LLShaderProgram::sCanProfile = true;
-std::set<LLShaderProgram*> LLShaderProgram::sInstances;
-LLShaderProgram::defines_map_t LLShaderProgram::sGlobalDefines;
-U64 LLShaderProgram::sTotalTimeElapsed = 0;
-U32 LLShaderProgram::sTotalTrianglesDrawn = 0;
-U64 LLShaderProgram::sTotalSamplesDrawn = 0;
-U32 LLShaderProgram::sTotalBinds = 0;
-boost::json::value LLShaderProgram::sDefaultStats;
+U32 RKShaderProgram::sEnvUniformEpoch = 1;      // (programs start at 0: the first bind of any program takes the environment's uniforms)
+U32 RKShaderProgram::sCurBoundShader = 0;
+RKShaderProgram* RKShaderProgram::sCurBoundShaderPtr = NULL;
+S32 RKShaderProgram::sIndexedTextureChannels = 0;
+U32 RKShaderProgram::sMaxGLTFMaterials = 0;
+U32 RKShaderProgram::sMaxGLTFNodes = 0;
+bool RKShaderProgram::sProfileEnabled = false;
+bool RKShaderProgram::sCanProfile = true;
+std::set<RKShaderProgram*> RKShaderProgram::sInstances;
+RKShaderProgram::defines_map_t RKShaderProgram::sGlobalDefines;
+U64 RKShaderProgram::sTotalTimeElapsed = 0;
+U32 RKShaderProgram::sTotalTrianglesDrawn = 0;
+U64 RKShaderProgram::sTotalSamplesDrawn = 0;
+U32 RKShaderProgram::sTotalBinds = 0;
+boost::json::value RKShaderProgram::sDefaultStats;
 
 //UI shader -- declared here so llui_libtest will link properly
-LLShaderProgram    gUIProgram;
-LLShaderProgram    gSolidColorProgram;
+RKShaderProgram    gUIProgram;
+RKShaderProgram    gSolidColorProgram;
 
 //===============================
 // LLGLSL Shader implementation
 //===============================
 
 //static
-void LLShaderProgram::initProfile()
+void RKShaderProgram::initProfile()
 {
     sProfileEnabled = true;
     sTotalTimeElapsed = 0;
@@ -102,23 +102,23 @@ void LLShaderProgram::initProfile()
 }
 
 
-struct LLShaderProgramCompareTimeElapsed
+struct RKShaderProgramCompareTimeElapsed
 {
-    bool operator()(const LLShaderProgram* const& lhs, const LLShaderProgram* const& rhs)
+    bool operator()(const RKShaderProgram* const& lhs, const RKShaderProgram* const& rhs)
     {
         return lhs->mTimeElapsed < rhs->mTimeElapsed;
     }
 };
 
 //static
-void LLShaderProgram::finishProfile(boost::json::value& statsv)
+void RKShaderProgram::finishProfile(boost::json::value& statsv)
 {
     sProfileEnabled = false;
 
     if (! statsv.is_null())
     {
-        std::vector<LLShaderProgram*> sorted(sInstances.begin(), sInstances.end());
-        std::sort(sorted.begin(), sorted.end(), LLShaderProgramCompareTimeElapsed());
+        std::vector<RKShaderProgram*> sorted(sInstances.begin(), sInstances.end());
+        std::sort(sorted.begin(), sorted.end(), RKShaderProgramCompareTimeElapsed());
 
         auto& stats = statsv.as_object();
         auto shadersit = stats.emplace("shaders", boost::json::array_kind).first;
@@ -168,7 +168,7 @@ void LLShaderProgram::finishProfile(boost::json::value& statsv)
     }
 }
 
-void LLShaderProgram::clearStats()
+void RKShaderProgram::clearStats()
 {
     mTrianglesDrawn = 0;
     mTimeElapsed = 0;
@@ -176,7 +176,7 @@ void LLShaderProgram::clearStats()
     mBinds = 0;
 }
 
-void LLShaderProgram::dumpStats(boost::json::object& stats)
+void RKShaderProgram::dumpStats(boost::json::object& stats)
 {
     stats.emplace("name", mName);
     auto filesit = stats.emplace("files", boost::json::array_kind).first;
@@ -214,7 +214,7 @@ void LLShaderProgram::dumpStats(boost::json::object& stats)
 }
 
 //static
-void LLShaderProgram::startProfile()
+void RKShaderProgram::startProfile()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     if (sProfileEnabled && sCurBoundShaderPtr)
@@ -225,7 +225,7 @@ void LLShaderProgram::startProfile()
 }
 
 //static
-void LLShaderProgram::stopProfile()
+void RKShaderProgram::stopProfile()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -235,59 +235,59 @@ void LLShaderProgram::stopProfile()
     }
 }
 
-void LLShaderProgram::placeProfileQuery(bool for_runtime)
+void RKShaderProgram::placeProfileQuery(bool for_runtime)
 {
     if (sProfileEnabled || for_runtime)
     {
         if (mTimerQuery == 0)
         {
-            LLVkQuery::create(1, &mSamplesQuery);
-            LLVkQuery::create(1, &mTimerQuery);
-            LLVkQuery::create(1, &mPrimitivesQuery);
+            RKVkQuery::create(1, &mSamplesQuery);
+            RKVkQuery::create(1, &mTimerQuery);
+            RKVkQuery::create(1, &mPrimitivesQuery);
         }
 
-        LLVkQuery::begin(LLVkQuery::TIME_ELAPSED, mTimerQuery);
+        RKVkQuery::begin(RKVkQuery::TIME_ELAPSED, mTimerQuery);
 
         if (!for_runtime)
         {
-            LLVkQuery::begin(LLVkQuery::SAMPLES_PASSED, mSamplesQuery);
-            LLVkQuery::begin(LLVkQuery::PRIMITIVES_GENERATED, mPrimitivesQuery);
+            RKVkQuery::begin(RKVkQuery::SAMPLES_PASSED, mSamplesQuery);
+            RKVkQuery::begin(RKVkQuery::PRIMITIVES_GENERATED, mPrimitivesQuery);
         }
     }
 }
 
-bool LLShaderProgram::readProfileQuery(bool for_runtime, bool force_read)
+bool RKShaderProgram::readProfileQuery(bool for_runtime, bool force_read)
 {
     if ((sProfileEnabled || for_runtime) && sCanProfile)
     {
         if (!mProfilePending)
         {
-            LLVkQuery::end(LLVkQuery::TIME_ELAPSED);
+            RKVkQuery::end(RKVkQuery::TIME_ELAPSED);
             if (!for_runtime)
             {
-                LLVkQuery::end(LLVkQuery::SAMPLES_PASSED);
-                LLVkQuery::end(LLVkQuery::PRIMITIVES_GENERATED);
+                RKVkQuery::end(RKVkQuery::SAMPLES_PASSED);
+                RKVkQuery::end(RKVkQuery::PRIMITIVES_GENERATED);
             }
             mProfilePending = for_runtime;
         }
 
         if (mProfilePending && for_runtime && !force_read)
         {
-            if (!LLVkQuery::ready(mTimerQuery))
+            if (!RKVkQuery::ready(mTimerQuery))
             {
                 return false;
             }
         }
 
-        U64 time_elapsed = LLVkQuery::result(mTimerQuery);
+        U64 time_elapsed = RKVkQuery::result(mTimerQuery);
         mTimeElapsed += time_elapsed;
         mProfilePending = false;
 
         if (!for_runtime)
         {
-            U64 samples_passed = LLVkQuery::result(mSamplesQuery);
+            U64 samples_passed = RKVkQuery::result(mSamplesQuery);
 
-            U64 primitives_generated = LLVkQuery::result(mPrimitivesQuery);
+            U64 primitives_generated = RKVkQuery::result(mPrimitivesQuery);
             sTotalTimeElapsed += time_elapsed;
 
             sTotalSamplesDrawn += samples_passed;
@@ -308,7 +308,7 @@ bool LLShaderProgram::readProfileQuery(bool for_runtime, bool force_read)
 
 
 
-LLShaderProgram::LLShaderProgram()
+RKShaderProgram::RKShaderProgram()
     : mProgramObject(0),
     mAttributeMask(0),
     mTotalUniformSize(0),
@@ -324,11 +324,11 @@ LLShaderProgram::LLShaderProgram()
 
 }
 
-LLShaderProgram::~LLShaderProgram()
+RKShaderProgram::~RKShaderProgram()
 {
 }
 
-void LLShaderProgram::unload()
+void RKShaderProgram::unload()
 {
     mDefines.clear();
     mFeatures = LLShaderFeatures();
@@ -336,7 +336,7 @@ void LLShaderProgram::unload()
     unloadInternal();
 }
 
-void LLShaderProgram::unloadInternal()
+void RKShaderProgram::unloadInternal()
 {
     sInstances.erase(this);
     mirrorDestroy();
@@ -349,39 +349,39 @@ void LLShaderProgram::unloadInternal()
 
     if (mTimerQuery)
     {
-        LLVkQuery::destroy(1, &mTimerQuery);
+        RKVkQuery::destroy(1, &mTimerQuery);
         mTimerQuery = 0;
     }
 
     if (mSamplesQuery)
     {
-        LLVkQuery::destroy(1, &mSamplesQuery);
+        RKVkQuery::destroy(1, &mSamplesQuery);
         mSamplesQuery = 0;
     }
 
 }
 
 #if defined(LL_VULKAN)
-void LLShaderProgram::mirrorDestroy()
+void RKShaderProgram::mirrorDestroy()
 {
-    if (!mVkProgram && !mVkProgramPending && !LLVkBridge::isReady()) return;   // cheap exit when the mirror is off
-    if (LLVkAsync::gEnabled)
+    if (!mVkProgram && !mVkProgramPending && !RKVkBridge::isReady()) return;   // cheap exit when the mirror is off
+    if (RKVkAsync::gEnabled)
     {
         // the worker destroys them after everything queued for them so far
         if (mVkProgram)
         {
-            LLVkAsync::programDestroy(mVkProgram);
+            RKVkAsync::programDestroy(mVkProgram);
             mVkProgram = nullptr;
         }
         if (mVkProgramPending)
         {
-            LLVkAsync::programDestroy(mVkProgramPending);
+            RKVkAsync::programDestroy(mVkProgramPending);
             mVkProgramPending = nullptr;
         }
         return;
     }
-    std::lock_guard<LLVkBridge::Mutex> mirror_lock(LLVkBridge::lock());
-    for (LLVk::Program** p : { &mVkProgram, &mVkProgramPending })
+    std::lock_guard<RKVkBridge::Mutex> mirror_lock(RKVkBridge::lock());
+    for (RKVk::Program** p : { &mVkProgram, &mVkProgramPending })
     {
         if (*p)
         {
@@ -393,7 +393,7 @@ void LLShaderProgram::mirrorDestroy()
 }
 
 // the program's own uniform index behind a location (a sampler is returned as ~index), -1 when unknown
-S32 LLShaderProgram::vkTwinOf(S32 location) const
+S32 RKShaderProgram::vkTwinOf(S32 location) const
 {
     if (location < 0)
     {
@@ -402,12 +402,12 @@ S32 LLShaderProgram::vkTwinOf(S32 location) const
     return location >= SAMPLER_LOCATION_BASE ? ~(S32)(location - SAMPLER_LOCATION_BASE) : (S32)location;
 }
 
-void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list<double> values)
+void RKShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list<double> values)
 {
-    LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
-    if (LLUniCensus::sOn) { censusProgram(); LLUniCensus::note_call(); ++mCensus.mCalls; }
+    RKVkAsync::frontCount(RKVkAsync::FP_UNIFORM_SENT);
+    if (RKUniCensus::sOn) { censusProgram(); RKUniCensus::note_call(); ++mCensus.mCalls; }
     if (!mVkProgram) return;
-    if (LLVkAsync::mainOnlyProducer())
+    if (RKVkAsync::mainOnlyProducer())
     {
         // range writes: the copy of the class block does the comparing (samplers and unknown locations take the long way below)
         const S32 twin = vkTwinOf(location);
@@ -429,9 +429,9 @@ void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list
             return;
         }
     }
-    const bool async = LLVkAsync::gEnabled;
-    LLVkBridge::PhaseTimer phase_timer(LLVkBridge::PH_UNIFORM);
-    std::unique_lock<LLVkBridge::Mutex> mirror_lock(LLVkBridge::lock(), std::defer_lock);
+    const bool async = RKVkAsync::gEnabled;
+    RKVkBridge::PhaseTimer phase_timer(RKVkBridge::PH_UNIFORM);
+    std::unique_lock<RKVkBridge::Mutex> mirror_lock(RKVkBridge::lock(), std::defer_lock);
     if (!async)
     {
         mirror_lock.lock();
@@ -461,7 +461,7 @@ void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list
         }
         if (async)
         {
-            LLVkAsync::samplerUnit(mVkProgram, (unsigned)(~twin), (unsigned)(S32)*values.begin());
+            RKVkAsync::samplerUnit(mVkProgram, (unsigned)(~twin), (unsigned)(S32)*values.begin());
             return;
         }
         mVkProgram->setSamplerUnit((size_t)(~twin), (U32)(S32)*values.begin());
@@ -479,14 +479,14 @@ void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list
             ++n;
         }
     }
-    if ((!async || LLVkAsync::mainOnlyProducer()))
+    if ((!async || RKVkAsync::mainOnlyProducer()))
     {
         vkWriteFloats(twin, kind == 0 ? f : reinterpret_cast<const F32*>(i), n, 1);
         return;
     }
     if (async)
     {
-        LLVkAsync::uniformScalar(mVkProgram, (unsigned)twin, kind, n, f, i);
+        RKVkAsync::uniformScalar(mVkProgram, (unsigned)twin, kind, n, f, i);
         return;
     }
     if (kind == 0)
@@ -499,12 +499,12 @@ void LLShaderProgram::mirrorScalar(S32 location, int kind, std::initializer_list
     }
 }
 
-void LLShaderProgram::mirrorVector(S32 location, int kind, U32 components, U32 count, const void* data)
+void RKShaderProgram::mirrorVector(S32 location, int kind, U32 components, U32 count, const void* data)
 {
-    LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
-    if (LLUniCensus::sOn) { censusProgram(); LLUniCensus::note_call(); ++mCensus.mCalls; }
+    RKVkAsync::frontCount(RKVkAsync::FP_UNIFORM_SENT);
+    if (RKUniCensus::sOn) { censusProgram(); RKUniCensus::note_call(); ++mCensus.mCalls; }
     if (!mVkProgram || !data) return;
-    if (LLVkAsync::mainOnlyProducer())
+    if (RKVkAsync::mainOnlyProducer())
     {
         const S32 twin = vkTwinOf(location);
         if (twin >= 0)
@@ -513,9 +513,9 @@ void LLShaderProgram::mirrorVector(S32 location, int kind, U32 components, U32 c
             return;
         }
     }
-    const bool async = LLVkAsync::gEnabled;
-    LLVkBridge::PhaseTimer phase_timer(LLVkBridge::PH_UNIFORM);
-    std::unique_lock<LLVkBridge::Mutex> mirror_lock(LLVkBridge::lock(), std::defer_lock);
+    const bool async = RKVkAsync::gEnabled;
+    RKVkBridge::PhaseTimer phase_timer(RKVkBridge::PH_UNIFORM);
+    std::unique_lock<RKVkBridge::Mutex> mirror_lock(RKVkBridge::lock(), std::defer_lock);
     if (!async)
     {
         mirror_lock.lock();
@@ -526,25 +526,25 @@ void LLShaderProgram::mirrorVector(S32 location, int kind, U32 components, U32 c
         return;     // unknown, or a sampler array (units are fixed at link time)
     }
     (void)kind;     // floats and ints are copied bit for bit
-    if ((!async || LLVkAsync::mainOnlyProducer()))
+    if ((!async || RKVkAsync::mainOnlyProducer()))
     {
         vkWriteFloats(twin, reinterpret_cast<const F32*>(data), components, count);
         return;
     }
     if (async)
     {
-        LLVkAsync::uniformVector(mVkProgram, (unsigned)twin, components, count, data);
+        RKVkAsync::uniformVector(mVkProgram, (unsigned)twin, components, count, data);
         return;
     }
     mVkProgram->setFloatsAt((size_t)twin, reinterpret_cast<const F32*>(data), components, count);
 }
 
-void LLShaderProgram::mirrorMatrix(S32 location, U32 columns, U32 rows, bool transpose, U32 count, const F32* data)
+void RKShaderProgram::mirrorMatrix(S32 location, U32 columns, U32 rows, bool transpose, U32 count, const F32* data)
 {
-    LLVkAsync::frontCount(LLVkAsync::FP_UNIFORM_SENT);
-    if (LLUniCensus::sOn) { censusProgram(); LLUniCensus::note_call(); ++mCensus.mCalls; }
+    RKVkAsync::frontCount(RKVkAsync::FP_UNIFORM_SENT);
+    if (RKUniCensus::sOn) { censusProgram(); RKUniCensus::note_call(); ++mCensus.mCalls; }
     if (!mVkProgram || !data) return;
-    if (LLVkAsync::mainOnlyProducer())
+    if (RKVkAsync::mainOnlyProducer())
     {
         const S32 twin = vkTwinOf(location);
         if (twin >= 0)
@@ -553,9 +553,9 @@ void LLShaderProgram::mirrorMatrix(S32 location, U32 columns, U32 rows, bool tra
             return;
         }
     }
-    const bool async = LLVkAsync::gEnabled;
-    LLVkBridge::PhaseTimer phase_timer(LLVkBridge::PH_UNIFORM);
-    std::unique_lock<LLVkBridge::Mutex> mirror_lock(LLVkBridge::lock(), std::defer_lock);
+    const bool async = RKVkAsync::gEnabled;
+    RKVkBridge::PhaseTimer phase_timer(RKVkBridge::PH_UNIFORM);
+    std::unique_lock<RKVkBridge::Mutex> mirror_lock(RKVkBridge::lock(), std::defer_lock);
     if (!async)
     {
         mirror_lock.lock();
@@ -565,7 +565,7 @@ void LLShaderProgram::mirrorMatrix(S32 location, U32 columns, U32 rows, bool tra
     {
         return;
     }
-    if ((!async || LLVkAsync::mainOnlyProducer()))
+    if ((!async || RKVkAsync::mainOnlyProducer()))
     {
         vkWriteMatrix(twin, data, columns, rows, transpose != false, count);
         return;
@@ -586,7 +586,7 @@ void LLShaderProgram::mirrorMatrix(S32 location, U32 columns, U32 rows, bool tra
         }
         if (async)
         {
-            LLVkAsync::uniformMatrix(mVkProgram, (unsigned)twin, columns, rows, count, tmp.data());
+            RKVkAsync::uniformMatrix(mVkProgram, (unsigned)twin, columns, rows, count, tmp.data());
             return;
         }
         mVkProgram->setMatricesAt((size_t)twin, tmp.data(), columns, rows, count);
@@ -594,7 +594,7 @@ void LLShaderProgram::mirrorMatrix(S32 location, U32 columns, U32 rows, bool tra
     }
     if (async)
     {
-        LLVkAsync::uniformMatrix(mVkProgram, (unsigned)twin, columns, rows, count, data);
+        RKVkAsync::uniformMatrix(mVkProgram, (unsigned)twin, columns, rows, count, data);
         return;
     }
     mVkProgram->setMatricesAt((size_t)twin, data, columns, rows, count);
@@ -655,13 +655,13 @@ static inline bool vkDiffCopy(U8* dst, const F32* src, U32 floats)
 }
 
 // a range of this shader's copy of a class block changed: it goes to the worker (or, before the queue runs, straight into the program)
-void LLShaderProgram::vkSendRange(U32 cls, U32 offset, U32 size)
+void RKShaderProgram::vkSendRange(U32 cls, U32 offset, U32 size)
 {
-    if (LLUniCensus::sOn) { LLUniCensus::note_changed(size); ++mCensus.mChanged; }
+    if (RKUniCensus::sOn) { RKUniCensus::note_changed(size); ++mCensus.mChanged; }
     const U8* bytes = &mVkShadow[cls][offset];
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::uniformRange(mVkProgram, cls, offset, size, bytes);
+        RKVkAsync::uniformRange(mVkProgram, cls, offset, size, bytes);
     }
     else
     {
@@ -669,31 +669,31 @@ void LLShaderProgram::vkSendRange(U32 cls, U32 offset, U32 size)
     }
 }
 
-void LLShaderProgram::vkAnnounce()
+void RKShaderProgram::vkAnnounce()
 {
-    mVkEpoch = LLVkAsync::passEpoch();
-    if (!mVkProgram || !LLVkAsync::gEnabled || !LLVkAsync::mainOnlyProducer())
+    mVkEpoch = RKVkAsync::passEpoch();
+    if (!mVkProgram || !RKVkAsync::gEnabled || !RKVkAsync::mainOnlyProducer())
     {
         return;
     }
-    for (U32 cls = 0; cls < LLVk::UC_COUNT; ++cls)
+    for (U32 cls = 0; cls < RKVk::UC_COUNT; ++cls)
     {
         if (!mVkShadow[cls].empty())
         {
-            LLVkAsync::uniformRangeAnnounce(mVkProgram, cls, 0, (U32)mVkShadow[cls].size(), mVkShadow[cls].data());
+            RKVkAsync::uniformRangeAnnounce(mVkProgram, cls, 0, (U32)mVkShadow[cls].size(), mVkShadow[cls].data());
         }
     }
 }
 
-void LLShaderProgram::announceBound()
+void RKShaderProgram::announceBound()
 {
-    if (sCurBoundShaderPtr && sCurBoundShaderPtr->mVkEpoch != LLVkAsync::passEpoch())
+    if (sCurBoundShaderPtr && sCurBoundShaderPtr->mVkEpoch != RKVkAsync::passEpoch())
     {
         sCurBoundShaderPtr->vkAnnounce();
     }
 }
 
-bool LLShaderProgram::vkWriteFloats(S32 twin, const F32* data, U32 components, U32 count)
+bool RKShaderProgram::vkWriteFloats(S32 twin, const F32* data, U32 components, U32 count)
 {
     if ((size_t)twin >= mVkUni.size())
     {
@@ -701,7 +701,7 @@ bool LLShaderProgram::vkWriteFloats(S32 twin, const F32* data, U32 components, U
     }
     const VkUni& u = mVkUni[twin];
     std::vector<U8>& sh = mVkShadow[u.mClass];
-    if (LLUniCensus::sOn) censusUniform(twin, false);
+    if (RKUniCensus::sOn) censusUniform(twin, false);
     if (u.mArraySize == 0 && count <= 1)
     {
         // the common case: one scalar or vector
@@ -709,7 +709,7 @@ bool LLShaderProgram::vkWriteFloats(S32 twin, const F32* data, U32 components, U
         {
             return false;
         }
-        if (LLUniCensus::sOn) censusUniform(twin, true);
+        if (RKUniCensus::sOn) censusUniform(twin, true);
         vkSendRange(u.mClass, u.mOffset, components * 4);
         return true;
     }
@@ -735,12 +735,12 @@ bool LLShaderProgram::vkWriteFloats(S32 twin, const F32* data, U32 components, U
     {
         return false;
     }
-    if (LLUniCensus::sOn) censusUniform(twin, true);
+    if (RKUniCensus::sOn) censusUniform(twin, true);
     vkSendRange(u.mClass, lo, hi - lo);
     return true;
 }
 
-bool LLShaderProgram::vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 rows, bool transpose, U32 count)
+bool RKShaderProgram::vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 rows, bool transpose, U32 count)
 {
     if ((size_t)twin >= mVkUni.size())
     {
@@ -748,7 +748,7 @@ bool LLShaderProgram::vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 
     }
     const VkUni& u = mVkUni[twin];
     std::vector<U8>& sh = mVkShadow[u.mClass];
-    if (LLUniCensus::sOn) censusUniform(twin, false);
+    if (RKUniCensus::sOn) censusUniform(twin, false);
     const U32 max_count = std::max<U32>(1, u.mArraySize);
     count = std::min(count, max_count);
     const U32 stride = columns * 16;        // std140: every column occupies 16 bytes
@@ -783,13 +783,13 @@ bool LLShaderProgram::vkWriteMatrix(S32 twin, const F32* data, U32 columns, U32 
     {
         return false;
     }
-    if (LLUniCensus::sOn) censusUniform(twin, true);
+    if (RKUniCensus::sOn) censusUniform(twin, true);
     vkSendRange(u.mClass, lo, hi - lo);
     return true;
 }
 
 // the program has been built (link()) and the viewer-side mapping is done: it becomes the one draws use, and its samplers get their texture units
-void LLShaderProgram::mirrorCreate()
+void RKShaderProgram::mirrorCreate()
 {
     if (!mVkProgramPending)
     {
@@ -798,13 +798,13 @@ void LLShaderProgram::mirrorCreate()
     mVkProgram = mVkProgramPending;
     mVkProgramPending = nullptr;
     LLShaderMgr* mgr = LLShaderMgr::instance();
-    const LLVk::ProgramInfo& pi = mVkProgram->getInfo();
+    const RKVk::ProgramInfo& pi = mVkProgram->getInfo();
 
     // F2.5: this shader's copy of the class blocks starts as the program built them (initial values from the shader text)
-    static_assert(LLVk::UC_COUNT == 5, "LLShaderProgram::mVkShadow");
+    static_assert(RKVk::UC_COUNT == 5, "RKShaderProgram::mVkShadow");
     mVkUni.clear();
     mVkUni.reserve(pi.mUniforms.size());
-    for (const LLVk::LooseUniform& lu : pi.mUniforms)
+    for (const RKVk::LooseUniform& lu : pi.mUniforms)
     {
         VkUni vu;
         vu.mClass = lu.mClass;
@@ -812,7 +812,7 @@ void LLShaderProgram::mirrorCreate()
         vu.mArraySize = lu.mArraySize;
         mVkUni.push_back(vu);
     }
-    for (U32 k = 0; k < LLVk::UC_COUNT; ++k)
+    for (U32 k = 0; k < RKVk::UC_COUNT; ++k)
     {
         mVkShadow[k] = mVkProgram->shadowOf(k);
     }
@@ -840,14 +840,14 @@ void LLShaderProgram::mirrorCreate()
     }
 }
 #else
-void LLShaderProgram::mirrorDestroy() {}
-void LLShaderProgram::mirrorCreate() {}
-void LLShaderProgram::mirrorScalar(S32, int, std::initializer_list<double>) {}
-void LLShaderProgram::mirrorVector(S32, int, U32, U32, const void*) {}
-void LLShaderProgram::mirrorMatrix(S32, U32, U32, bool, U32, const F32*) {}
+void RKShaderProgram::mirrorDestroy() {}
+void RKShaderProgram::mirrorCreate() {}
+void RKShaderProgram::mirrorScalar(S32, int, std::initializer_list<double>) {}
+void RKShaderProgram::mirrorVector(S32, int, U32, U32, const void*) {}
+void RKShaderProgram::mirrorMatrix(S32, U32, U32, bool, U32, const F32*) {}
 #endif
 
-bool LLShaderProgram::createShader()
+bool RKShaderProgram::createShader()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -862,7 +862,7 @@ bool LLShaderProgram::createShader()
         // <FS> stage 4 step 1: a program of a converted family is built from its manifest line (no stock files behind it)
         std::string native_vertex, native_fragment, native_geometry;
         std::vector<std::pair<std::string, std::string>> native_defines;
-        if (LLVk::nativeOnlyLine(mName, native_vertex, native_fragment, native_defines, native_geometry))
+        if (RKVk::nativeOnlyLine(mName, native_vertex, native_fragment, native_defines, native_geometry))
         {
             mNativeVertex = native_vertex;
             mNativeFragment = native_fragment;
@@ -910,7 +910,7 @@ bool LLShaderProgram::createShader()
     }
     else if (mFeatures.mIndexedTextureChannels > 0)
     { //override texture channels for indexed texture rendering
-        llassert(mFeatures.mIndexedTextureChannels == LLShaderProgram::sIndexedTextureChannels); // these numbers must always match
+        llassert(mFeatures.mIndexedTextureChannels == RKShaderProgram::sIndexedTextureChannels); // these numbers must always match
         mEnvUniformEpoch = sEnvUniformEpoch;       // <FS> (as in mapUniforms: a program being made takes no environment uniforms yet)
         bind();
         S32 channel_count = mFeatures.mIndexedTextureChannels;
@@ -1014,7 +1014,7 @@ bool LLShaderProgram::createShader()
 }
 
 
-bool LLShaderProgram::mapAttributes()
+bool RKShaderProgram::mapAttributes()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1034,7 +1034,7 @@ bool LLShaderProgram::mapAttributes()
         mAttributeMask = 0;
 
         //read back reserved channels first (the program's attribute locations are the viewer's reserved indices)
-        const LLVk::ProgramInfo& pinfo = mVkProgramPending->getInfo();
+        const RKVk::ProgramInfo& pinfo = mVkProgramPending->getInfo();
         for (U32 i = 0; i < LLShaderMgr::instance()->mReservedAttribs.size(); i++)
         {
             const char* name = LLShaderMgr::instance()->mReservedAttribs[i].c_str();
@@ -1090,7 +1090,7 @@ static GlslType glsl_type(const std::string& t)
     return it == map.end() ? GlslType() : it->second;
 }
 
-void LLShaderProgram::mapUniform(S32 index)
+void RKShaderProgram::mapUniform(S32 index)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1151,13 +1151,13 @@ void LLShaderProgram::mapUniform(S32 index)
     }
 }
 
-void LLShaderProgram::clearPermutations()
+void RKShaderProgram::clearPermutations()
 {
     mDefines.clear();
     mVertexPull = false;
 }
 
-void LLShaderProgram::addPermutation(std::string name, std::string value)
+void RKShaderProgram::addPermutation(std::string name, std::string value)
 {
     mDefines[name] = value;
     if (name == "LL_VERTEX_PULL")
@@ -1166,12 +1166,12 @@ void LLShaderProgram::addPermutation(std::string name, std::string value)
     }
 }
 
-void LLShaderProgram::removePermutation(std::string name)
+void RKShaderProgram::removePermutation(std::string name)
 {
     mDefines.erase(name);
 }
 
-S32 LLShaderProgram::mapUniformTextureChannel(S32 location, bool is_sampler, S32 size)
+S32 RKShaderProgram::mapUniformTextureChannel(S32 location, bool is_sampler, S32 size)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1201,7 +1201,7 @@ S32 LLShaderProgram::mapUniformTextureChannel(S32 location, bool is_sampler, S32
     return -1;
 }
 
-bool LLShaderProgram::mapUniforms()
+bool RKShaderProgram::mapUniforms()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1224,10 +1224,10 @@ bool LLShaderProgram::mapUniforms()
     // what the program reports as active: its loose uniforms (arrays by their first element), then its samplers
     mActiveUniforms.clear();
     {
-        const LLVk::ProgramInfo& pinfo = mVkProgramPending->getInfo();
+        const RKVk::ProgramInfo& pinfo = mVkProgramPending->getInfo();
         for (size_t u = 0; u < pinfo.mUniforms.size(); ++u)
         {
-            const LLVk::LooseUniform& lu = pinfo.mUniforms[u];
+            const RKVk::LooseUniform& lu = pinfo.mUniforms[u];
             mActiveUniforms.push_back({ lu.mArraySize ? lu.mName + "[0]" : lu.mName, lu.mType, lu.mArraySize ? (S32)lu.mArraySize : 1, (S32)u });
         }
         for (size_t sm = 0; sm < pinfo.mSamplers.size(); ++sm)
@@ -1380,30 +1380,30 @@ bool LLShaderProgram::mapUniforms()
 }
 
 
-bool LLShaderProgram::link(bool suppress_errors)
+bool RKShaderProgram::link(bool suppress_errors)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
     // the native source (rkvknative.h) is compiled into one program (the build runs on the render thread, which owns Vulkan)
-    LLVk::Program* program = nullptr;
+    RKVk::Program* program = nullptr;
     std::string error;
     auto build = [&]()
     {
-        std::lock_guard<LLVkBridge::Mutex> mirror_lock(LLVkBridge::lock());
-        if (!LLVkBridge::ensureReady())
+        std::lock_guard<RKVkBridge::Mutex> mirror_lock(RKVkBridge::lock());
+        if (!RKVkBridge::ensureReady())
         {
             error = "the Vulkan side is not ready";
             return;
         }
-        LLVk::ProgramInfo info;
+        RKVk::ProgramInfo info;
         // <FS> every native program is built with the viewer's global defines first and its own after them, as the swapped in programs are (rkvknative.cpp build)
-        std::vector<std::pair<std::string, std::string>> native_defines = LLVk::nativeGlobalDefinesCopy();
+        std::vector<std::pair<std::string, std::string>> native_defines = RKVk::nativeGlobalDefinesCopy();
         native_defines.insert(native_defines.end(), mNativeDefines.begin(), mNativeDefines.end());
-        if (!LLVk::compileNativeProgram(mName, LLVk::nativeRoot(), mNativeVertex, mNativeFragment, native_defines, info, nullptr, &error, mNativeGeometry))
+        if (!RKVk::compileNativeProgram(mName, RKVk::nativeRoot(), mNativeVertex, mNativeFragment, native_defines, info, nullptr, &error, mNativeGeometry))
         {
             return;
         }
-        std::unique_ptr<LLVk::Program> made(new LLVk::Program);
+        std::unique_ptr<RKVk::Program> made(new RKVk::Program);
         if (!made->create(mName, info))
         {
             error = "the program could not be created";
@@ -1415,9 +1415,9 @@ bool LLShaderProgram::link(bool suppress_errors)
     {
         error = "no native source";
     }
-    else if (LLVkAsync::gEnabled)
+    else if (RKVkAsync::gEnabled)
     {
-        LLVkAsync::syncCall(build);
+        RKVkAsync::syncCall(build);
     }
     else
     {
@@ -1436,16 +1436,16 @@ bool LLShaderProgram::link(bool suppress_errors)
     return true;
 }
 
-void LLShaderProgram::censusProgram()
+void RKShaderProgram::censusProgram()
 {
     if (!mCensus.mReg)
     {
         mCensus.mReg = true;
-        LLUniCensus::sProgs.push_back({ &mName, &mCensus, this });
+        RKUniCensus::sProgs.push_back({ &mName, &mCensus, this });
     }
 }
 
-void LLShaderProgram::censusUniform(S32 twin, bool changed)
+void RKShaderProgram::censusUniform(S32 twin, bool changed)
 {
     if ((size_t)twin >= mCensus.mUniCalls.size())
     {
@@ -1455,7 +1455,7 @@ void LLShaderProgram::censusUniform(S32 twin, bool changed)
     ++(changed ? mCensus.mUniChanged : mCensus.mUniCalls)[twin];
 }
 
-const std::string* LLShaderProgram::censusUniformName(size_t index) const
+const std::string* RKShaderProgram::censusUniformName(size_t index) const
 {
     if (!mVkProgram || index >= mVkProgram->getInfo().mUniforms.size())
     {
@@ -1464,7 +1464,7 @@ const std::string* LLShaderProgram::censusUniformName(size_t index) const
     return &mVkProgram->getInfo().mUniforms[index].mName;
 }
 
-int LLShaderProgram::censusUniformClass(size_t index) const
+int RKShaderProgram::censusUniformClass(size_t index) const
 {
     if (!mVkProgram || index >= mVkProgram->getInfo().mUniforms.size())
     {
@@ -1475,7 +1475,7 @@ int LLShaderProgram::censusUniformClass(size_t index) const
 
 // <FS> shader cleanup (stage 4): what the viewer loaded and what it bound in this run (LL_VK_PROGRAM_CENSUS=1). Called before the programs are unloaded (a shader reload or the end of the run).
 // The program's own name, the files it lists (the stock GLSL paths below shaders/class<N>/, libraries included), the native files that stand in for it, its shader level and how often it was bound.
-void LLShaderProgram::dumpProgramCensus()
+void RKShaderProgram::dumpProgramCensus()
 {
     static const bool on = getenv("LL_VK_PROGRAM_CENSUS") != nullptr;
     if (!on)
@@ -1483,7 +1483,7 @@ void LLShaderProgram::dumpProgramCensus()
         return;
     }
     U32 count = 0;
-    for (const LLShaderProgram* p : sInstances)
+    for (const RKShaderProgram* p : sInstances)
     {
         LL_INFOS("ProgramCensus") << "program | " << (p->mName.empty() ? std::string("(unnamed)") : p->mName) << " | loaded " << (p->mProgramObject != 0 ? 1 : 0) << " | binds " << p->mCensusBinds
             << " | level " << p->mShaderLevel << " | native " << p->mNativeVertex << ";" << p->mNativeFragment << (p->mNativeGeometry.empty() ? "" : ";" + p->mNativeGeometry) << LL_ENDL;
@@ -1492,12 +1492,12 @@ void LLShaderProgram::dumpProgramCensus()
     LL_INFOS("ProgramCensus") << "programs loaded " << count << LL_ENDL;
 }
 
-void LLShaderProgram::bind()
+void RKShaderProgram::bind()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_SHADER_BIND);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_SHADER_BIND);
     ++mCensusBinds;
-    if (LLUniCensus::sOn) { censusProgram(); LLUniCensus::note_bind(); ++mCensus.mBinds; }
+    if (RKUniCensus::sOn) { censusProgram(); RKUniCensus::note_bind(); ++mCensus.mBinds; }
 
     llassert_always(mProgramObject != 0);
 
@@ -1513,26 +1513,26 @@ void LLShaderProgram::bind()
         LLVertexBuffer::forgetBoundBuffers();
         sCurBoundShader = mProgramObject;
         sCurBoundShaderPtr = this;
-        LLVkAsync::shaderBind(mVkProgram);
+        RKVkAsync::shaderBind(mVkProgram);
         placeProfileQuery();
     }
 
     if (mUniformsDirty || mEnvUniformEpoch != sEnvUniformEpoch)
     {
-        const long long t_upd = LLUniCensus::sOn ? LLUniCensus::now_ns() : 0;
-        const U64 calls_upd = LLUniCensus::sTotal.mCalls;
+        const long long t_upd = RKUniCensus::sOn ? RKUniCensus::now_ns() : 0;
+        const U64 calls_upd = RKUniCensus::sTotal.mCalls;
         LLShaderMgr::instance()->updateShaderUniforms(this);
         mUniformsDirty = false;
         mEnvUniformEpoch = sEnvUniformEpoch;
-        if (LLUniCensus::sOn)
+        if (RKUniCensus::sOn)
         {
             ++mCensus.mUpdBinds;
-            mCensus.mUpdNs += (U64)(LLUniCensus::now_ns() - t_upd);
-            mCensus.mUpdCalls += LLUniCensus::sTotal.mCalls - calls_upd;
+            mCensus.mUpdNs += (U64)(RKUniCensus::now_ns() - t_upd);
+            mCensus.mUpdCalls += RKUniCensus::sTotal.mCalls - calls_upd;
         }
     }
 
-    if (mVkEpoch != LLVkAsync::passEpoch())
+    if (mVkEpoch != RKVkAsync::passEpoch())
     {
         vkAnnounce();       // S6.2: the first use of the program in this pass
     }
@@ -1541,14 +1541,14 @@ void LLShaderProgram::bind()
     llassert_always(sCurBoundShader == mProgramObject);
 }
 
-void LLShaderProgram::bind(U8 variant)
+void RKShaderProgram::bind(U8 variant)
 {
-    llassert_always(mGLTFVariants.size() == LLShaderProgram::NUM_GLTF_VARIANTS);
-    llassert_always(variant < LLShaderProgram::NUM_GLTF_VARIANTS);
+    llassert_always(mGLTFVariants.size() == RKShaderProgram::NUM_GLTF_VARIANTS);
+    llassert_always(variant < RKShaderProgram::NUM_GLTF_VARIANTS);
     mGLTFVariants[variant].bind();
 }
 
-void LLShaderProgram::bind(bool rigged)
+void RKShaderProgram::bind(bool rigged)
 {
     if (rigged)
     {
@@ -1561,7 +1561,7 @@ void LLShaderProgram::bind(bool rigged)
     }
 }
 
-void LLShaderProgram::unbind(void)
+void RKShaderProgram::unbind(void)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     gRender.flush();
@@ -1575,21 +1575,21 @@ void LLShaderProgram::unbind(void)
     sCurBoundShader = 0;
     sCurBoundShaderPtr = NULL;
 #if defined(LL_VULKAN)
-    if (LLVkBridge::isReady())
+    if (RKVkBridge::isReady())
     {
-        if (LLVkAsync::gEnabled)
+        if (RKVkAsync::gEnabled)
         {
-            LLVkAsync::programBind(nullptr);        // in order with the draws already queued
+            RKVkAsync::programBind(nullptr);        // in order with the draws already queued
         }
         else
         {
-            LLVk::Renderer::instance().setProgram(nullptr);
+            RKVk::Renderer::instance().setProgram(nullptr);
         }
     }
 #endif
 }
 
-S32 LLShaderProgram::bindTexture(const std::string& uniform, LLTexture* texture, LLTexUnit::eTextureType mode)
+S32 RKShaderProgram::bindTexture(const std::string& uniform, LLTexture* texture, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1599,7 +1599,7 @@ S32 LLShaderProgram::bindTexture(const std::string& uniform, LLTexture* texture,
     return bindTexture(channel, texture, mode);
 }
 
-S32 LLShaderProgram::bindTexture(S32 uniform, LLTexture* texture, LLTexUnit::eTextureType mode)
+S32 RKShaderProgram::bindTexture(S32 uniform, LLTexture* texture, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1620,7 +1620,7 @@ S32 LLShaderProgram::bindTexture(S32 uniform, LLTexture* texture, LLTexUnit::eTe
     return uniform;
 }
 
-S32 LLShaderProgram::bindTexture(S32 uniform, LLRenderTarget* texture, bool depth, LLTexUnit::eTextureFilterOptions mode, U32 index)
+S32 RKShaderProgram::bindTexture(S32 uniform, LLRenderTarget* texture, bool depth, LLTexUnit::eTextureFilterOptions mode, U32 index)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1649,7 +1649,7 @@ S32 LLShaderProgram::bindTexture(S32 uniform, LLRenderTarget* texture, bool dept
     return uniform;
 }
 
-S32 LLShaderProgram::bindTexture(const std::string& uniform, LLRenderTarget* texture, bool depth, LLTexUnit::eTextureFilterOptions mode)
+S32 RKShaderProgram::bindTexture(const std::string& uniform, LLRenderTarget* texture, bool depth, LLTexUnit::eTextureFilterOptions mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1659,7 +1659,7 @@ S32 LLShaderProgram::bindTexture(const std::string& uniform, LLRenderTarget* tex
     return bindTexture(channel, texture, depth, mode);
 }
 
-S32 LLShaderProgram::unbindTexture(const std::string& uniform, LLTexUnit::eTextureType mode)
+S32 RKShaderProgram::unbindTexture(const std::string& uniform, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1669,7 +1669,7 @@ S32 LLShaderProgram::unbindTexture(const std::string& uniform, LLTexUnit::eTextu
     return unbindTexture(channel);
 }
 
-S32 LLShaderProgram::unbindTexture(S32 uniform, LLTexUnit::eTextureType mode)
+S32 RKShaderProgram::unbindTexture(S32 uniform, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1690,12 +1690,12 @@ S32 LLShaderProgram::unbindTexture(S32 uniform, LLTexUnit::eTextureType mode)
     return uniform;
 }
 
-S32 LLShaderProgram::getTextureChannel(S32 uniform) const
+S32 RKShaderProgram::getTextureChannel(S32 uniform) const
 {
     return mTexture[uniform];
 }
 
-S32 LLShaderProgram::enableTexture(S32 uniform, LLTexUnit::eTextureType mode)
+S32 RKShaderProgram::enableTexture(S32 uniform, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1714,7 +1714,7 @@ S32 LLShaderProgram::enableTexture(S32 uniform, LLTexUnit::eTextureType mode)
     return index;
 }
 
-S32 LLShaderProgram::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
+S32 RKShaderProgram::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -1748,7 +1748,7 @@ S32 LLShaderProgram::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
             if (gDebugSession)
             {
                 gFailLog << "Texture channel " << index << " texture type corrupted. Expected: " << mode << ", Found: " << curr_type << std::endl;
-                ll_fail("LLShaderProgram::disableTexture failed");
+                ll_fail("RKShaderProgram::disableTexture failed");
             }
             else
             {
@@ -1761,9 +1761,9 @@ S32 LLShaderProgram::disableTexture(S32 uniform, LLTexUnit::eTextureType mode)
     return index;
 }
 
-void LLShaderProgram::uniform1i(U32 index, S32 x)
+void RKShaderProgram::uniform1i(U32 index, S32 x)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
     if (mProgramObject)
@@ -1784,21 +1784,21 @@ void LLShaderProgram::uniform1i(U32 index, S32 x)
     }
 }
 
-void LLShaderProgram::uniform1fAt(S32 location, F32 v)
+void RKShaderProgram::uniform1fAt(S32 location, F32 v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     if (sCurBoundShaderPtr) sCurBoundShaderPtr->mirrorScalar(location, 0, {(double)(v)});
 }
 
-void LLShaderProgram::uniform4fvAt(S32 location, S32 count, const F32* v)
+void RKShaderProgram::uniform4fvAt(S32 location, S32 count, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     if (sCurBoundShaderPtr) sCurBoundShaderPtr->mirrorVector(location, 0, 4, count, v);
 }
 
-void LLShaderProgram::uniform1f(U32 index, F32 x)
+void RKShaderProgram::uniform1f(U32 index, F32 x)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1820,9 +1820,9 @@ void LLShaderProgram::uniform1f(U32 index, F32 x)
     }
 }
 
-void LLShaderProgram::fastUniform1f(U32 index, F32 x)
+void RKShaderProgram::fastUniform1f(U32 index, F32 x)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
     llassert(mProgramObject);
@@ -1831,9 +1831,9 @@ void LLShaderProgram::fastUniform1f(U32 index, F32 x)
     mirrorScalar(mUniform[index], 0, {(double)(x)});
 }
 
-void LLShaderProgram::uniform2f(U32 index, F32 x, F32 y)
+void RKShaderProgram::uniform2f(U32 index, F32 x, F32 y)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1856,9 +1856,9 @@ void LLShaderProgram::uniform2f(U32 index, F32 x, F32 y)
     }
 }
 
-void LLShaderProgram::uniform3f(U32 index, F32 x, F32 y, F32 z)
+void RKShaderProgram::uniform3f(U32 index, F32 x, F32 y, F32 z)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1881,9 +1881,9 @@ void LLShaderProgram::uniform3f(U32 index, F32 x, F32 y, F32 z)
     }
 }
 
-void LLShaderProgram::uniform4f(U32 index, F32 x, F32 y, F32 z, F32 w)
+void RKShaderProgram::uniform4f(U32 index, F32 x, F32 y, F32 z, F32 w)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1906,9 +1906,9 @@ void LLShaderProgram::uniform4f(U32 index, F32 x, F32 y, F32 z, F32 w)
     }
 }
 
-void LLShaderProgram::uniform1iv(U32 index, U32 count, const S32* v)
+void RKShaderProgram::uniform1iv(U32 index, U32 count, const S32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1931,9 +1931,9 @@ void LLShaderProgram::uniform1iv(U32 index, U32 count, const S32* v)
     }
 }
 
-void LLShaderProgram::uniform4iv(U32 index, U32 count, const S32* v)
+void RKShaderProgram::uniform4iv(U32 index, U32 count, const S32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1956,9 +1956,9 @@ void LLShaderProgram::uniform4iv(U32 index, U32 count, const S32* v)
 }
 
 
-void LLShaderProgram::uniform1fv(U32 index, U32 count, const F32* v)
+void RKShaderProgram::uniform1fv(U32 index, U32 count, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -1981,9 +1981,9 @@ void LLShaderProgram::uniform1fv(U32 index, U32 count, const F32* v)
     }
 }
 
-void LLShaderProgram::uniform2fv(U32 index, U32 count, const F32* v)
+void RKShaderProgram::uniform2fv(U32 index, U32 count, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -2006,9 +2006,9 @@ void LLShaderProgram::uniform2fv(U32 index, U32 count, const F32* v)
     }
 }
 
-void LLShaderProgram::uniform3fv(U32 index, U32 count, const F32* v)
+void RKShaderProgram::uniform3fv(U32 index, U32 count, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -2031,9 +2031,9 @@ void LLShaderProgram::uniform3fv(U32 index, U32 count, const F32* v)
     }
 }
 
-void LLShaderProgram::uniform4fv(U32 index, U32 count, const F32* v)
+void RKShaderProgram::uniform4fv(U32 index, U32 count, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -2057,9 +2057,9 @@ void LLShaderProgram::uniform4fv(U32 index, U32 count, const F32* v)
     }
 }
 
-void LLShaderProgram::uniform4uiv(U32 index, U32 count, const U32* v)
+void RKShaderProgram::uniform4uiv(U32 index, U32 count, const U32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -2083,9 +2083,9 @@ void LLShaderProgram::uniform4uiv(U32 index, U32 count, const U32* v)
     }
 }
 
-void LLShaderProgram::uniformMatrix2fv(U32 index, U32 count, bool transpose, const F32* v)
+void RKShaderProgram::uniformMatrix2fv(U32 index, U32 count, bool transpose, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -2105,9 +2105,9 @@ void LLShaderProgram::uniformMatrix2fv(U32 index, U32 count, bool transpose, con
     }
 }
 
-void LLShaderProgram::uniformMatrix3fv(U32 index, U32 count, bool transpose, const F32* v)
+void RKShaderProgram::uniformMatrix3fv(U32 index, U32 count, bool transpose, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -2127,9 +2127,9 @@ void LLShaderProgram::uniformMatrix3fv(U32 index, U32 count, bool transpose, con
     }
 }
 
-void LLShaderProgram::uniformMatrix3x4fv(U32 index, U32 count, bool transpose, const F32* v)
+void RKShaderProgram::uniformMatrix3x4fv(U32 index, U32 count, bool transpose, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -2149,9 +2149,9 @@ void LLShaderProgram::uniformMatrix3x4fv(U32 index, U32 count, bool transpose, c
     }
 }
 
-void LLShaderProgram::uniformMatrix4fv(U32 index, U32 count, bool transpose, const F32* v)
+void RKShaderProgram::uniformMatrix4fv(U32 index, U32 count, bool transpose, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     llassert(sCurBoundShaderPtr == this);
 
@@ -2171,7 +2171,7 @@ void LLShaderProgram::uniformMatrix4fv(U32 index, U32 count, bool transpose, con
     }
 }
 
-S32 LLShaderProgram::getUniformLocation(const LLStaticHashedString& uniform)
+S32 RKShaderProgram::getUniformLocation(const LLStaticHashedString& uniform)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -2188,7 +2188,7 @@ S32 LLShaderProgram::getUniformLocation(const LLStaticHashedString& uniform)
     return ret;
 }
 
-S32 LLShaderProgram::getUniformLocation(U32 index)
+S32 RKShaderProgram::getUniformLocation(U32 index)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -2206,7 +2206,7 @@ S32 LLShaderProgram::getUniformLocation(U32 index)
     return ret;
 }
 
-S32 LLShaderProgram::getAttribLocation(U32 attrib)
+S32 RKShaderProgram::getAttribLocation(U32 attrib)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
 
@@ -2220,9 +2220,9 @@ S32 LLShaderProgram::getAttribLocation(U32 attrib)
     }
 }
 
-void LLShaderProgram::uniform1i(const LLStaticHashedString& uniform, S32 v)
+void RKShaderProgram::uniform1i(const LLStaticHashedString& uniform, S32 v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2235,9 +2235,9 @@ void LLShaderProgram::uniform1i(const LLStaticHashedString& uniform, S32 v)
     }
 }
 
-void LLShaderProgram::uniform1iv(const LLStaticHashedString& uniform, U32 count, const S32* v)
+void RKShaderProgram::uniform1iv(const LLStaticHashedString& uniform, U32 count, const S32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2251,9 +2251,9 @@ void LLShaderProgram::uniform1iv(const LLStaticHashedString& uniform, U32 count,
     }
 }
 
-void LLShaderProgram::uniform4iv(const LLStaticHashedString& uniform, U32 count, const S32* v)
+void RKShaderProgram::uniform4iv(const LLStaticHashedString& uniform, U32 count, const S32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2267,9 +2267,9 @@ void LLShaderProgram::uniform4iv(const LLStaticHashedString& uniform, U32 count,
     }
 }
 
-void LLShaderProgram::uniform2i(const LLStaticHashedString& uniform, S32 i, S32 j)
+void RKShaderProgram::uniform2i(const LLStaticHashedString& uniform, S32 i, S32 j)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2283,9 +2283,9 @@ void LLShaderProgram::uniform2i(const LLStaticHashedString& uniform, S32 i, S32 
 }
 
 
-void LLShaderProgram::uniform1f(const LLStaticHashedString& uniform, F32 v)
+void RKShaderProgram::uniform1f(const LLStaticHashedString& uniform, F32 v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2298,9 +2298,9 @@ void LLShaderProgram::uniform1f(const LLStaticHashedString& uniform, F32 v)
     }
 }
 
-void LLShaderProgram::uniform2f(const LLStaticHashedString& uniform, F32 x, F32 y)
+void RKShaderProgram::uniform2f(const LLStaticHashedString& uniform, F32 x, F32 y)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2314,9 +2314,9 @@ void LLShaderProgram::uniform2f(const LLStaticHashedString& uniform, F32 x, F32 
 
 }
 
-void LLShaderProgram::uniform3f(const LLStaticHashedString& uniform, F32 x, F32 y, F32 z)
+void RKShaderProgram::uniform3f(const LLStaticHashedString& uniform, F32 x, F32 y, F32 z)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2329,9 +2329,9 @@ void LLShaderProgram::uniform3f(const LLStaticHashedString& uniform, F32 x, F32 
     }
 }
 
-void LLShaderProgram::uniform4f(const LLStaticHashedString& uniform, F32 x, F32 y, F32 z, F32 w)
+void RKShaderProgram::uniform4f(const LLStaticHashedString& uniform, F32 x, F32 y, F32 z, F32 w)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2344,9 +2344,9 @@ void LLShaderProgram::uniform4f(const LLStaticHashedString& uniform, F32 x, F32 
     }
 }
 
-void LLShaderProgram::uniform1fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
+void RKShaderProgram::uniform1fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2359,9 +2359,9 @@ void LLShaderProgram::uniform1fv(const LLStaticHashedString& uniform, U32 count,
     }
 }
 
-void LLShaderProgram::uniform2fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
+void RKShaderProgram::uniform2fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2374,9 +2374,9 @@ void LLShaderProgram::uniform2fv(const LLStaticHashedString& uniform, U32 count,
     }
 }
 
-void LLShaderProgram::uniform3fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
+void RKShaderProgram::uniform3fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2389,9 +2389,9 @@ void LLShaderProgram::uniform3fv(const LLStaticHashedString& uniform, U32 count,
     }
 }
 
-void LLShaderProgram::uniform4fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
+void RKShaderProgram::uniform4fv(const LLStaticHashedString& uniform, U32 count, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2405,9 +2405,9 @@ void LLShaderProgram::uniform4fv(const LLStaticHashedString& uniform, U32 count,
     }
 }
 
-void LLShaderProgram::uniform4uiv(const LLStaticHashedString& uniform, U32 count, const U32* v)
+void RKShaderProgram::uniform4uiv(const LLStaticHashedString& uniform, U32 count, const U32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2421,9 +2421,9 @@ void LLShaderProgram::uniform4uiv(const LLStaticHashedString& uniform, U32 count
     }
 }
 
-void LLShaderProgram::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
+void RKShaderProgram::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2433,9 +2433,9 @@ void LLShaderProgram::uniformMatrix3fv(const LLStaticHashedString& uniform, U32 
     }
 }
 
-void LLShaderProgram::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
+void RKShaderProgram::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2445,9 +2445,9 @@ void LLShaderProgram::uniformMatrix4fv(const LLStaticHashedString& uniform, U32 
     }
 }
 
-void LLShaderProgram::uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
+void RKShaderProgram::uniformMatrix3x4fv(const LLStaticHashedString& uniform, U32 count, bool transpose, const F32* v)
 {
-    LLVkAsync::FrontLap front_lap(LLVkAsync::FP_UNIFORM_MATRIX);
+    RKVkAsync::FrontLap front_lap(RKVkAsync::FP_UNIFORM_MATRIX);
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     S32 location = getUniformLocation(uniform);
 
@@ -2458,30 +2458,30 @@ void LLShaderProgram::uniformMatrix3x4fv(const LLStaticHashedString& uniform, U3
 }
 
 
-void LLShaderProgram::vertexAttrib4f(U32 index, F32 x, F32 y, F32 z, F32 w)
+void RKShaderProgram::vertexAttrib4f(U32 index, F32 x, F32 y, F32 z, F32 w)
 {
     if (mAttribute[index] > 0)
     {
-        LLVkBuf::setConstantAttribute(mAttribute[index], x, y, z, w);
+        RKVkBuf::setConstantAttribute(mAttribute[index], x, y, z, w);
     }
 }
 
-void LLShaderProgram::vertexAttrib4fv(U32 index, F32* v)
+void RKShaderProgram::vertexAttrib4fv(U32 index, F32* v)
 {
     if (mAttribute[index] > 0)
     {
-        LLVkBuf::setConstantAttribute(mAttribute[index], v[0], v[1], v[2], v[3]);
+        RKVkBuf::setConstantAttribute(mAttribute[index], v[0], v[1], v[2], v[3]);
     }
 }
 
-void LLShaderProgram::setMinimumAlpha(F32 minimum)
+void RKShaderProgram::setMinimumAlpha(F32 minimum)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     gRender.flush();
     uniform1f(LLShaderMgr::MINIMUM_ALPHA, minimum);
 }
 
-void LLShaderUniforms::apply(LLShaderProgram* shader)
+void LLShaderUniforms::apply(RKShaderProgram* shader)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
     for (auto& uniform : mIntegers)
@@ -2506,7 +2506,7 @@ void LLShaderUniforms::apply(LLShaderProgram* shader)
 }
 
 #if LL_PROFILER_ENABLE_RENDER_DOC
-void LLShaderProgram::setLabel(const char* label) {
+void RKShaderProgram::setLabel(const char* label) {
     (void)label;        // nothing to label: a program is not a GL object any more
 }
 #endif

@@ -19,7 +19,7 @@
 #include <deque>
 #include <vector>
 
-namespace LLVk
+namespace RKVk
 {
 
 class HandleTable

@@ -61,7 +61,7 @@ Candidates once M4 works, each judged by eye and by cost: temporal AA (DLAA/TAA)
 The viewer now runs with no OpenGL context at all (branch `native-vk`, commits bac2360b, 21cac4b9, 01ca05e3). Adam: login, web content, quick clean login and load, about 228 fps in a mostly empty scene; GPU class 5; log clean (7 informational unanswered limit queries).
 What it took, for the record:
 - generator: wrappers skip real GL with LL_VK_NOGL; pass-through wrappers for the 18 unhooked GL calls (glGetError, glGetString, glFlush, ...).
-- start-up: GL strings, limits and VRAM come from the Vulkan device (`LLGLManager::initGLNoGL`, `LLVkMirror::describeDevice`); the GL_RENDERER string must stay byte-identical to what the driver reported (`.../PCIe/SSE2`), or the viewer decides the GPU changed and resets and saves the graphics settings (see memory: backup user_settings first).
+- start-up: GL strings, limits and VRAM come from the Vulkan device (`LLGLManager::initGLNoGL`, `RKVkMirror::describeDevice`); the GL_RENDERER string must stay byte-identical to what the driver reported (`.../PCIe/SSE2`), or the viewer decides the GPU changed and resets and saves the graphics settings (see memory: backup user_settings first).
 - window: no pixel format and no WGL context; the main window is given to Vulkan.
 - worker threads: `createSharedContext` returns a dummy non-null token, otherwise the texture/media upload threads never start while the code still queues work for them (black web view, stuck uploads).
 - Tracy's GPU profiling creates a GL context: three places guarded.

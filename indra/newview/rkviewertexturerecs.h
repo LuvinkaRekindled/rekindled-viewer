@@ -20,7 +20,7 @@ class LLFace;
 class LLViewerTexture;
 class LLSpatialGroup;
 
-class LLTexRecs
+class RKTexRecs
 {
 public:
     // what the worker found for one texture (a slot of the registry)

@@ -1,5 +1,5 @@
 // avatarskin.glsl: the skin of one vertex of the system avatar (the legacy body: skin, hair, eyes, eyelashes of LLViewerJointMesh) out of the joint palette uniform. The includer declares the palette
-// (`vec4 matrixPalette[45]` in the LLLooseSkin block: joint i has its three rows at i, i + 15 and i + 30) and includes lib/rows.glsl first. Used by avatar.vert (the G-buffer pass) and avatar_shadow.vert.
+// (`vec4 matrixPalette[45]` in the RKLooseSkin block: joint i has its three rows at i, i + 15 and i + 30) and includes lib/rows.glsl first. Used by avatar.vert (the G-buffer pass) and avatar_shadow.vert.
 // The weight of a vertex is one float: the joint number in the integer part, the share of the next joint in the fraction. The weights array is named by the row (all zero address: a mesh without one reads joint 0).
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer RowFloats { float f[]; };
 

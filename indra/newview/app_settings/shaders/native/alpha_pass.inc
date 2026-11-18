@@ -7,7 +7,7 @@
 #define ALPHA_REFLECTS 1
 #endif
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     // the scene table of the record: three buffer addresses (rows, model matrices, texture matrices), written by the draw record
     uvec2 ll_packet_table;
@@ -150,7 +150,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #include "lib/probe_block.glsl"
 #endif
 
-layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
+layout(std140, set = 0, binding = 6) uniform RKLooseMaterial
 {
 #ifdef HIGHLIGHT_PASS
     vec4 color;                 // the highlight colour of the draw (the Highlight Transparent view: highlight.frag)
@@ -160,7 +160,7 @@ layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
 };
 
 #if defined(ALPHA_LIT) || defined(ALPHA_PROBES) || defined(AVATAR_PASS)
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
 #ifdef AVATAR_PASS
     uint ll_ti_diffuseMap;              // the body part's texture

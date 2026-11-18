@@ -169,14 +169,14 @@ void LLFloaterScriptDebug::addScriptLine(const LLChat& chat)
             {
                 if (isAgentAvatarValid())
                 {
-                    ((LLViewerObject*)gAgentAvatarp)->setIcon(LLViewerTextureManager::getFetchedTextureFromFile("script_error.j2c", FTT_LOCAL_FILE, true, LLBaseTexture::BOOST_UI));
+                    ((LLViewerObject*)gAgentAvatarp)->setIcon(LLViewerTextureManager::getFetchedTextureFromFile("script_error.j2c", FTT_LOCAL_FILE, true, RKBaseTexture::BOOST_UI));
                     // <FS:Ansariel> Mark script error icons
                     ((LLViewerObject*)gAgentAvatarp)->getIcon()->setScriptError();
                 }
             }
             else
             {
-                objectp->setIcon(LLViewerTextureManager::getFetchedTextureFromFile("script_error.j2c", FTT_LOCAL_FILE, true, LLBaseTexture::BOOST_UI));
+                objectp->setIcon(LLViewerTextureManager::getFetchedTextureFromFile("script_error.j2c", FTT_LOCAL_FILE, true, RKBaseTexture::BOOST_UI));
                 // <FS:Ansariel> Mark script error icons
                 objectp->getIcon()->setScriptError();
             }

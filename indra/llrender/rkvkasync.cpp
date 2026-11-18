@@ -44,7 +44,7 @@
 #pragma comment(lib, "dbghelp.lib")
 #endif
 
-namespace LLVkWorker
+namespace RKVkWorker
 {
     void set_worker_context(int id);
     void register_main_context();
@@ -53,7 +53,7 @@ namespace LLVkWorker
     void on_bufferRecycle(U32 name);
 }
 
-namespace LLVkBridge
+namespace RKVkBridge
 {
     void beginFrameImpl(S32 width, S32 height);
     void endFrameImpl();
@@ -62,7 +62,7 @@ namespace LLVkBridge
     void snapshotBoundaryImpl(S32 mode);
 }
 
-namespace LLVkAsync
+namespace RKVkAsync
 {
 
 void uiCacheBufferTouched(U32 name);       // (UI record cache, below)
@@ -183,7 +183,7 @@ unsigned long long gOpStatCalls[OP_STAT_SLOTS] = {};
 unsigned long long gOpStatTsc0 = 0;
 unsigned long long gFrontCalls[FP_COUNT] = {};
 unsigned long long gFrontTicks[FP_COUNT] = {};
-const char* const kFrontNames[FP_COUNT] = { "LLShaderProgram::bind", "uniform*", "uniformMatrix*", "uniform writes sent (count only)", "LLTexUnit::bind", "blendFunc", "state guards", "setBuffer", "draw*", "syncMatrices (contains uniformMatrix)", "LLRender::flush (contains draw*)", "matrix push/pop (contains flush)", "matrix set/mult/identity/ortho (contains flush)", "matrix translate/rotate/scale (contains flush)", "matrixMode", "LLTexUnit::unbind/unbindFast (contains flush)", "LLTexUnit::activate/enable/disable", "LLTexUnit::bindManual (contains flush)", "LLTexUnit::setTextureAddressMode/FilteringOption" };
+const char* const kFrontNames[FP_COUNT] = { "RKShaderProgram::bind", "uniform*", "uniformMatrix*", "uniform writes sent (count only)", "LLTexUnit::bind", "blendFunc", "state guards", "setBuffer", "draw*", "syncMatrices (contains uniformMatrix)", "LLRender::flush (contains draw*)", "matrix push/pop (contains flush)", "matrix set/mult/identity/ortho (contains flush)", "matrix translate/rotate/scale (contains flush)", "matrixMode", "LLTexUnit::unbind/unbindFast (contains flush)", "LLTexUnit::activate/enable/disable", "LLTexUnit::bindManual (contains flush)", "LLTexUnit::setTextureAddressMode/FilteringOption" };
 long long gOpStatQpc0 = 0;
 inline int opStatSlot(unsigned op) { return std::min((int)(op - CMD_BASE), OP_STAT_SLOTS - 2); }
 constexpr int OP_SLOT_CUBE = OP_STAT_SLOTS - 1;     // S7 H0: the draws of 8 indices (the occlusion cubes), also counted in "draw": reported separately, left out of the total
@@ -292,7 +292,7 @@ inline void mainCommit(size_t payload_bytes)
 // Nothing is dropped and nothing is reordered: whatever else is queued first writes out what is held, and the worker plays a merged record
 // by calling the same functions in the same order.
 unsigned long long gMainRecords = 0;        // records actually written by the main thread (a sub-stream's are counted when it is spliced)
-inline void noteRecord() { if (!tlsBuf) { ++gMainRecords; if (LLUniCensus::sOn) { LLUniCensus::note_record(); } } }
+inline void noteRecord() { if (!tlsBuf) { ++gMainRecords; if (RKUniCensus::sOn) { RKUniCensus::note_record(); } } }
 
 
 inline void rawPush(U16 op, const void* args, unsigned size)
@@ -311,7 +311,7 @@ inline void rawPush(U16 op, const void* args, unsigned size)
 inline U32 lowBit(U32 m) { unsigned long i; _BitScanForward(&i, m); return (U32)i; }
 constexpr U32 TEX_UNIT_BASE = 0x84C0;       // GL_TEXTURE0
 // the pending texture slots, active unit and uniform writes of one producer (the main thread's, or a sub-stream's)
-// F2.4: what the next draw uses besides state, textures and uniforms: the program and the vertex binding, as values (written by LLShaderProgram::bind/unbind and LLVertexBuffer::setBuffer)
+// F2.4: what the next draw uses besides state, textures and uniforms: the program and the vertex binding, as values (written by RKShaderProgram::bind/unbind and LLVertexBuffer::setBuffer)
 struct DrawCtx
 {
     void* mProgram = nullptr;
@@ -451,8 +451,8 @@ void sidePush(U16 op, std::vector<U8>&& payload)
 // main thread only
 inline void stateEmit()
 {
-    LLVkState::Block b;
-    if (LLVkState::takeChanged(b))
+    RKVkState::Block b;
+    if (RKVkState::takeChanged(b))
     {
         rawPush(CMD_STATE, &b, sizeof(b));
     }
@@ -520,15 +520,15 @@ unsigned long long frontStart(int id)
     {
         ++gDrawSeq;
     }
-    if (LLUniCensus::sOn)
+    if (RKUniCensus::sOn)
     {   // S6 census: by innermost CPU zone
-        if (id == FP_DRAW) LLUniCensus::note_draw(); else if (id == FP_SET_BUFFER) LLUniCensus::note_setbuf(); else if (id == FP_SYNC_MATRICES) LLUniCensus::note_sync();
+        if (id == FP_DRAW) RKUniCensus::note_draw(); else if (id == FP_SET_BUFFER) RKUniCensus::note_setbuf(); else if (id == FP_SYNC_MATRICES) RKUniCensus::note_sync();
     }
     const unsigned long long n = ++gFrontCalls[id];
     return (n & 15) == 0 ? (__rdtsc() | 1) : 0;
 }
 void frontStop(int id, unsigned long long t0) { gFrontTicks[id] += (__rdtsc() - t0) * 16; }
-void frontNote(int id) { if (isMainThread()) { if (LLUniCensus::sOn && id == FP_DRAW) { LLUniCensus::note_draw(); } ++gFrontCalls[id]; if (id == FP_DRAW) { ++gDrawSeq; } } }
+void frontNote(int id) { if (isMainThread()) { if (RKUniCensus::sOn && id == FP_DRAW) { RKUniCensus::note_draw(); } ++gFrontCalls[id]; if (id == FP_DRAW) { ++gDrawSeq; } } }
 
 bool mainProducer()
 {
@@ -547,8 +547,8 @@ void framebufferAttach(U32 fbo, U32 slot, U32 texture)
 {
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);       // inline mode (before the queue starts)
-        LLVkWorker::target_attach(fbo, slot, texture);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);       // inline mode (before the queue starts)
+        RKVkWorker::target_attach(fbo, slot, texture);
         return;
     }
     if (!produces())
@@ -565,8 +565,8 @@ void targetDrawBuffers(U32 fbo, S32 draw_buffers)
 {
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::target_state(fbo, draw_buffers);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::target_state(fbo, draw_buffers);
         return;
     }
     if (!produces())
@@ -597,7 +597,7 @@ void passEnd()
 
 void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool clear_color, bool clear_depth, const F32* rgba, PassKind kind, const char* file, int line)
 {
-    LLVkState::setViewport(vx, vy, vw, vh);
+    RKVkState::setViewport(vx, vy, vw, vh);
     static const F32 zero[4] = {};
     if (!rgba)
     {
@@ -605,11 +605,11 @@ void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool c
     }
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::target_state(fbo, draw_buffers);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::target_state(fbo, draw_buffers);
         if (clear_color || clear_depth)
         {
-            LLVkWorker::clear_target(clear_color, clear_depth, rgba);
+            RKVkWorker::clear_target(clear_color, clear_depth, rgba);
         }
         return;
     }
@@ -638,15 +638,15 @@ void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool c
             gOpenPasses.push_back({ id, parent });
         }
     }
-    const U32 site = LLVkPassCensus::internSite(file, line, kind == PASS_RESUME ? 'r' : kind == PASS_SCREEN ? 'f' : 'b');
+    const U32 site = RKVkPassCensus::internSite(file, line, kind == PASS_RESUME ? 'r' : kind == PASS_SCREEN ? 'f' : 'b');
     struct R { S32 mFbo; S32 mDrawBuffers; U32 mFlags; F32 mColor[4]; U32 mSite; U32 mId; U32 mParent; U32 mPad; } rec =
         { (S32)fbo, draw_buffers, (clear_color ? 1u : 0u) | (clear_depth ? 2u : 0u) | ((U32)kind << 8), { rgba[0], rgba[1], rgba[2], rgba[3] }, site, id, parent, 0 };
     rawPush(CMD_PASS, &rec, sizeof(rec));
     ++gPassEpoch;
     // S6.2: the pass is closed: what it reads of the state that persisted from the pass before is sent again where it is used: the render state block with the next record that reads it, the draw
     // context's binding with the next draw, the texture units with the next draw (or a texture record), the uniform buffer bindings and constant attributes now, a program's uniform class
-    // blocks at its bind (LLShaderProgram::bind / announceBound: the bound program is announced by the caller, after this record)
-    LLVkState::forceEmit();
+    // blocks at its bind (RKShaderProgram::bind / announceBound: the bound program is announced by the caller, after this record)
+    RKVkState::forceEmit();
     Pend& p = pend();
     p.mDraw.mDirty = true;
     U32 m = 0;
@@ -655,7 +655,7 @@ void passBegin(U32 fbo, S32 draw_buffers, S32 vx, S32 vy, S32 vw, S32 vh, bool c
         if (p.mTex[u]) m |= 1u << u;
     }
     p.mMask |= m;
-    LLVkBuf::reannounce();
+    RKVkBuf::reannounce();
 }
 
 void clearTarget(bool color, bool depth, const F32* rgba)
@@ -743,7 +743,7 @@ void drawBindingGet(DrawBinding& out)
     }
 }
 
-// LLShaderProgram::bind: the program of the next draws; a program bind leaves no buffers bound
+// RKShaderProgram::bind: the program of the next draws; a program bind leaves no buffers bound
 void shaderBind(void* program)
 {
     if (DrawCtx* d = drawCtx())
@@ -779,8 +779,8 @@ void bufferData(U32 name, BufferKind buffer_kind, S64 size, const void* data)
     const U32 kind = (U32)buffer_kind;
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);       // inline mode (before the queue starts)
-        LLVkWorker::on_bufferData(name, kind, (S64)size, data);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);       // inline mode (before the queue starts)
+        RKVkWorker::on_bufferData(name, kind, (S64)size, data);
         return;
     }
     MainLap lap;
@@ -793,8 +793,8 @@ void bufferSubData(U32 name, S64 offset, S64 size, const void* data)
 {
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::on_bufferSubData(name, (S64)offset, (S64)size, data);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::on_bufferSubData(name, (S64)offset, (S64)size, data);
         return;
     }
     MainLap lap;
@@ -807,8 +807,8 @@ void bufferRecycle(U32 name)
 {
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::on_bufferRecycle(name);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::on_bufferRecycle(name);
         return;
     }
     MainLap lap;
@@ -898,7 +898,7 @@ static void writeDraw(U32 kind, U32 mode, U32 start, U32 end, S32 count, U32 typ
 static void inlineDrawApply()
 {
     DrawCtx& d = pend().mDraw;
-    LLVkWorker::draw_context_apply(d.mProgram, d.mDirty ? &d.mBinding : nullptr);
+    RKVkWorker::draw_context_apply(d.mProgram, d.mDirty ? &d.mBinding : nullptr);
     d.mDirty = false;
 }
 
@@ -907,9 +907,9 @@ void drawRangeElements(PrimitiveMode primitive, U32 start, U32 end, S32 count, C
     const U32 mode = (U32)primitive, type = (U32)component;
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);       // inline mode (before the queue starts): the draw is made here
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);       // inline mode (before the queue starts): the draw is made here
         inlineDrawApply();
-        LLVkWorker::draw_elements(mode, start, end, count, type, indices);
+        RKVkWorker::draw_elements(mode, start, end, count, type, indices);
         return;
     }
     if (!produces())
@@ -924,9 +924,9 @@ void drawArrays(PrimitiveMode primitive, S32 first, S32 count)
     const U32 mode = (U32)primitive;
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
         inlineDrawApply();
-        LLVkWorker::draw_arrays(mode, first, count);
+        RKVkWorker::draw_arrays(mode, first, count);
         return;
     }
     if (!produces())
@@ -944,15 +944,15 @@ void drawScratch(PrimitiveMode primitive, S32 count, U32 mask, const void* posit
     const size_t bytes[3] = { n * 16, (mask & SCRATCH_TEXCOORD0) ? n * 8 : 0, (mask & SCRATCH_COLOR) ? n * 4 : 0 };
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::draw_context_apply(pend().mDraw.mProgram, nullptr);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::draw_context_apply(pend().mDraw.mProgram, nullptr);
         std::vector<U8> joined(bytes[0] + bytes[1] + bytes[2]);
         size_t at = 0;
         for (int i = 0; i < 3; ++i)
         {
             if (bytes[i]) { memcpy(joined.data() + at, pieces[i], bytes[i]); at += bytes[i]; }
         }
-        LLVkWorker::draw_scratch(mode, count, mask, joined.data());
+        RKVkWorker::draw_scratch(mode, count, mask, joined.data());
         return;
     }
     if (!produces())
@@ -985,7 +985,7 @@ void pushData(unsigned short op, const void* args, unsigned size, const void* da
         {
             ++gMainOpCalls[opStatSlot(op)];
         }
-        LLVkBridge::ShadowPacketsHeader named;
+        RKVkBridge::ShadowPacketsHeader named;
         if (op == CMD_SHADOW_PACKETS)
         {
             stateEmit();
@@ -1306,7 +1306,7 @@ std::string opStatsReport(size_t frames)
         }
         out += "| ";
         out += RenderPass::report(frames);                  // F3.5a: render targets of the producer, bind / clear sites
-        out += LLVk::Renderer::instance().takePassReport(frames);      // F3.5a: render passes of the worker
+        out += RKVk::Renderer::instance().takePassReport(frames);      // F3.5a: render passes of the worker
     }
     {
         // the plain calls still pushed one by one (candidates for typed records), most frequent first
@@ -1352,19 +1352,19 @@ std::string opStatsReport(size_t frames)
         }
         out += "| ";
     }
-    if (LLVkBridge::gPhaseTiming)
+    if (RKVkBridge::gPhaseTiming)
     {
         // LL_VK_WORKERPHASES: where the worker's draw time goes (ms per frame; the timers themselves add about 25 ns per reading)
         LARGE_INTEGER pf;
         QueryPerformanceFrequency(&pf);
         out += "worker draw phases ms/frame: ";
-        for (int p = 0; p < LLVkBridge::PH_COUNT; ++p)
+        for (int p = 0; p < RKVkBridge::PH_COUNT; ++p)
         {
-            const double ms = (double)LLVkBridge::gPhaseTicks[p] * 1000.0 / (double)pf.QuadPart / (double)frames;
-            LLVkBridge::gPhaseTicks[p] = 0;
+            const double ms = (double)RKVkBridge::gPhaseTicks[p] * 1000.0 / (double)pf.QuadPart / (double)frames;
+            RKVkBridge::gPhaseTicks[p] = 0;
             if (ms >= 0.01)
             {
-                snprintf(buf, sizeof(buf), "%s %.2f, ", LLVkBridge::phaseName(p), ms);
+                snprintf(buf, sizeof(buf), "%s %.2f, ", RKVkBridge::phaseName(p), ms);
                 out += buf;
             }
         }
@@ -1490,11 +1490,11 @@ void uniformMatrix(void* program, unsigned uniform_index, unsigned columns, unsi
 
 void resourceCreate(U32 kind, S32 n, U32* ids)
 {
-    LLVkWorker::own_gen((int)kind, n, ids);
+    RKVkWorker::own_gen((int)kind, n, ids);
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);       // inline mode (before the queue starts)
-        LLVkWorker::resource_create(kind, n, ids);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);       // inline mode (before the queue starts)
+        RKVkWorker::resource_create(kind, n, ids);
         return;
     }
     const U32 a[2] = { kind, (U32)std::max<S32>(n, 0) };
@@ -1505,8 +1505,8 @@ void resourceDestroy(U32 kind, S32 n, const U32* ids)
 {
     if (!gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::resource_destroy(kind, n, ids);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::resource_destroy(kind, n, ids);
         return;
     }
     const U32 a[2] = { kind, (U32)std::max<S32>(n, 0) };
@@ -1650,9 +1650,9 @@ bool query_get(int kind, unsigned id, unsigned pname, void* params)
 namespace
 {
 
-size_t pixel_bytes(LLVkFormat::Transfer tr, S32 w, S32 h, S32 d, S32 row_length)
+size_t pixel_bytes(RKVkFormat::Transfer tr, S32 w, S32 h, S32 d, S32 row_length)
 {
-    const unsigned comps = LLVkFormat::compCount(tr.mComps), tb = LLVkFormat::typeBytes(tr.mType);
+    const unsigned comps = RKVkFormat::compCount(tr.mComps), tb = RKVkFormat::typeBytes(tr.mType);
     if (!comps || !tb || w <= 0 || h <= 0 || d <= 0)
     {
         return 0;       // the worker's conversion refuses these without reading anything
@@ -1664,7 +1664,7 @@ size_t pixel_bytes(LLVkFormat::Transfer tr, S32 w, S32 h, S32 d, S32 row_length)
 
 struct TexArgs
 {
-    LLVkFormat::Target mTarget; LLVkFormat::Transfer mTransfer; U8 mStore; U8 mPad8[3];
+    RKVkFormat::Target mTarget; RKVkFormat::Transfer mTransfer; U8 mStore; U8 mPad8[3];
     S32 mLevel;
     S32 mWidth, mHeight, mDepth;
     S32 mX, mY, mZ;
@@ -1726,11 +1726,11 @@ void push_tex(unsigned short op, TexArgs& a, const void* pixels, size_t bytes)
 
 
 // ---- F1.2: texture edits that name their texture (rkvktex.h) ----
-} // namespace LLVkAsync (reopened below)
+} // namespace RKVkAsync (reopened below)
 
-namespace LLVkTex
+namespace RKVkTex
 {
-using namespace LLVkAsync;
+using namespace RKVkAsync;
 
 namespace
 {
@@ -1748,41 +1748,41 @@ void pushImage(TexKind kind, TexArgs a, const void* pixels, size_t bytes)
     push_tex(CMD_TEX_IMAGE, a, pixels, bytes);
 }
 
-inline std::lock_guard<LLVkBridge::Mutex> inlineLock() { return std::lock_guard<LLVkBridge::Mutex>(LLVkWorker::gMutex); }
+inline std::lock_guard<RKVkBridge::Mutex> inlineLock() { return std::lock_guard<RKVkBridge::Mutex>(RKVkWorker::gMutex); }
 }
 
 void create(S32 count, U32* ids)
 {
-    LLVkAsync::resourceCreate(LLVkAsync::RES_TEXTURE, count, ids);
+    RKVkAsync::resourceCreate(RKVkAsync::RES_TEXTURE, count, ids);
 }
 
 void destroy(S32 count, const U32* ids)
 {
-    LLVkAsync::resourceDestroy(LLVkAsync::RES_TEXTURE, count, ids);
+    RKVkAsync::resourceDestroy(RKVkAsync::RES_TEXTURE, count, ids);
 }
 
 void bindSlot(S32 unit, U32 id)
 {
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
         if (produces())
         {
-            LLVkAsync::bindTextureUnit((U32)unit, id);
+            RKVkAsync::bindTextureUnit((U32)unit, id);
         }
         return;
     }
     auto lock = inlineLock();
-    LLVkWorker::slot_set((unsigned)unit, id);
+    RKVkWorker::slot_set((unsigned)unit, id);
 }
 
-static void image2D_impl(U32 id, TextureTarget target, S32 level, LLVkFormat::Store st, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels)
+static void image2D_impl(U32 id, TextureTarget target, S32 level, RKVkFormat::Store st, S32 width, S32 height, RKVkFormat::Transfer tr, const void* pixels)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
-    LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
-    if (!LLVkAsync::gEnabled)
+    const RKVkFormat::Target tg = RKVkFormat::target(target);
+    RKVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_image2D(id, currentPS(), tg, level, st, width, height, tr, pixels);
+        RKVkWorker::tex_image2D(id, currentPS(), tg, level, st, width, height, tr, pixels);
         return;
     }
     TexMainLap lap;
@@ -1793,19 +1793,19 @@ static void image2D_impl(U32 id, TextureTarget target, S32 level, LLVkFormat::St
 
 void image2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
 {
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
-    LLVkFormat::noteFormat("image2D", file, line, (U8)internal_format, tr.mComps, tr.mType);
-    image2D_impl(id, target, level, LLVkFormat::store(internal_format), width, height, tr, pixels);
+    const RKVkFormat::Transfer tr = RKVkFormat::transfer(format, type);
+    RKVkFormat::noteFormat("image2D", file, line, (U8)internal_format, tr.mComps, tr.mType);
+    image2D_impl(id, target, level, RKVkFormat::store(internal_format), width, height, tr, pixels);
 }
 
-static void image3D_impl(U32 id, TextureTarget target, S32 level, LLVkFormat::Store st, S32 width, S32 height, S32 depth, LLVkFormat::Transfer tr, const void* pixels)
+static void image3D_impl(U32 id, TextureTarget target, S32 level, RKVkFormat::Store st, S32 width, S32 height, S32 depth, RKVkFormat::Transfer tr, const void* pixels)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
-    LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
-    if (!LLVkAsync::gEnabled)
+    const RKVkFormat::Target tg = RKVkFormat::target(target);
+    RKVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_image3D(id, currentPS(), tg, level, st, width, height, depth, tr, pixels);
+        RKVkWorker::tex_image3D(id, currentPS(), tg, level, st, width, height, depth, tr, pixels);
         return;
     }
     TexMainLap lap;
@@ -1816,19 +1816,19 @@ static void image3D_impl(U32 id, TextureTarget target, S32 level, LLVkFormat::St
 
 void image3D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
 {
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
-    LLVkFormat::noteFormat("image3D", file, line, (U8)internal_format, tr.mComps, tr.mType);
-    image3D_impl(id, target, level, LLVkFormat::store(internal_format), width, height, depth, tr, pixels);
+    const RKVkFormat::Transfer tr = RKVkFormat::transfer(format, type);
+    RKVkFormat::noteFormat("image3D", file, line, (U8)internal_format, tr.mComps, tr.mType);
+    image3D_impl(id, target, level, RKVkFormat::store(internal_format), width, height, depth, tr, pixels);
 }
 
-static void subImage2D_impl(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 width, S32 height, LLVkFormat::Transfer tr, const void* pixels, S32 row_length)
+static void subImage2D_impl(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 width, S32 height, RKVkFormat::Transfer tr, const void* pixels, S32 row_length)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
-    LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
-    if (!LLVkAsync::gEnabled)
+    const RKVkFormat::Target tg = RKVkFormat::target(target);
+    RKVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_subimage2D(id, currentPS(row_length), tg, level, x, y, width, height, tr, pixels);
+        RKVkWorker::tex_subimage2D(id, currentPS(row_length), tg, level, x, y, width, height, tr, pixels);
         return;
     }
     TexMainLap lap;
@@ -1839,19 +1839,19 @@ static void subImage2D_impl(U32 id, TextureTarget target, S32 level, S32 x, S32 
 
 void subImage2D(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, const void* pixels, S32 row_length, const char* file, int line)
 {
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
-    LLVkFormat::noteFormat("subImage2D", file, line, 0, tr.mComps, tr.mType);
+    const RKVkFormat::Transfer tr = RKVkFormat::transfer(format, type);
+    RKVkFormat::noteFormat("subImage2D", file, line, 0, tr.mComps, tr.mType);
     subImage2D_impl(id, target, level, x, y, width, height, tr, pixels, row_length);
 }
 
-static void subImage3D_impl(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, LLVkFormat::Transfer tr, const void* pixels)
+static void subImage3D_impl(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, RKVkFormat::Transfer tr, const void* pixels)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
-    LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
-    if (!LLVkAsync::gEnabled)
+    const RKVkFormat::Target tg = RKVkFormat::target(target);
+    RKVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_subimage3D(id, currentPS(), tg, level, x, y, z, width, height, depth, tr, pixels);
+        RKVkWorker::tex_subimage3D(id, currentPS(), tg, level, x, y, z, width, height, depth, tr, pixels);
         return;
     }
     TexMainLap lap;
@@ -1862,19 +1862,19 @@ static void subImage3D_impl(U32 id, TextureTarget target, S32 level, S32 x, S32 
 
 void subImage3D(U32 id, TextureTarget target, S32 level, S32 x, S32 y, S32 z, S32 width, S32 height, S32 depth, PixelFormat format, ComponentType type, const void* pixels, const char* file, int line)
 {
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
-    LLVkFormat::noteFormat("subImage3D", file, line, 0, tr.mComps, tr.mType);
+    const RKVkFormat::Transfer tr = RKVkFormat::transfer(format, type);
+    RKVkFormat::noteFormat("subImage3D", file, line, 0, tr.mComps, tr.mType);
     subImage3D_impl(id, target, level, x, y, z, width, height, depth, tr, pixels);
 }
 
-static void compressedImage2D_impl(U32 id, TextureTarget target, S32 level, LLVkFormat::Store st, S32 width, S32 height, S32 image_size, const void* data)
+static void compressedImage2D_impl(U32 id, TextureTarget target, S32 level, RKVkFormat::Store st, S32 width, S32 height, S32 image_size, const void* data)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
-    LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
-    if (!LLVkAsync::gEnabled)
+    const RKVkFormat::Target tg = RKVkFormat::target(target);
+    RKVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_compressed2D(id, currentPS(), tg, level, st, width, height, image_size, data);
+        RKVkWorker::tex_compressed2D(id, currentPS(), tg, level, st, width, height, image_size, data);
         return;
     }
     TexMainLap lap;
@@ -1885,28 +1885,28 @@ static void compressedImage2D_impl(U32 id, TextureTarget target, S32 level, LLVk
 
 void compressedImage2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 width, S32 height, S32 image_size, const void* data, const char* file, int line)
 {
-    LLVkFormat::noteFormat("compressedImage2D", file, line, (U8)internal_format, 0, 0);
-    compressedImage2D_impl(id, target, level, LLVkFormat::store(internal_format), width, height, image_size, data);
+    RKVkFormat::noteFormat("compressedImage2D", file, line, (U8)internal_format, 0, 0);
+    compressedImage2D_impl(id, target, level, RKVkFormat::store(internal_format), width, height, image_size, data);
 }
 
-void params(U32 id, const LLVkFormat::Setting* p, U32 count)
+void params(U32 id, const RKVkFormat::Setting* p, U32 count)
 {
     for (U32 i = 0; i < count; ++i)
     {
-        LLVkFormat::noteKey("setting", p[i].mParam, p[i].mValue, p[i].mInt, 0, p[i].mFloat);
+        RKVkFormat::noteKey("setting", p[i].mParam, p[i].mValue, p[i].mInt, 0, p[i].mFloat);
     }
     if (!count)
     {
         return;
     }
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_params(id, p, count);
+        RKVkWorker::tex_params(id, p, count);
         return;
     }
     const U32 head[2] = { id, count };
-    pushData(CMD_TEX_PARAMS_ID, head, sizeof(head), p, sizeof(LLVkFormat::Setting) * count);
+    pushData(CMD_TEX_PARAMS_ID, head, sizeof(head), p, sizeof(RKVkFormat::Setting) * count);
 }
 
 static void pushOp(const TexOp& op)
@@ -1916,16 +1916,16 @@ static void pushOp(const TexOp& op)
 
 void swizzle(U32 id, const TextureSwizzle* rgba)
 {
-    LLVkFormat::Swizzle swz[4];
+    RKVkFormat::Swizzle swz[4];
     for (U32 i = 0; i < 4; ++i)
     {
-        swz[i] = (LLVkFormat::Swizzle)rgba[i];
-        LLVkFormat::noteKey("swizzle", i, swz[i]);
+        swz[i] = (RKVkFormat::Swizzle)rgba[i];
+        RKVkFormat::noteKey("swizzle", i, swz[i]);
     }
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_swizzle(id, swz);
+        RKVkWorker::tex_swizzle(id, swz);
         return;
     }
     TexOp op = {};
@@ -1939,10 +1939,10 @@ void swizzle(U32 id, const TextureSwizzle* rgba)
 
 void generateMipmap(U32 id)
 {
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_mipmap(id);
+        RKVkWorker::tex_mipmap(id);
         return;
     }
     TexOp op = {};
@@ -1952,10 +1952,10 @@ void generateMipmap(U32 id)
 
 void commitImage(U32 id, U32 staged)
 {
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_commit_image(id, staged);
+        RKVkWorker::tex_commit_image(id, staged);
         return;
     }
     TexOp op = {};
@@ -1965,10 +1965,10 @@ void commitImage(U32 id, U32 staged)
 
 void dropLevels(U32 id, S32 levels)
 {
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_drop_levels(id, levels);
+        RKVkWorker::tex_drop_levels(id, levels);
         return;
     }
     TexOp op = {};
@@ -1978,12 +1978,12 @@ void dropLevels(U32 id, S32 levels)
 
 void copySubImage(U32 id, TextureTarget target, S32 level, S32 xoffset, S32 yoffset, S32 zoffset, S32 x, S32 y, S32 width, S32 height, U32 source)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
-    LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
-    if (!LLVkAsync::gEnabled)
+    const RKVkFormat::Target tg = RKVkFormat::target(target);
+    RKVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_copy_sub(id, tg, level, xoffset, yoffset, zoffset, x, y, width, height, source);
+        RKVkWorker::tex_copy_sub(id, tg, level, xoffset, yoffset, zoffset, x, y, width, height, source);
         return;
     }
     TexOp op = {};
@@ -1992,14 +1992,14 @@ void copySubImage(U32 id, TextureTarget target, S32 level, S32 xoffset, S32 yoff
     pushOp(op);
 }
 
-static void copyImage2D_impl(U32 id, TextureTarget target, S32 level, LLVkFormat::Store st, S32 x, S32 y, S32 width, S32 height, U32 source)
+static void copyImage2D_impl(U32 id, TextureTarget target, S32 level, RKVkFormat::Store st, S32 x, S32 y, S32 width, S32 height, U32 source)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
-    LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
-    if (!LLVkAsync::gEnabled)
+    const RKVkFormat::Target tg = RKVkFormat::target(target);
+    RKVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_copy_image(id, tg, level, st, x, y, width, height, source);
+        RKVkWorker::tex_copy_image(id, tg, level, st, x, y, width, height, source);
         return;
     }
     TexOp op = {};
@@ -2010,8 +2010,8 @@ static void copyImage2D_impl(U32 id, TextureTarget target, S32 level, LLVkFormat
 
 void copyImage2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_format, S32 x, S32 y, S32 width, S32 height, U32 source, const char* file, int line)
 {
-    LLVkFormat::noteFormat("copyImage2D", file, line, (U8)internal_format, 0, 0);
-    copyImage2D_impl(id, target, level, LLVkFormat::store(internal_format), x, y, width, height, source);
+    RKVkFormat::noteFormat("copyImage2D", file, line, (U8)internal_format, 0, 0);
+    copyImage2D_impl(id, target, level, RKVkFormat::store(internal_format), x, y, width, height, source);
 }
 
 // A read back of a texture is a round trip: the main thread waits until the worker has replayed everything queued before it (and then for the copy). With the worker far behind (a burst of
@@ -2019,7 +2019,7 @@ void copyImage2D(U32 id, TextureTarget target, S32 level, TexelFormat internal_f
 // the worker has more than LL_VK_READBACK_BACKLOG_KB (default 4096) queued, and not more than LL_VK_READBACKS_PER_FRAME (default 4) a frame. Main thread only.
 bool readbackAffordable()
 {
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
         return true;
     }
@@ -2032,7 +2032,7 @@ bool readbackAffordable()
         frame = now;
         used = 0;
     }
-    if (used >= per_frame || LLVkAsync::backlogBytes() > limit_bytes)
+    if (used >= per_frame || RKVkAsync::backlogBytes() > limit_bytes)
     {
         return false;
     }
@@ -2042,118 +2042,118 @@ bool readbackAffordable()
 
 S32 levelParameter(U32 id, TextureTarget target, S32 level, LevelQuery query)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
-    LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
-    const LLVkFormat::Level q = (LLVkFormat::Level)query;
-    LLVkFormat::noteKey("level", q);
+    const RKVkFormat::Target tg = RKVkFormat::target(target);
+    RKVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
+    const RKVkFormat::Level q = (RKVkFormat::Level)query;
+    RKVkFormat::noteKey("level", q);
     S32 v = 0;
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        return LLVkWorker::tex_level_parameter(id, tg, level, q);
+        return RKVkWorker::tex_level_parameter(id, tg, level, q);
     }
-    LLVkAsync::syncCall([&]() { v = LLVkWorker::tex_level_parameter(id, tg, level, q); });
+    RKVkAsync::syncCall([&]() { v = RKVkWorker::tex_level_parameter(id, tg, level, q); });
     return v;
 }
 
-static void getImage_impl(U32 id, TextureTarget target, S32 level, LLVkFormat::Transfer tr, void* out)
+static void getImage_impl(U32 id, TextureTarget target, S32 level, RKVkFormat::Transfer tr, void* out)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
-    LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
-    if (!LLVkAsync::gEnabled)
+    const RKVkFormat::Target tg = RKVkFormat::target(target);
+    RKVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_get_image(id, tg, level, tr, out);
+        RKVkWorker::tex_get_image(id, tg, level, tr, out);
         return;
     }
-    LLVkAsync::syncCall([&]() { LLVkWorker::tex_get_image(id, tg, level, tr, out); });
+    RKVkAsync::syncCall([&]() { RKVkWorker::tex_get_image(id, tg, level, tr, out); });
 }
 
 void getImage(U32 id, TextureTarget target, S32 level, PixelFormat format, ComponentType type, void* out, const char* file, int line)
 {
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
-    LLVkFormat::noteFormat("getImage", file, line, 0, tr.mComps, tr.mType);
+    const RKVkFormat::Transfer tr = RKVkFormat::transfer(format, type);
+    RKVkFormat::noteFormat("getImage", file, line, 0, tr.mComps, tr.mType);
     getImage_impl(id, target, level, tr, out);
 }
 
 void getCompressedImage(U32 id, TextureTarget target, S32 level, void* out)
 {
-    const LLVkFormat::Target tg = LLVkFormat::target(target);
-    LLVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
-    if (!LLVkAsync::gEnabled)
+    const RKVkFormat::Target tg = RKVkFormat::target(target);
+    RKVkFormat::noteKey(__func__, tg.mDim, tg.mFace);
+    if (!RKVkAsync::gEnabled)
     {
         auto lock = inlineLock();
-        LLVkWorker::tex_get_compressed_image(id, tg, level, out);
+        RKVkWorker::tex_get_compressed_image(id, tg, level, out);
         return;
     }
-    LLVkAsync::syncCall([&]() { LLVkWorker::tex_get_compressed_image(id, tg, level, out); });
+    RKVkAsync::syncCall([&]() { RKVkWorker::tex_get_compressed_image(id, tg, level, out); });
 }
 
 }
 
 // ---- F1.4: render targets named by id (rkvktarget.h) ----
-namespace LLVkTarget
+namespace RKVkTarget
 {
 
 void create(U32* id)
 {
-    LLVkAsync::resourceCreate(LLVkAsync::RES_TARGET, 1, id);
+    RKVkAsync::resourceCreate(RKVkAsync::RES_TARGET, 1, id);
 }
 
 void destroy(U32 id)
 {
-    LLVkAsync::resourceDestroy(LLVkAsync::RES_TARGET, 1, &id);
+    RKVkAsync::resourceDestroy(RKVkAsync::RES_TARGET, 1, &id);
 }
 
 void attach(U32 target, U32 slot, U32 texture)
 {
-    LLVkAsync::framebufferAttach(target, slot, texture);
+    RKVkAsync::framebufferAttach(target, slot, texture);
 }
 
 void clear(bool color, bool depth, const F32* rgba)
 {
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::clear_target(color, depth, rgba);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::clear_target(color, depth, rgba);
         return;
     }
-    LLVkAsync::clearTarget(color, depth, rgba);
+    RKVkAsync::clearTarget(color, depth, rgba);
 }
 
-static void readPixels_impl(U32 target, S32 x, S32 y, S32 width, S32 height, LLVkFormat::Transfer tr, void* dst)
+static void readPixels_impl(U32 target, S32 x, S32 y, S32 width, S32 height, RKVkFormat::Transfer tr, void* dst)
 {
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::read_pixels(target, x, y, width, height, tr, dst);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::read_pixels(target, x, y, width, height, tr, dst);
         return;
     }
-    LLVkAsync::syncCall([&]() { LLVkWorker::read_pixels(target, x, y, width, height, tr, dst); });
+    RKVkAsync::syncCall([&]() { RKVkWorker::read_pixels(target, x, y, width, height, tr, dst); });
 }
 
 void readPixels(U32 target, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, void* dst, const char* file, int line)
 {
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
-    LLVkFormat::noteFormat("readPixels", file, line, 0, tr.mComps, tr.mType);
+    const RKVkFormat::Transfer tr = RKVkFormat::transfer(format, type);
+    RKVkFormat::noteFormat("readPixels", file, line, 0, tr.mComps, tr.mType);
     readPixels_impl(target, x, y, width, height, tr, dst);
 }
 
-std::shared_ptr<LLReadbackTicket> readPixelsAsync(U32 target, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes, const char* file, int line)
+std::shared_ptr<RKReadbackTicket> readPixelsAsync(U32 target, S32 x, S32 y, S32 width, S32 height, PixelFormat format, ComponentType type, size_t bytes, const char* file, int line)
 {
-    const LLVkFormat::Transfer tr = LLVkFormat::transfer(format, type);
-    LLVkFormat::noteFormat("readPixelsAsync", file, line, 0, tr.mComps, tr.mType);
-    std::shared_ptr<LLReadbackTicket> ticket = std::make_shared<LLReadbackTicket>();
+    const RKVkFormat::Transfer tr = RKVkFormat::transfer(format, type);
+    RKVkFormat::noteFormat("readPixelsAsync", file, line, 0, tr.mComps, tr.mType);
+    std::shared_ptr<RKReadbackTicket> ticket = std::make_shared<RKReadbackTicket>();
     ticket->mData.assign(bytes, 0);
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
         readPixels_impl(target, x, y, width, height, tr, ticket->mData.data());
         ticket->mDone.store(1, std::memory_order_release);
         return ticket;
     }
-    LLVkAsync::postCall([ticket, target, x, y, width, height, tr]()
+    RKVkAsync::postCall([ticket, target, x, y, width, height, tr]()
     {
-        LLVkWorker::read_pixels(target, x, y, width, height, tr, ticket->mData.data());
+        RKVkWorker::read_pixels(target, x, y, width, height, tr, ticket->mData.data());
         ticket->mDone.store(1, std::memory_order_release);
     });
     return ticket;
@@ -2162,39 +2162,39 @@ std::shared_ptr<LLReadbackTicket> readPixelsAsync(U32 target, S32 x, S32 y, S32 
 }
 
 // ---- F1.6: queries by id (rkvkquery.h) ----
-namespace LLVkQuery
+namespace RKVkQuery
 {
 
 void create(S32 count, U32* ids)
 {
-    LLVkAsync::resourceCreate(LLVkAsync::RES_QUERY, count, ids);
+    RKVkAsync::resourceCreate(RKVkAsync::RES_QUERY, count, ids);
 }
 
 void destroy(S32 count, const U32* ids)
 {
-    LLVkAsync::resourceDestroy(LLVkAsync::RES_QUERY, count, ids);
+    RKVkAsync::resourceDestroy(RKVkAsync::RES_QUERY, count, ids);
 }
 
 void begin(Kind kind, U32 id)
 {
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::query_begin(kind, id);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::query_begin(kind, id);
         return;
     }
-    LLVkAsync::queryBeginCmd(kind, id);
+    RKVkAsync::queryBeginCmd(kind, id);
 }
 
 void end(Kind kind)
 {
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::query_end(kind);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::query_end(kind);
         return;
     }
-    LLVkAsync::queryEndCmd(kind);
+    RKVkAsync::queryEndCmd(kind);
 }
 
 namespace
@@ -2203,17 +2203,17 @@ namespace
 U64 query_read(U32 id, bool want_result)
 {
     U64 value = 0;
-    if (LLVkAsync::gEnabled)
+    if (RKVkAsync::gEnabled)
     {
-        if (LLVkAsync::query_get(2, id, want_result ? 0x8866 : 0x8867, &value))
+        if (RKVkAsync::query_get(2, id, want_result ? 0x8866 : 0x8867, &value))
         {
             return value;
         }
-        LLVkAsync::syncCall([&]() { LLVkWorker::query_value(id, want_result, value); });
+        RKVkAsync::syncCall([&]() { RKVkWorker::query_value(id, want_result, value); });
         return value;
     }
-    std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-    LLVkWorker::query_value(id, want_result, value);
+    std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+    RKVkWorker::query_value(id, want_result, value);
     return value;
 }
 }
@@ -2231,22 +2231,22 @@ U64 result(U32 id)
 }
 
 // ---- F1.3: buffers named by id (rkvkbuf.h) ----
-namespace LLVkBuf
+namespace RKVkBuf
 {
 
 void create(S32 count, U32* ids)
 {
-    LLVkAsync::resourceCreate(LLVkAsync::RES_BUFFER, count, ids);
+    RKVkAsync::resourceCreate(RKVkAsync::RES_BUFFER, count, ids);
 }
 
 void destroy(S32 count, const U32* ids)
 {
-    LLVkAsync::resourceDestroy(LLVkAsync::RES_BUFFER, count, ids);
+    RKVkAsync::resourceDestroy(RKVkAsync::RES_BUFFER, count, ids);
 }
 
 void setData(U32 id, BufferKind kind, S64 size, const void* data)
 {
-    LLVkAsync::bufferData(id, kind, size, data);
+    RKVkAsync::bufferData(id, kind, size, data);
 }
 
 // S6.2: what the main thread has sent of the constant attributes and the uniform block bindings (a closed pass sends them again)
@@ -2261,7 +2261,7 @@ void reannounce()
         if (sUboShadow[i])
         {
             const U32 a[2] = { i, sUboShadow[i] };
-            LLVkAsync::push(LLVkAsync::CMD_UNIFORM_BLOCK, a, sizeof(a));
+            RKVkAsync::push(RKVkAsync::CMD_UNIFORM_BLOCK, a, sizeof(a));
         }
     }
     for (U32 l = 0; l < 16; ++l)
@@ -2269,47 +2269,47 @@ void reannounce()
         if (sConstSet & (1u << l))
         {
             struct { U32 mLocation; F32 mV[4]; } rec = { l, { sConstShadow[l][0], sConstShadow[l][1], sConstShadow[l][2], sConstShadow[l][3] } };
-            LLVkAsync::push(LLVkAsync::CMD_CONST_ATTRIB, &rec, sizeof(rec));
+            RKVkAsync::push(RKVkAsync::CMD_CONST_ATTRIB, &rec, sizeof(rec));
         }
     }
 }
 
 void setConstantAttribute(U32 location, F32 x, F32 y, F32 z, F32 w)
 {
-    if (location < 16 && LLVkAsync::mainOnlyProducer())
+    if (location < 16 && RKVkAsync::mainOnlyProducer())
     {
         sConstShadow[location][0] = x; sConstShadow[location][1] = y; sConstShadow[location][2] = z; sConstShadow[location][3] = w;
         sConstSet |= 1u << location;
     }
-    if (!LLVkAsync::gEnabled)
+    if (!RKVkAsync::gEnabled)
     {
-        std::lock_guard<LLVkBridge::Mutex> lock(LLVkWorker::gMutex);
-        LLVkWorker::constant_attribute(location, x, y, z, w);
+        std::lock_guard<RKVkBridge::Mutex> lock(RKVkWorker::gMutex);
+        RKVkWorker::constant_attribute(location, x, y, z, w);
         return;
     }
     struct { U32 mLocation; F32 mV[4]; } rec = { location, { x, y, z, w } };
-    LLVkAsync::push(LLVkAsync::CMD_CONST_ATTRIB, &rec, sizeof(rec));
+    RKVkAsync::push(RKVkAsync::CMD_CONST_ATTRIB, &rec, sizeof(rec));
 }
 
 void bindUniformBlock(U32 binding, U32 id)
 {
-    if (binding < 4 && LLVkAsync::mainOnlyProducer())
+    if (binding < 4 && RKVkAsync::mainOnlyProducer())
     {
         sUboShadow[binding] = id;
     }
     const U32 a[2] = { binding, id };
-    LLVkAsync::push(LLVkAsync::CMD_UNIFORM_BLOCK, a, sizeof(a));
+    RKVkAsync::push(RKVkAsync::CMD_UNIFORM_BLOCK, a, sizeof(a));
 }
 
 }
 
-namespace LLVkAsync
+namespace RKVkAsync
 {
 
 void queryBeginCmd(U32 kind, U32 id)
 {
     // occlusion queries are the ones the viewer waits for; the others (timers) are answered through the worker
-    const bool occlusion = kind <= LLVkQuery::SAMPLES_PASSED;
+    const bool occlusion = kind <= RKVkQuery::SAMPLES_PASSED;
     queryMarkSync(id, !occlusion);
     struct A { U32 mKind; U32 mId; U64 mGen; } a = { kind, id, occlusion ? queryBegin(id) : 0 };
     push(CMD_QUERY_BEGIN, &a, sizeof(a));
@@ -2387,12 +2387,12 @@ void applyUniformBatch(const U8* p, U32 bytes)
         {
             UniformScalarArgs a;
             memcpy(&a, d, sizeof(a));
-            LLVk::Program* pr = (LLVk::Program*)a.mProgram;
+            RKVk::Program* pr = (RKVk::Program*)a.mProgram;
             if (pr)
             {
                 if (a.mKind == 0) pr->setFloatsAt((size_t)a.mIndex, a.mF, a.mN, 1);
                 else pr->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(a.mI), a.mN, 1);
-                if (LLVkPassCensus::sOn && a.mIndex < pr->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(pr->mCensus, pr->getInfo().mUniforms[a.mIndex].mClass, a.mN * 4);
+                if (RKVkPassCensus::sOn && a.mIndex < pr->getInfo().mUniforms.size()) RKVkPassCensus::uniformWrite(pr->mCensus, pr->getInfo().mUniforms[a.mIndex].mClass, a.mN * 4);
             }
             break;
         }
@@ -2400,11 +2400,11 @@ void applyUniformBatch(const U8* p, U32 bytes)
         {
             UniformVecArgs a;
             memcpy(&a, d, sizeof(a));
-            LLVk::Program* pr = (LLVk::Program*)a.mProgram;
+            RKVk::Program* pr = (RKVk::Program*)a.mProgram;
             if (pr)
             {
                 pr->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(d + sizeof(a)), a.mComponents, a.mCount);
-                if (LLVkPassCensus::sOn && a.mIndex < pr->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(pr->mCensus, pr->getInfo().mUniforms[a.mIndex].mClass, a.mComponents * a.mCount * 4);
+                if (RKVkPassCensus::sOn && a.mIndex < pr->getInfo().mUniforms.size()) RKVkPassCensus::uniformWrite(pr->mCensus, pr->getInfo().mUniforms[a.mIndex].mClass, a.mComponents * a.mCount * 4);
             }
             break;
         }
@@ -2412,11 +2412,11 @@ void applyUniformBatch(const U8* p, U32 bytes)
         {
             UniformMatArgs a;
             memcpy(&a, d, sizeof(a));
-            LLVk::Program* pr = (LLVk::Program*)a.mProgram;
+            RKVk::Program* pr = (RKVk::Program*)a.mProgram;
             if (pr)
             {
                 pr->setMatricesAt((size_t)a.mIndex, reinterpret_cast<const F32*>(d + sizeof(a)), a.mColumns, a.mRows, a.mCount);
-                if (LLVkPassCensus::sOn && a.mIndex < pr->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(pr->mCensus, pr->getInfo().mUniforms[a.mIndex].mClass, a.mColumns * a.mRows * a.mCount * 4);
+                if (RKVkPassCensus::sOn && a.mIndex < pr->getInfo().mUniforms.size()) RKVkPassCensus::uniformWrite(pr->mCensus, pr->getInfo().mUniforms[a.mIndex].mClass, a.mColumns * a.mRows * a.mCount * 4);
             }
             break;
         }
@@ -2424,16 +2424,16 @@ void applyUniformBatch(const U8* p, U32 bytes)
         {
             struct A { void* mProgram; U32 mClass; U32 mOffset; U32 mSize; U32 mPad; } a;
             memcpy(&a, d, sizeof(a));
-            LLVk::Program* pr = (LLVk::Program*)a.mProgram;
+            RKVk::Program* pr = (RKVk::Program*)a.mProgram;
             if (pr)
             {
-                if (a.mPad == 1 && LLVkPassCensus::sClose == 2)
+                if (a.mPad == 1 && RKVkPassCensus::sClose == 2)
                 {
-                    const std::vector<U8>& held = pr->shadowOf(a.mClass < LLVk::UC_COUNT ? a.mClass : 0);
-                    LLVkPassCensus::announceCompare(pr->getName().c_str(), a.mClass, a.mClass < LLVk::UC_COUNT && (size_t)a.mOffset + a.mSize <= held.size() && memcmp(&held[a.mOffset], d + sizeof(a), a.mSize) == 0, a.mSize);
+                    const std::vector<U8>& held = pr->shadowOf(a.mClass < RKVk::UC_COUNT ? a.mClass : 0);
+                    RKVkPassCensus::announceCompare(pr->getName().c_str(), a.mClass, a.mClass < RKVk::UC_COUNT && (size_t)a.mOffset + a.mSize <= held.size() && memcmp(&held[a.mOffset], d + sizeof(a), a.mSize) == 0, a.mSize);
                 }
                 pr->writeRange(a.mClass, a.mOffset, a.mSize, d + sizeof(a));
-                if (LLVkPassCensus::sOn) LLVkPassCensus::uniformWrite(pr->mCensus, a.mClass, a.mSize);
+                if (RKVkPassCensus::sOn) RKVkPassCensus::uniformWrite(pr->mCensus, a.mClass, a.mSize);
             }
             break;
         }
@@ -2446,7 +2446,7 @@ void applyUniformBatch(const U8* p, U32 bytes)
 
 
 // F1.2: the worker side of the texture records (rkvktex.h)
-using namespace LLVkTex;
+using namespace RKVkTex;
 void runImage(Reader& r, U8 flags)
 {
     const TexArgs a = r.get<TexArgs>();
@@ -2464,14 +2464,14 @@ void runImage(Reader& r, U8 flags)
     struct Release { const TexArgs& mA; ~Release() { if (mA.mMode == 3 && mA.mUnref) mA.mUnref(mA.mOwner); } } release = { a };
     PixelStore ps;
     ps.mRowLength = a.mRowLength;
-    const LLVkFormat::Store st = (LLVkFormat::Store)a.mStore;
+    const RKVkFormat::Store st = (RKVkFormat::Store)a.mStore;
     switch (a.mKind)
     {
-    case K_IMAGE2D: LLVkWorker::tex_image2D(a.mTex, ps, a.mTarget, a.mLevel, st, a.mWidth, a.mHeight, a.mTransfer, pixels); break;
-    case K_IMAGE3D: LLVkWorker::tex_image3D(a.mTex, ps, a.mTarget, a.mLevel, st, a.mWidth, a.mHeight, a.mDepth, a.mTransfer, pixels); break;
-    case K_SUB2D: LLVkWorker::tex_subimage2D(a.mTex, ps, a.mTarget, a.mLevel, a.mX, a.mY, a.mWidth, a.mHeight, a.mTransfer, pixels); break;
-    case K_SUB3D: LLVkWorker::tex_subimage3D(a.mTex, ps, a.mTarget, a.mLevel, a.mX, a.mY, a.mZ, a.mWidth, a.mHeight, a.mDepth, a.mTransfer, pixels); break;
-    default: LLVkWorker::tex_compressed2D(a.mTex, ps, a.mTarget, a.mLevel, st, a.mWidth, a.mHeight, a.mImageSize, pixels); break;
+    case K_IMAGE2D: RKVkWorker::tex_image2D(a.mTex, ps, a.mTarget, a.mLevel, st, a.mWidth, a.mHeight, a.mTransfer, pixels); break;
+    case K_IMAGE3D: RKVkWorker::tex_image3D(a.mTex, ps, a.mTarget, a.mLevel, st, a.mWidth, a.mHeight, a.mDepth, a.mTransfer, pixels); break;
+    case K_SUB2D: RKVkWorker::tex_subimage2D(a.mTex, ps, a.mTarget, a.mLevel, a.mX, a.mY, a.mWidth, a.mHeight, a.mTransfer, pixels); break;
+    case K_SUB3D: RKVkWorker::tex_subimage3D(a.mTex, ps, a.mTarget, a.mLevel, a.mX, a.mY, a.mZ, a.mWidth, a.mHeight, a.mDepth, a.mTransfer, pixels); break;
+    default: RKVkWorker::tex_compressed2D(a.mTex, ps, a.mTarget, a.mLevel, st, a.mWidth, a.mHeight, a.mImageSize, pixels); break;
     }
 }
 
@@ -2479,7 +2479,7 @@ void runParams(Reader& r, U8 flags)
 {
     const U32 id = r.get<U32>(), count = r.get<U32>();
     Blob b = read_blob(r, flags);
-    LLVkWorker::tex_params(id, (const LLVkFormat::Setting*)b.mData, count);
+    RKVkWorker::tex_params(id, (const RKVkFormat::Setting*)b.mData, count);
 }
 
 void runOp(Reader& r)
@@ -2487,19 +2487,19 @@ void runOp(Reader& r)
     const TexOp o = r.get<TexOp>();
     switch (o.mKind)
     {
-    case OPK_MIPMAP: LLVkWorker::tex_mipmap(o.mTex); break;
-    case OPK_DROP_LEVELS: LLVkWorker::tex_drop_levels(o.mTex, o.mLevel); break;
-    case OPK_COMMIT: LLVkWorker::tex_commit_image(o.mTex, (unsigned)o.mLevel); break;
-    case OPK_COPY_SUB: LLVkWorker::tex_copy_sub(o.mTex, o.mTarget, o.mLevel, o.mX0, o.mY0, o.mZ0, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
-    case OPK_COPY_IMAGE: LLVkWorker::tex_copy_image(o.mTex, o.mTarget, o.mLevel, (LLVkFormat::Store)o.mStore, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
+    case OPK_MIPMAP: RKVkWorker::tex_mipmap(o.mTex); break;
+    case OPK_DROP_LEVELS: RKVkWorker::tex_drop_levels(o.mTex, o.mLevel); break;
+    case OPK_COMMIT: RKVkWorker::tex_commit_image(o.mTex, (unsigned)o.mLevel); break;
+    case OPK_COPY_SUB: RKVkWorker::tex_copy_sub(o.mTex, o.mTarget, o.mLevel, o.mX0, o.mY0, o.mZ0, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
+    case OPK_COPY_IMAGE: RKVkWorker::tex_copy_image(o.mTex, o.mTarget, o.mLevel, (RKVkFormat::Store)o.mStore, o.mX, o.mY, o.mW, o.mH, o.mSource); break;
     default:
     {
-        LLVkFormat::Swizzle swz[4];
+        RKVkFormat::Swizzle swz[4];
         for (U32 i = 0; i < 4; ++i)
         {
-            swz[i] = (LLVkFormat::Swizzle)o.mSwz[i];
+            swz[i] = (RKVkFormat::Swizzle)o.mSwz[i];
         }
-        LLVkWorker::tex_swizzle(o.mTex, swz);
+        RKVkWorker::tex_swizzle(o.mTex, swz);
         break;
     }
     }
@@ -2514,53 +2514,53 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         const S32 w = r.get<S32>(), h = r.get<S32>();
         gBeginsDone.fetch_add(1, std::memory_order_release);
-        if (LLVkPassCensus::sOn) LLVkPassCensus::frameBegin();
-        LLVkBridge::beginFrameImpl(w, h);
+        if (RKVkPassCensus::sOn) RKVkPassCensus::frameBegin();
+        RKVkBridge::beginFrameImpl(w, h);
         break;
     }
-    case CMD_FRAME_END: LLVkBridge::endFrameImpl(); break;
+    case CMD_FRAME_END: RKVkBridge::endFrameImpl(); break;
     case CMD_CONST_ATTRIB:
     {
         struct R { U32 mLocation; F32 mV[4]; };
         const R* a = (const R*)payload;
-        LLVkWorker::constant_attribute(a->mLocation, a->mV[0], a->mV[1], a->mV[2], a->mV[3]);
+        RKVkWorker::constant_attribute(a->mLocation, a->mV[0], a->mV[1], a->mV[2], a->mV[3]);
         break;
     }
     case CMD_BUFFER_DATA:
     {
         const NamedBufArgs a = r.get<NamedBufArgs>();
         Blob b = read_blob(r, flags);
-        LLVkWorker::on_bufferData(a.mName, a.mTarget, (S64)a.mSize, b.mData);
+        RKVkWorker::on_bufferData(a.mName, a.mTarget, (S64)a.mSize, b.mData);
         break;
     }
     case CMD_BUFFER_SUBDATA:
     {
         const NamedBufArgs a = r.get<NamedBufArgs>();
         Blob b = read_blob(r, flags);
-        LLVkWorker::on_bufferSubData(a.mName, (S64)a.mOffset, (S64)a.mSize, b.mData);
+        RKVkWorker::on_bufferSubData(a.mName, (S64)a.mOffset, (S64)a.mSize, b.mData);
         break;
     }
     case CMD_BUFFER_RECYCLE:
     {
         const NamedBufArgs a = r.get<NamedBufArgs>();
         Blob b = read_blob(r, flags);
-        LLVkWorker::on_bufferRecycle(a.mName);
+        RKVkWorker::on_bufferRecycle(a.mName);
         break;
     }
     case CMD_SHADOW_PACKETS:
     {
-        const LLVkBridge::ShadowPacketsHeader h = r.get<LLVkBridge::ShadowPacketsHeader>();
+        const RKVkBridge::ShadowPacketsHeader h = r.get<RKVkBridge::ShadowPacketsHeader>();
         Blob b = read_blob(r, flags);
-        if (h.mProgram != ~0ull && LLVkBridge::isReady())
+        if (h.mProgram != ~0ull && RKVkBridge::isReady())
         {
             // S6.3: the record names its program
-            LLVk::Renderer& rr = LLVk::Renderer::instance();
+            RKVk::Renderer& rr = RKVk::Renderer::instance();
             if ((U64)(uintptr_t)rr.getProgram() != h.mProgram)
             {
-                LLVk::Program* named = (LLVk::Program*)(uintptr_t)h.mProgram;
-                rr.setProgram(named && LLVk::Program::isLive(named) ? named : nullptr);
+                RKVk::Program* named = (RKVk::Program*)(uintptr_t)h.mProgram;
+                rr.setProgram(named && RKVk::Program::isLive(named) ? named : nullptr);
             }
-            if (LLVkPassCensus::sOn) LLVkPassCensus::programAnnounced();
+            if (RKVkPassCensus::sOn) RKVkPassCensus::programAnnounced();
         }
         if (h.mKind == 21)
         {
@@ -2571,36 +2571,36 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
             ++gFrameRefReads;
             if (h.mFrame != gPrepareFrame) ++gFrameRefStale;
         }
-        if (LLVkPassCensus::sOn)
+        if (RKVkPassCensus::sOn)
         {   // S6.0: the packet kinds that draw read the render state block and the renderer's program; 21 makes the frame's draw commands that 22 and 29 draw
             switch (h.mKind)
             {
             case 0: case 1: case 2: case 3: case 8: case 9: case 16: case 22: case 25: case 26: case 29: case 32: case 33:
             {
-                LLVkPassCensus::stateRead();
-                LLVk::Program* pp = LLVkBridge::isReady() ? LLVk::Renderer::instance().getProgram() : nullptr;
-                LLVkPassCensus::packetProgram(pp, pp ? pp->getName().c_str() : nullptr);
-                if (h.mKind == 22 || h.mKind == 29) LLVkPassCensus::geoDrawSeen();
+                RKVkPassCensus::stateRead();
+                RKVk::Program* pp = RKVkBridge::isReady() ? RKVk::Renderer::instance().getProgram() : nullptr;
+                RKVkPassCensus::packetProgram(pp, pp ? pp->getName().c_str() : nullptr);
+                if (h.mKind == 22 || h.mKind == 29) RKVkPassCensus::geoDrawSeen();
                 break;
             }
-            case 21: LLVkPassCensus::prepareSeen(); break;
+            case 21: RKVkPassCensus::prepareSeen(); break;
             default: break;
             }
         }
         if (b.mData)
         {
-            LLVkBridge::shadowPacketsImpl(h, b.mData);
+            RKVkBridge::shadowPacketsImpl(h, b.mData);
         }
         break;
     }
     case CMD_PRESENT:
-        LLVkBridge::presentFrameImpl();
+        RKVkBridge::presentFrameImpl();
         {
             LARGE_INTEGER present_now;
             QueryPerformanceCounter(&present_now);
             sLastPresentTicks.store(present_now.QuadPart, std::memory_order_relaxed);
         }
-        if (LLVkPassCensus::sOn) LLVkPassCensus::present();
+        if (RKVkPassCensus::sOn) RKVkPassCensus::present();
         if (++gClosePresents >= 600)
         {
             gClosePresents = 0;
@@ -2609,7 +2609,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
                 LL_WARNS("VkPassClose") << "frame inputs: " << gFrameRefStale << " of " << gFrameRefReads << " records that draw the prepared geometry came from another frame than the prepare record" << LL_ENDL;
             }
             gFrameRefReads = gFrameRefStale = 0;
-            if (LLVkPassCensus::sClose == 2) LLVkPassCensus::closeReport();
+            if (RKVkPassCensus::sClose == 2) RKVkPassCensus::closeReport();
         }
         note_gap(gPresentGaps, gLastPresentTick);
         if (gOpStatsPeriodic && ++gOpStatsFrames >= 600)
@@ -2619,35 +2619,35 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
             gOpStatsFrames = 0;
         }
         break;
-    case CMD_HOLD: LLVkBridge::holdFrameImpl(r.get<S32>() != 0); break;
-    case CMD_SNAPSHOT_BOUNDARY: LLVkBridge::snapshotBoundaryImpl(r.get<S32>()); break;
+    case CMD_HOLD: RKVkBridge::holdFrameImpl(r.get<S32>() != 0); break;
+    case CMD_SNAPSHOT_BOUNDARY: RKVkBridge::snapshotBoundaryImpl(r.get<S32>()); break;
     case CMD_RT_SCENE:
     {
-        LLVkBridge::RtSceneArgs a;
+        RKVkBridge::RtSceneArgs a;
         memcpy(&a, payload, sizeof(a));
-        LLVkBridge::rtSceneImpl(a);
+        RKVkBridge::rtSceneImpl(a);
         break;
     }
     case CMD_UPSCALE:
     {
-        LLVkBridge::UpscaleArgs a;
+        RKVkBridge::UpscaleArgs a;
         memcpy(&a, payload, sizeof(a));         // the same struct the producer pushed
-        LLVkBridge::upscaleImpl(a);
+        RKVkBridge::upscaleImpl(a);
         break;
     }
     case CMD_DENOISE:
     {
-        LLVkBridge::DenoiseArgs a;
+        RKVkBridge::DenoiseArgs a;
         memcpy(&a, payload, sizeof(a));
-        LLVkBridge::denoiseImpl(a);
+        RKVkBridge::denoiseImpl(a);
         break;
     }
     case CMD_GPU_ZONE:
     {
         const U32 head[2] = { r.get<U32>(), r.get<U32>() };
         Blob b = read_blob(r, flags);
-        if (LLVkPassCensus::sOn) LLVkPassCensus::zone(b.mData ? (const char*)b.mData : "", head[0] != 0);
-        LLVk::Renderer::instance().gpuZone(b.mData ? (const char*)b.mData : "", head[0] != 0);
+        if (RKVkPassCensus::sOn) RKVkPassCensus::zone(b.mData ? (const char*)b.mData : "", head[0] != 0);
+        RKVk::Renderer::instance().gpuZone(b.mData ? (const char*)b.mData : "", head[0] != 0);
         break;
     }
     case CMD_TEX_SLOTS:
@@ -2657,7 +2657,7 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         U32 k = 0;
         for (U32 m = head[0]; m; m &= m - 1, ++k)
         {
-            LLVkWorker::slot_set(lowBit(m), e[k]);
+            RKVkWorker::slot_set(lowBit(m), e[k]);
         }
         break;
     }
@@ -2686,50 +2686,50 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         {
             applyUniformBatch(payload + sizeof(DrawHeader2) + h2->mBindBytes + id_bytes, h->mUniBytes);
         }
-        LLVkWorker::draw_context_apply(h2->mProgram, h2->mBindBytes ? &b : nullptr);
-        if (LLVkPassCensus::sOn)
+        RKVkWorker::draw_context_apply(h2->mProgram, h2->mBindBytes ? &b : nullptr);
+        if (RKVkPassCensus::sOn)
         {
-            LLVkPassCensus::programAnnounced();
-            LLVkPassCensus::drawProgram(h2->mProgram, h2->mProgram ? ((LLVk::Program*)h2->mProgram)->getName().c_str() : nullptr);
-            LLVkPassCensus::binding(h2->mBindBytes != 0);
+            RKVkPassCensus::programAnnounced();
+            RKVkPassCensus::drawProgram(h2->mProgram, h2->mProgram ? ((RKVk::Program*)h2->mProgram)->getName().c_str() : nullptr);
+            RKVkPassCensus::binding(h2->mBindBytes != 0);
         }
         U32 k = 0;
         for (U32 m = h->mMask; m; m &= m - 1, ++k)
         {
-            LLVkWorker::slot_set(lowBit(m), ids[k]);
+            RKVkWorker::slot_set(lowBit(m), ids[k]);
         }
         if (h->mKind == 0)
         {
-            LLVkWorker::draw_elements(h->mMode, h->mStart, h->mEnd, h->mCount, h->mType, h->mIndices);
+            RKVkWorker::draw_elements(h->mMode, h->mStart, h->mEnd, h->mCount, h->mType, h->mIndices);
         }
         else if (h->mKind == 2)
         {
-            LLVkWorker::draw_scratch(h->mMode, h->mCount, h->mStart, payload + sizeof(DrawHeader2) + h2->mBindBytes + id_bytes + h->mUniBytes);
+            RKVkWorker::draw_scratch(h->mMode, h->mCount, h->mStart, payload + sizeof(DrawHeader2) + h2->mBindBytes + id_bytes + h->mUniBytes);
         }
         else
         {
-            LLVkWorker::draw_arrays(h->mMode, (S32)h->mStart, h->mCount);
+            RKVkWorker::draw_arrays(h->mMode, (S32)h->mStart, h->mCount);
         }
         break;
     }
     case CMD_STATE:
     {
-        LLVkState::Block b;
+        RKVkState::Block b;
         memcpy(&b, payload, sizeof(b));
-        LLVkState::receive(b);
-        if (LLVkPassCensus::sOn) LLVkPassCensus::stateReceived();
+        RKVkState::receive(b);
+        if (RKVkPassCensus::sOn) RKVkPassCensus::stateReceived();
         break;
     }
     case CMD_FBO_ATTACH:
     {
         const U32* a = (const U32*)payload;
-        LLVkWorker::target_attach(a[0], a[1], a[2]);
+        RKVkWorker::target_attach(a[0], a[1], a[2]);
         break;
     }
     case CMD_TARGET_STATE:
     {
         const S32* a = (const S32*)payload;
-        LLVkWorker::target_state((unsigned)a[0], a[1]);
+        RKVkWorker::target_state((unsigned)a[0], a[1]);
         break;
     }
     case CMD_PASS:
@@ -2737,15 +2737,15 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         struct R { S32 mFbo; S32 mDrawBuffers; U32 mFlags; F32 mColor[4]; U32 mSite; U32 mId; U32 mParent; U32 mPad; };
         const R* a = (const R*)payload;
         gPass.mId = a->mId; gPass.mParent = a->mParent; gPass.mFbo = (U32)a->mFbo; gPass.mBuffers = a->mDrawBuffers; gPass.mSite = a->mSite; gPass.mKind = (a->mFlags >> 8) & 3;
-        if (LLVkPassCensus::sOn) LLVkPassCensus::passBegin(a->mFbo, a->mSite);
-        LLVkWorker::target_state((unsigned)a->mFbo, a->mDrawBuffers);
+        if (RKVkPassCensus::sOn) RKVkPassCensus::passBegin(a->mFbo, a->mSite);
+        RKVkWorker::target_state((unsigned)a->mFbo, a->mDrawBuffers);
         if (a->mFlags & 3)
         {
-            LLVkWorker::clear_target((a->mFlags & 1) != 0, (a->mFlags & 2) != 0, a->mColor);
+            RKVkWorker::clear_target((a->mFlags & 1) != 0, (a->mFlags & 2) != 0, a->mColor);
         }
-        if (LLVkPassCensus::sClose == 3)
+        if (RKVkPassCensus::sClose == 3)
         {
-            LLVkWorker::pass_poison();      // the pass starts knowing only what its own records say
+            RKVkWorker::pass_poison();      // the pass starts knowing only what its own records say
         }
         break;
     }
@@ -2753,26 +2753,26 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     {
         struct R { U32 mFlags; F32 mColor[4]; };
         const R* a = (const R*)payload;
-        LLVkWorker::clear_target((a->mFlags & 1) != 0, (a->mFlags & 2) != 0, a->mColor);
+        RKVkWorker::clear_target((a->mFlags & 1) != 0, (a->mFlags & 2) != 0, a->mColor);
         break;
     }
-    case CMD_UNIFORM_BLOCK: { const U32* a = (const U32*)payload; LLVkWorker::uniform_block_bind(a[0], a[1]); if (LLVkPassCensus::sOn) LLVkPassCensus::uboSet(a[0]); break; }
+    case CMD_UNIFORM_BLOCK: { const U32* a = (const U32*)payload; RKVkWorker::uniform_block_bind(a[0], a[1]); if (RKVkPassCensus::sOn) RKVkPassCensus::uboSet(a[0]); break; }
     case CMD_QUERY_BEGIN:
     {
         struct A { U32 mKind; U32 mId; U64 mGen; };
         const A* a = (const A*)payload;
         setWorkerQueryGen(a->mId, a->mGen);
-        LLVkWorker::query_begin(a->mKind, a->mId);
+        RKVkWorker::query_begin(a->mKind, a->mId);
         break;
     }
-    case CMD_QUERY_END: LLVkWorker::query_end(*(const U32*)payload); break;
+    case CMD_QUERY_END: RKVkWorker::query_end(*(const U32*)payload); break;
     case CMD_RESOURCE_CREATE: case CMD_RESOURCE_DESTROY:
     {
         const U32 kind = r.get<U32>();
         const U32 n = r.get<U32>();
         Blob b = read_blob(r, flags);
-        if (op == CMD_RESOURCE_CREATE) LLVkWorker::resource_create(kind, (int)n, (const unsigned*)b.mData);
-        else LLVkWorker::resource_destroy(kind, (int)n, (const unsigned*)b.mData);
+        if (op == CMD_RESOURCE_CREATE) RKVkWorker::resource_create(kind, (int)n, (const unsigned*)b.mData);
+        else RKVkWorker::resource_destroy(kind, (int)n, (const unsigned*)b.mData);
         break;
     }
     case CMD_TEX_IMAGE: runImage(r, flags); break;
@@ -2780,20 +2780,20 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     case CMD_TEX_OP: runOp(r); break;
     case CMD_PROGRAM_BIND:
     {
-        LLVk::Program* p = r.get<LLVk::Program*>();
-        if (LLVkBridge::isReady())
+        RKVk::Program* p = r.get<RKVk::Program*>();
+        if (RKVkBridge::isReady())
         {
-            LLVk::Renderer::instance().setProgram(p);       // null unbinds
+            RKVk::Renderer::instance().setProgram(p);       // null unbinds
         }
-        if (LLVkPassCensus::sOn) LLVkPassCensus::programAnnounced();
+        if (RKVkPassCensus::sOn) RKVkPassCensus::programAnnounced();
         break;
     }
     case CMD_PROGRAM_DESTROY:
     {
-        LLVk::Program* p = r.get<LLVk::Program*>();
+        RKVk::Program* p = r.get<RKVk::Program*>();
         if (p)
         {
-            LLVk::Renderer& rr = LLVk::Renderer::instance();
+            RKVk::Renderer& rr = RKVk::Renderer::instance();
             if (rr.getProgram() == p)
             {
                 rr.setProgram(nullptr);     // never leave the renderer pointing at a freed program
@@ -2805,14 +2805,14 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
     }
     case CMD_SAMPLER_UNIT:
     {
-        LLVk::Program* p = r.get<LLVk::Program*>();
+        RKVk::Program* p = r.get<RKVk::Program*>();
         const unsigned i = r.get<unsigned>(), u = r.get<unsigned>();
         if (p) p->setSamplerUnit((size_t)i, (U32)u);
         break;
     }
     case CMD_UNIFORM_SCALAR:
     {
-        LLVk::Program* p = r.get<LLVk::Program*>();
+        RKVk::Program* p = r.get<RKVk::Program*>();
         const unsigned idx = r.get<unsigned>();
         const int kind = r.get<int>();
         const unsigned n = r.get<unsigned>();
@@ -2824,31 +2824,31 @@ void dispatch_cmd(unsigned short op, U8 flags, const U8* payload)
         {
             if (kind == 0) p->setFloatsAt((size_t)idx, f, n, 1);
             else p->setFloatsAt((size_t)idx, reinterpret_cast<const F32*>(iv), n, 1);
-            if (LLVkPassCensus::sOn && idx < p->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(p->mCensus, p->getInfo().mUniforms[idx].mClass, n * 4);
+            if (RKVkPassCensus::sOn && idx < p->getInfo().mUniforms.size()) RKVkPassCensus::uniformWrite(p->mCensus, p->getInfo().mUniforms[idx].mClass, n * 4);
         }
         break;
     }
     case CMD_UNIFORM_VECTOR:
     {
         const UniformVecArgs a = r.get<UniformVecArgs>();
-        LLVk::Program* p = (LLVk::Program*)a.mProgram;
+        RKVk::Program* p = (RKVk::Program*)a.mProgram;
         Blob b = read_blob(r, flags);
         if (p && b.mData)
         {
             p->setFloatsAt((size_t)a.mIndex, reinterpret_cast<const F32*>(b.mData), a.mComponents, a.mCount);
-            if (LLVkPassCensus::sOn && a.mIndex < p->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(p->mCensus, p->getInfo().mUniforms[a.mIndex].mClass, a.mComponents * a.mCount * 4);
+            if (RKVkPassCensus::sOn && a.mIndex < p->getInfo().mUniforms.size()) RKVkPassCensus::uniformWrite(p->mCensus, p->getInfo().mUniforms[a.mIndex].mClass, a.mComponents * a.mCount * 4);
         }
         break;
     }
     case CMD_UNIFORM_MATRIX:
     {
         const UniformMatArgs a = r.get<UniformMatArgs>();
-        LLVk::Program* p = (LLVk::Program*)a.mProgram;
+        RKVk::Program* p = (RKVk::Program*)a.mProgram;
         Blob b = read_blob(r, flags);
         if (p && b.mData)
         {
             p->setMatricesAt((size_t)a.mIndex, reinterpret_cast<const F32*>(b.mData), a.mColumns, a.mRows, a.mCount);
-            if (LLVkPassCensus::sOn && a.mIndex < p->getInfo().mUniforms.size()) LLVkPassCensus::uniformWrite(p->mCensus, p->getInfo().mUniforms[a.mIndex].mClass, a.mColumns * a.mRows * a.mCount * 4);
+            if (RKVkPassCensus::sOn && a.mIndex < p->getInfo().mUniforms.size()) RKVkPassCensus::uniformWrite(p->mCensus, p->getInfo().mUniforms[a.mIndex].mClass, a.mColumns * a.mRows * a.mCount * 4);
         }
         break;
     }
@@ -2884,8 +2884,8 @@ void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
 {
     gCurrentOp = op;
     gCurrentCtx = ctx;
-    LLVkWorker::set_worker_context(ctx);
-    const unsigned long long t0 = (gOpStats || LLVkPassCensus::sOn) ? __rdtsc() : 0;
+    RKVkWorker::set_worker_context(ctx);
+    const unsigned long long t0 = (gOpStats || RKVkPassCensus::sOn) ? __rdtsc() : 0;
     // <FS> a command the worker needed more than LL_VK_SLOW_CMD_MS (default 100) for is named in the log (the first 200): where a frame that stalls while the GPU sits idle waits
     static const double slow_ticks = []()
     {
@@ -2904,14 +2904,14 @@ void execute(U16 op, U8 ctx, U8 flags, const U8* payload)
         if ((double)took > slow_ticks && slow_logged < 200)
         {
             ++slow_logged;
-            const unsigned kind = op == CMD_SHADOW_PACKETS ? ((const LLVkBridge::ShadowPacketsHeader*)payload)->mKind : 0;
+            const unsigned kind = op == CMD_SHADOW_PACKETS ? ((const RKVkBridge::ShadowPacketsHeader*)payload)->mKind : 0;
             LL_WARNS("VkAsync") << "worker command " << op << (op == CMD_SHADOW_PACKETS ? " (shadow packets kind " : " (") << kind << ") took " << (double)took / slow_ticks * (getenv("LL_VK_SLOW_CMD_MS") ? atof(getenv("LL_VK_SLOW_CMD_MS")) : 100.0) << " ms" << LL_ENDL;
         }
     }
     // </FS>
-    if (LLVkPassCensus::sOn)
+    if (RKVkPassCensus::sOn)
     {
-        LLVkPassCensus::opDone(op, op == CMD_SHADOW_PACKETS ? ((const LLVkBridge::ShadowPacketsHeader*)payload)->mKind : 0, __rdtsc() - t0);
+        RKVkPassCensus::opDone(op, op == CMD_SHADOW_PACKETS ? ((const RKVkBridge::ShadowPacketsHeader*)payload)->mKind : 0, __rdtsc() - t0);
     }
     if (gOpStats)
     {
@@ -2989,18 +2989,18 @@ LONG crash_filter(EXCEPTION_POINTERS* info)
                  info->ExceptionRecord->NumberParameters > 0 && info->ExceptionRecord->ExceptionInformation[0] ? "write" : "read");
         out(line);
         snprintf(line, sizeof(line), "worker was replaying command %u of context %u; queue head %llu tail %llu; draw path breadcrumb %d (0..17 apply phases, 200+ prepare_draw, 210 before apply, 211 apply)\r\n",
-                 (unsigned)gCurrentOp, (unsigned)gCurrentCtx, (unsigned long long)gHead.load(), (unsigned long long)gTail.load(), (int)LLVkBridge::gLastLap);
+                 (unsigned)gCurrentOp, (unsigned)gCurrentCtx, (unsigned long long)gHead.load(), (unsigned long long)gTail.load(), (int)RKVkBridge::gLastLap);
         out(line);
-        snprintf(line, sizeof(line), "threads that used the Vulkan layer since the worker started: %u (", (unsigned)LLVkBridge::gRendererTidCount);
+        snprintf(line, sizeof(line), "threads that used the Vulkan layer since the worker started: %u (", (unsigned)RKVkBridge::gRendererTidCount);
         out(line);
-        for (unsigned t = 0; t < 8 && t < LLVkBridge::gRendererTidCount; ++t)
+        for (unsigned t = 0; t < 8 && t < RKVkBridge::gRendererTidCount; ++t)
         {
-            snprintf(line, sizeof(line), "%lu ", (unsigned long)LLVkBridge::gRendererTids[t]);
+            snprintf(line, sizeof(line), "%lu ", (unsigned long)RKVkBridge::gRendererTids[t]);
             out(line);
         }
         snprintf(line, sizeof(line), "); main thread %lu, worker thread %lu\r\n", gMainTid, gWorkerTid);
         out(line);
-        snprintf(line, sizeof(line), "debug values: mProgram 0x%llX, slot %llu, cmd 0x%llX, ring mapped 0x%llX\r\n", LLVkBridge::gDbg[0], LLVkBridge::gDbg[1], LLVkBridge::gDbg[2], LLVkBridge::gDbg[3]);
+        snprintf(line, sizeof(line), "debug values: mProgram 0x%llX, slot %llu, cmd 0x%llX, ring mapped 0x%llX\r\n", RKVkBridge::gDbg[0], RKVkBridge::gDbg[1], RKVkBridge::gDbg[2], RKVkBridge::gDbg[3]);
         out(line);
         void* frames[40] = {};
         const USHORT n = CaptureStackBackTrace(0, 40, frames, nullptr);
@@ -3130,7 +3130,7 @@ void wait_drained()
 void run_loop()
 {
     gWorkerTid = __readgsdword(0x48);
-    LLVkBridge::gMainThreadId = gWorkerTid;                 // the phase timers now measure the worker
+    RKVkBridge::gMainThreadId = gWorkerTid;                 // the phase timers now measure the worker
     bool stopping = false;
     U32 count = 0;
     while (!stopping)
@@ -3188,10 +3188,10 @@ bool start()
     gTail.store(0);
     gBeginsEnqueued.store(0);
     gBeginsDone.store(0);
-    LLVkWorker::register_main_context();
-    LLVkState::forceEmit();         // the receiver gets the first block of this run whatever was written before
-    LLVkBridge::gRendererTidCount = 0;
-    LLVkBridge::gAsyncEpoch = LLVkBridge::gAsyncEpoch + 1;
+    RKVkWorker::register_main_context();
+    RKVkState::forceEmit();         // the receiver gets the first block of this run whatever was written before
+    RKVkBridge::gRendererTidCount = 0;
+    RKVkBridge::gAsyncEpoch = RKVkBridge::gAsyncEpoch + 1;
     if (gMode == 2)
     {
         // loopback: everything is encoded into the queue, and the main thread replays it at once
@@ -3200,7 +3200,7 @@ bool start()
         LL_INFOS("VkAsync") << "LL_VK_ASYNC=loopback: GL calls go through the queue and are replayed at once on the main thread (no worker thread)" << LL_ENDL;
         return true;
     }
-    LLVkPassCensus::init();
+    RKVkPassCensus::init();
     if (getenv("LL_VK_PHASES") || getenv("LL_VK_OPSTATS"))
     {
         gOpStatsPeriodic = getenv("LL_VK_PHASES") == nullptr;
@@ -3213,7 +3213,7 @@ bool start()
     }
     if (getenv("LL_VK_WORKERPHASES"))
     {
-        LLVkBridge::gPhaseTiming = true;        // the draw path's own phase timers (they run on the thread that replays the frames: the worker here); each costs a counter read
+        RKVkBridge::gPhaseTiming = true;        // the draw path's own phase timers (they run on the thread that replays the frames: the worker here); each costs a counter read
     }
     gRunning.store(true);
     gThread = CreateThread(nullptr, 0, workerMain, nullptr, 0, nullptr);
@@ -3248,7 +3248,7 @@ void stop()
         gThread = nullptr;
     }
     gEnabled = false;
-    LLVkBridge::gMainThreadId = __readgsdword(0x48);
+    RKVkBridge::gMainThreadId = __readgsdword(0x48);
     LL_INFOS("VkAsync") << "the Vulkan mirror thread stopped" << LL_ENDL;
 }
 
@@ -3257,15 +3257,15 @@ struct SubStream::Impl
 {
     SubBuf mBuf;
     Pend mPend;
-    LLVkState::Context* mState = nullptr;
-    LLVkState::Context* mSeed = nullptr;            // the main producer's render state when the sub-stream was made
+    RKVkState::Context* mState = nullptr;
+    RKVkState::Context* mSeed = nullptr;            // the main producer's render state when the sub-stream was made
     std::string mLeft;                              // what the work left changed in the render state
     DrawCtx mSeedDraw;                              // F2.4: the main producer's program and vertex binding when the sub-stream was made
 };
 
 SubStream::SubStream() : mImpl(new Impl)
 {
-    mImpl->mSeed = LLVkState::cloneContext();       // the main producer's state now: where the sub-stream's work starts from
+    mImpl->mSeed = RKVkState::cloneContext();       // the main producer's state now: where the sub-stream's work starts from
     mImpl->mSeedDraw = gMainPend.mDraw;
 }
 
@@ -3273,11 +3273,11 @@ SubStream::~SubStream()
 {
     if (mImpl->mState)
     {
-        LLVkState::destroyContext(mImpl->mState);
+        RKVkState::destroyContext(mImpl->mState);
     }
     if (mImpl->mSeed)
     {
-        LLVkState::destroyContext(mImpl->mSeed);
+        RKVkState::destroyContext(mImpl->mSeed);
     }
     delete mImpl;
 }
@@ -3287,9 +3287,9 @@ void SubStream::begin()
     Impl& s = *mImpl;
     if (s.mState)
     {
-        LLVkState::destroyContext(s.mState);
+        RKVkState::destroyContext(s.mState);
     }
-    s.mState = LLVkState::cloneContext(s.mSeed);
+    s.mState = RKVkState::cloneContext(s.mSeed);
     s.mBuf.mBuf.clear();
     s.mBuf.mCur = 0;
     s.mPend = Pend();
@@ -3297,16 +3297,16 @@ void SubStream::begin()
     s.mPend.mDraw.mDirty = true;                    // the first draw of the sub-stream carries its binding: nothing is assumed about what the worker holds
     tlsBuf = &s.mBuf;
     tlsPend = &s.mPend;
-    LLVkState::bindContext(s.mState);
+    RKVkState::bindContext(s.mState);
 }
 
 void SubStream::end()
 {
     coFlushAll();                                   // the pending slots and uniform writes of the producer are records too
-    mImpl->mLeft = LLVkState::describeDifference(LLVkState::blockOf(mImpl->mState), LLVkState::blockOf(mImpl->mSeed));
+    mImpl->mLeft = RKVkState::describeDifference(RKVkState::blockOf(mImpl->mState), RKVkState::blockOf(mImpl->mSeed));
     tlsBuf = nullptr;
     tlsPend = nullptr;
-    LLVkState::bindContext(nullptr);
+    RKVkState::bindContext(nullptr);
 }
 
 void SubStream::splice()
@@ -3336,8 +3336,8 @@ void SubStream::splice()
             LL_INFOS("VkSub") << "a sub-stream left the render state changed: " << s.mLeft << "(the main producer takes it over)" << LL_ENDL;
         }
     }
-    LLVkState::adoptChanges(s.mSeed, s.mState);     // what the work changed in the render state is the state the main producer goes on with
-    LLVkState::forceEmit();                         // what the worker holds is the sub-stream's last state, not what the main producer last wrote
+    RKVkState::adoptChanges(s.mSeed, s.mState);     // what the work changed in the render state is the state the main producer goes on with
+    RKVkState::forceEmit();                         // what the worker holds is the sub-stream's last state, not what the main producer last wrote
     gMainPend.mDraw = s.mPend.mDraw;                // the program and binding the viewer's classes believe are bound are the sub-stream's last (the beliefs are shared statics)
     gMainPend.mDraw.mDirty = true;
 }
@@ -3347,9 +3347,9 @@ void SubStream::reseed()
     Impl& s = *mImpl;
     if (s.mSeed)
     {
-        LLVkState::destroyContext(s.mSeed);
+        RKVkState::destroyContext(s.mSeed);
     }
-    s.mSeed = LLVkState::cloneContext();
+    s.mSeed = RKVkState::cloneContext();
     s.mSeedDraw = gMainPend.mDraw;
 }
 
@@ -3384,7 +3384,7 @@ void segmentBoundary()
         return;
     }
     ++gPassEpoch;
-    LLVkState::forceEmit();
+    RKVkState::forceEmit();
     Pend& p = pend();
     p.mDraw.mDirty = true;
     U32 m = 0;
@@ -3393,7 +3393,7 @@ void segmentBoundary()
         if (p.mTex[u]) m |= 1u << u;
     }
     p.mMask |= m;
-    LLVkBuf::reannounce();
+    RKVkBuf::reannounce();
 }
 
 void scanSegment(const U8* data, size_t size, SegmentScan& out)
@@ -3610,42 +3610,42 @@ void uiCacheBufferTouched(U32 name)
 unsigned long long uiCacheEpoch() { return gUiCacheEpoch.load(); }
 void uiCacheInvalidate() { ++gUiCacheEpoch; }
 
-} // namespace LLVkAsync
+} // namespace RKVkAsync
 
-bool LLVkZones::available()
+bool RKVkZones::available()
 {
-    return LLVkAsync::mainProducer();
+    return RKVkAsync::mainProducer();
 }
 
-void LLVkZones::zone(const char* name, bool begin)
+void RKVkZones::zone(const char* name, bool begin)
 {
-    LLVkAsync::gpuZone(name, begin);
+    RKVkAsync::gpuZone(name, begin);
 }
 
 #include "rkvksubstream.h"
 
-bool LLVkSubStream::usable()
+bool RKVkSubStream::usable()
 {
-    return LLVkAsync::gEnabled && LLVkAsync::mainProducer();
+    return RKVkAsync::gEnabled && RKVkAsync::mainProducer();
 }
 
-LLVkSubStream::LLVkSubStream() : mImpl(new LLVkAsync::SubStream()) {}
-LLVkSubStream::~LLVkSubStream() { delete (LLVkAsync::SubStream*)mImpl; }
-void LLVkSubStream::begin() { ((LLVkAsync::SubStream*)mImpl)->begin(); }
-void LLVkSubStream::end() { ((LLVkAsync::SubStream*)mImpl)->end(); }
-void LLVkSubStream::splice() { ((LLVkAsync::SubStream*)mImpl)->splice(); }
-unsigned LLVkSubStream::records() const { return ((LLVkAsync::SubStream*)mImpl)->records(); }
-void LLVkSubStream::reseed() { ((LLVkAsync::SubStream*)mImpl)->reseed(); }
-bool LLVkSubStream::takeBytes(std::vector<unsigned char>& out) const { out = ((LLVkAsync::SubStream*)mImpl)->bytes(); return true; }
-bool LLVkSubStream::leftState() const { return ((LLVkAsync::SubStream*)mImpl)->leftState(); }
-void LLVkSubStream::segmentBoundary() { LLVkAsync::segmentBoundary(); }
-void LLVkSubStream::replay(const unsigned char* data, size_t size) { LLVkAsync::replaySegment(data, size); }
-void LLVkSubStream::replaySideEffects(const unsigned char* data, size_t size) { LLVkAsync::spliceSideEffects(data, size); }
-std::string LLVkSubStream::describeDifference(const unsigned char* a, size_t a_size, const unsigned char* b, size_t b_size) { return LLVkAsync::describeSegmentDifference(a, a_size, b, b_size); }
-bool LLVkSubStream::scan(const unsigned char* data, size_t size, Scan& out)
+RKVkSubStream::RKVkSubStream() : mImpl(new RKVkAsync::SubStream()) {}
+RKVkSubStream::~RKVkSubStream() { delete (RKVkAsync::SubStream*)mImpl; }
+void RKVkSubStream::begin() { ((RKVkAsync::SubStream*)mImpl)->begin(); }
+void RKVkSubStream::end() { ((RKVkAsync::SubStream*)mImpl)->end(); }
+void RKVkSubStream::splice() { ((RKVkAsync::SubStream*)mImpl)->splice(); }
+unsigned RKVkSubStream::records() const { return ((RKVkAsync::SubStream*)mImpl)->records(); }
+void RKVkSubStream::reseed() { ((RKVkAsync::SubStream*)mImpl)->reseed(); }
+bool RKVkSubStream::takeBytes(std::vector<unsigned char>& out) const { out = ((RKVkAsync::SubStream*)mImpl)->bytes(); return true; }
+bool RKVkSubStream::leftState() const { return ((RKVkAsync::SubStream*)mImpl)->leftState(); }
+void RKVkSubStream::segmentBoundary() { RKVkAsync::segmentBoundary(); }
+void RKVkSubStream::replay(const unsigned char* data, size_t size) { RKVkAsync::replaySegment(data, size); }
+void RKVkSubStream::replaySideEffects(const unsigned char* data, size_t size) { RKVkAsync::spliceSideEffects(data, size); }
+std::string RKVkSubStream::describeDifference(const unsigned char* a, size_t a_size, const unsigned char* b, size_t b_size) { return RKVkAsync::describeSegmentDifference(a, a_size, b, b_size); }
+bool RKVkSubStream::scan(const unsigned char* data, size_t size, Scan& out)
 {
-    LLVkAsync::SegmentScan s;
-    LLVkAsync::scanSegment(data, size, s);
+    RKVkAsync::SegmentScan s;
+    RKVkAsync::scanSegment(data, size, s);
     out.mCacheable = s.mCacheable;
     out.mBadOp = s.mBadOp;
     out.mRecords = s.mRecords;
@@ -3654,25 +3654,25 @@ bool LLVkSubStream::scan(const unsigned char* data, size_t size, Scan& out)
     out.mBuffers = s.mBuffers;
     return s.mCacheable;
 }
-void LLVkSubStream::cacheInvalidate() { LLVkAsync::uiCacheInvalidate(); }
-void LLVkSubStream::nameTextures(const unsigned* ids, size_t count) { LLVkAsync::uiCacheNameTextures(ids, count); }
-void LLVkSubStream::nameBuffers(const unsigned* names, size_t count) { LLVkAsync::uiCacheNameBuffers(names, count); }
-unsigned long long LLVkSubStream::cacheEpoch() { return LLVkAsync::uiCacheEpoch(); }
-void LLVkSubStream::stateSnapshot(std::vector<unsigned char>& out)
+void RKVkSubStream::cacheInvalidate() { RKVkAsync::uiCacheInvalidate(); }
+void RKVkSubStream::nameTextures(const unsigned* ids, size_t count) { RKVkAsync::uiCacheNameTextures(ids, count); }
+void RKVkSubStream::nameBuffers(const unsigned* names, size_t count) { RKVkAsync::uiCacheNameBuffers(names, count); }
+unsigned long long RKVkSubStream::cacheEpoch() { return RKVkAsync::uiCacheEpoch(); }
+void RKVkSubStream::stateSnapshot(std::vector<unsigned char>& out)
 {
-    const LLVkState::Block& b = LLVkState::current();
-    out.resize(sizeof(LLVkState::Block));
+    const RKVkState::Block& b = RKVkState::current();
+    out.resize(sizeof(RKVkState::Block));
     memcpy(out.data(), &b, sizeof(b));
 }
-bool LLVkSubStream::stateEqual(const std::vector<unsigned char>& snapshot)
+bool RKVkSubStream::stateEqual(const std::vector<unsigned char>& snapshot)
 {
-    if (snapshot.size() != sizeof(LLVkState::Block))
+    if (snapshot.size() != sizeof(RKVkState::Block))
     {
         return false;
     }
-    LLVkState::Block old;
+    RKVkState::Block old;
     memcpy(&old, snapshot.data(), sizeof(old));
-    return old == LLVkState::current();
+    return old == RKVkState::current();
 }
 
 #endif // LL_VULKAN

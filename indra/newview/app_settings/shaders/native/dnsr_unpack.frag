@@ -1,12 +1,12 @@
 // dnsr_unpack.frag: the denoised reflection back into the form the lighting pass reads (PLAN-amd-denoiser.md): the denoiser's colour with the alpha of the RT Reflection pass (how much of the pixel was
 // traced; the lighting pass blends by it). A pixel that was not traced (a = 0) keeps what the pass wrote. Pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float dbg_mode;             // rt-debug.txt dnsrdbg=: 0 the denoised colour, 1 the raw traced colour (no denoiser), 2 the difference x 8, 3 magenta where the denoiser wrote black over a lit pixel
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseMap;      // the denoiser's output (rgb)
     uint ll_ti_bumpMap;         // the RT Reflection pass's colour (rgb; a = how much of the pixel was traced)

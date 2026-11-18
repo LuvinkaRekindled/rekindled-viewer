@@ -19,10 +19,10 @@
 #include <vector>
 #include <memory>
 #include "rkvkplatform.h"
-namespace LLVk { struct Image; }
+namespace RKVk { struct Image; }
 #endif
 
-namespace LLVkBridge
+namespace RKVkBridge
 {
     // the deferred geometry pass types the scene table serves (kGeoTypes in pipeline.cpp, the viewer's list of them, has this many): item type t is a static pass type, kGeoPassTypes + t its rigged variant,
     // 2 * kGeoPassTypes the static alpha items and 2 * kGeoPassTypes + 1 the rigged alpha items
@@ -127,7 +127,7 @@ namespace LLVkBridge
         U32 mFrameIndex = 0;
         S32 mReset = 0;
         // the sun shadow denoiser (mKind 2): mOutput is the filtered visibility (RGBA8, r), mHitMask the packed hit mask (RGBA8, one texel a tile of 8 x 4), mDepth / mNormals / mMotion / mInvProjection as above
-        U32 mKind = 1;                  // what this call runs: 1 the reflections, 2 the sun shadow (LLVkDenoise::Kind)
+        U32 mKind = 1;                  // what this call runs: 1 the reflections, 2 the sun shadow (RKVkDenoise::Kind)
         U32 mKinds = 1;                 // the kinds the pipeline uses this frame (the denoiser's context is made for all of them)
         U32 mHitMask = 0;
         F32 mReprojection[16] = {}, mViewProjInverse[16] = {}, mEye[3] = {};      // column major, OpenGL conventions
@@ -161,7 +161,7 @@ namespace LLVkBridge
         U32 mPaletteFloats = 0;     // floats of joint matrix palettes (12 per joint) after the model matrices; the rigged entries point into them
         U32 mPass = 0;              // the shadow pass: 0-3 sun cascades, 4-5 spot shadows, 6 other (ray tracing keeps the casters of a cached cascade)
         U32 mFragment = 0;          // kind 11: the id of the fragment retained (S1, below); kind 0: 1 = drawn only, not named to the ray scene (S6.6c)
-        U64 mProgram = ~0ull;       // S6.3: the program (an LLVk::Program*) the record draws with, written by pushData from the producer's draw context; ~0: not named, the worker keeps the one it has
+        U64 mProgram = ~0ull;       // S6.3: the program (an RKVk::Program*) the record draws with, written by pushData from the producer's draw context; ~0: not named, the worker keeps the one it has
         U32 mParticleFloats = 0;    // kind 36 (the particle sort): floats of the source table after the jobs: a row (now high, now low, 0, 0), then a source is 8 floats (position, 0, target, 0)
         U32 mTexmats = 0;           // kind 1: texture matrices (16 floats each) after the palettes; an entry names its matrix by mTexMatrix
         U32 mFrame = 0;             // S6.3: the producer's frame number (0: unknown); kinds 22 and 29 draw what the frame's kind 21 prepared and are checked against it
@@ -297,12 +297,12 @@ namespace LLVkBridge
         U32 mPbrRow;                // S5f F3 (kind 32): the number of the entry's PBR row in the record (glTF alpha items)
         U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
         U32 mWeightOffset, mPaletteOffset, mJoints, mPad3;          // A1 rigged draws: byte offset of the weight4 array, the palette's offset in floats (12 per joint) and its joint count
-        U32 mDebugColor;            // K6 B1: the Batch Size debug view's colour of the draw (LLDrawBatch::getDebugColor, made when the entry is built; 0 = none), carried in a spare word of the table row
+        U32 mDebugColor;            // K6 B1: the Batch Size debug view's colour of the draw (RKDrawBatch::getDebugColor, made when the entry is built; 0 = none), carried in a spare word of the table row
     };
     // S4 A2 kind 27 PALETTES: the viewer's per-frame palette list grows by mPaletteFloats floats (12 per joint, whole palettes) at float offset mFragment; mPass = the viewer's frame; the blob is the floats. The worker keeps
     //   them in scratch memory of the frame (segments by offset); entries of kind 32 (rigged) and of kinds 2 / 6 with mFragment = 1 name a palette by its absolute offset in this list instead of carrying copies.
     // S3 G2 / G3 (doc/vulkan/S3-design.md, LL_VK_SCENE_GEO=2): the deferred geometry entries kept by the worker in a persistent table, drawn from the list of fragments the viewer says are visible.
-    // The fragments are named by the viewer's dense HANDLE (LLSceneFragment::mGeoHandle, reused only after the release was sent).
+    // The fragments are named by the viewer's dense HANDLE (RKSceneFragment::mGeoHandle, reused only after the release was sent).
     // kind 20 RETAIN_GEO: mFragment = handle, mEntries x GeoWire (mE.mMatrix = region matrix slot, 0 = the view alone; its texture fields are 1 + the number in the fragment's texture list, 0 = none),
     //   then mPaletteFloats GL names, the fragment's textures in list order (the worker pins them: permanent bindless slots).
     // kind 21 PREPARE_GEO (once a frame, before the passes): mEntries = handles of the visible fragments (U32 each), then mMatrices x GeoSlotMatrix (all region matrices in use). The worker looks at the
@@ -508,8 +508,8 @@ namespace LLVkBridge
     };
 
     // the image the viewer's default framebuffer maps to (valid while ready)
-    LLVk::Image* backbufferColor();
-    LLVk::Image* backbufferDepth();
+    RKVk::Image* backbufferColor();
+    RKVk::Image* backbufferDepth();
 
     // CPU phase timers of the translation layer (benchmark mode only; PhaseTimer costs one branch when off)
     enum Phase { PH_ALL_HOOKS, PH_UNIFORM, PH_DRAW, PH_D_TARGET, PH_D_STATE, PH_D_TEX, PH_D_UBO, PH_D_VERTEX, PH_D_APPLY, PH_D_STATS,
@@ -565,7 +565,7 @@ namespace LLVkBridge
 }
 
 #if defined(LL_VULKAN)
-namespace LLVkWorker
+namespace RKVkWorker
 {
     // Arena phase 3: where a GL buffer name lives. The address stays valid while epoch is unchanged; version moves on every write. Worker thread only (it owns the buffer table).
     struct BufferInfo

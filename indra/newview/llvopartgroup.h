@@ -38,7 +38,7 @@ class LLViewerPartGroup;
 
 // <FS> GPU particles stage 1b / 2: one particle that is drawn this frame, ready for its row (position, velocity of a follow-velocity particle, half size, colour, glow, what the draw batches by); a ribbon
 // piece also has the half axis of its own end and the point and half axis of the end it joins
-struct LLPartEval
+struct RKPartEval
 {
     LLVector3 mPos;
     LLVector3 mVel;
@@ -135,7 +135,7 @@ public:
     bool updateFacesLegacy(LLDrawable* drawable, S32 num_parts);
     bool mRowsMode = false;
     bool mPure = false;             // G0: every particle of the group is a record and the store holds them (updateRows)
-    std::vector<LLPartEval> mEval;
+    std::vector<RKPartEval> mEval;
     LLVector3 mEvalMin, mEvalMax;           // the box of the drawn particles (the group's extents take it in: a record does not stay in the group's box)
     bool mEvalValid = false;
 

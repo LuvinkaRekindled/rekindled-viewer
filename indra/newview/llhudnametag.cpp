@@ -229,7 +229,7 @@ void LLHUDNameTag::render()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
     if (sDisplayText)
     {
-        LLRenderState::DepthScope gls_depth(true, false);
+        RKRenderState::DepthScope gls_depth(true, false);
         renderText();
     }
 }
@@ -292,11 +292,11 @@ void LLHUDNameTag::renderText()
             + (x_pixel_vec * screen_offset.mV[VX])
             + (y_pixel_vec * screen_offset.mV[VY]);
 
-    LLRenderState::DepthScope gls_depth(true, false);
+    RKRenderState::DepthScope gls_depth(true, false);
     LLRect screen_rect;
     screen_rect.setCenterAndSize(0, static_cast<S32>(lltrunc(-mHeight / 2 + mOffsetY)), static_cast<S32>(lltrunc(mWidth)), static_cast<S32>(lltrunc(mHeight)));
     {
-        LLUnjitteredScope unjittered;       // the box follows the text, which is placed without the DLSS jitter
+        RKUnjitteredScope unjittered;       // the box follows the text, which is placed without the DLSS jitter
         mRoundedRectImgp->draw3D(render_position, x_pixel_vec, y_pixel_vec, screen_rect, bg_color);
     }
     if (mLabelSegments.size())
@@ -310,7 +310,7 @@ void LLHUDNameTag::renderText()
         label_top_color.mV[VALPHA] = color_alpha;
         // </FS:Ansariel>
 
-        LLUnjitteredScope unjittered;
+        RKUnjitteredScope unjittered;
         mRoundedRectTopImgp->draw3D(render_position, x_pixel_vec, y_pixel_vec, label_top_rect, label_top_color);
     }
 

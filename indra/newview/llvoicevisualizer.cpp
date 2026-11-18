@@ -125,7 +125,7 @@ LLVoiceVisualizer::LLVoiceVisualizer( const U8 type )
     for (int i=0; i<NUM_VOICE_SYMBOL_WAVES; i++)
     {
         mSoundSymbol.mWaveFadeOutStartTime  [i] = mCurrentTime;
-        mSoundSymbol.mTexture               [i] = LLViewerTextureManager::getFetchedTextureFromFile(sound_level_img[i], FTT_LOCAL_FILE, false, LLBaseTexture::BOOST_UI);
+        mSoundSymbol.mTexture               [i] = LLViewerTextureManager::getFetchedTextureFromFile(sound_level_img[i], FTT_LOCAL_FILE, false, RKBaseTexture::BOOST_UI);
         mSoundSymbol.mWaveActive            [i] = false;
         mSoundSymbol.mWaveOpacity           [i] = 1.0f;
         mSoundSymbol.mWaveExpansion         [i] = 1.0f;
@@ -358,8 +358,8 @@ void LLVoiceVisualizer::render()
         //---------------------------------------------------------------
         // some gl state
         //---------------------------------------------------------------
-        LLRenderPresetPipelineAlpha alpha_blend;
-        LLRenderState::DepthScope depth(true, false);
+        RKRenderPresetPipelineAlpha alpha_blend;
+        RKRenderState::DepthScope depth(true, false);
         //LLGLDisable gls_stencil(GL_STENCIL_TEST);
 
         //-------------------------------------------------------------

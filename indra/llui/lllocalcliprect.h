@@ -49,7 +49,7 @@ private:
     static void updateScissorRegion();
 
 private:
-    LLRenderState::ScissorScope mScissorState;
+    RKRenderState::ScissorScope mScissorState;
     bool            mEnabled;
 
     static std::stack<LLRect> sClipRectStack;

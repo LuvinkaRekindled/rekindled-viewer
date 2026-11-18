@@ -1,12 +1,12 @@
 // smaa_weights.frag: SMAA's blending weight calculation (the edges become the weights of the blend). A line for line translation of "SMAA Blending Weights" (deferred/SMAABlendWeightsF.glsl);
 // pairs with smaa_weights.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec4 SMAA_RT_METRICS;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_edgesTex;
     uint ll_ti_areaTex;

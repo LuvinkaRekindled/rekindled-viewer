@@ -626,7 +626,7 @@ void LLViewerTexLayerSetBuffer::doUpload(LLRenderTarget* bound_target)
     gRender.readPixels(mOrigin.mX, mOrigin.mY, mFullWidth, mFullHeight, PixelFormat::RGBA, ComponentType::U8, baked_color_data );
 
     // Get the MASK information from our texture
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     LLPointer<LLImageRaw> baked_mask_image = new LLImageRaw(mFullWidth, mFullHeight, 1 );
     U8* baked_mask_data = baked_mask_image->getData();
     layer_set->gatherMorphMaskAlpha(baked_mask_data,

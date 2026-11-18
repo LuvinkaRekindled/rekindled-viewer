@@ -6,7 +6,7 @@
 // test; 0 the unjittered position's bilinear depth, with the slope's margin except at an edge; 1 or 2 the 3x3 or 5x5 neighbourhood. The outline lines are drawn with a polygon offset that pushes them just
 // behind the surface, so without the margin they sat on the edge of the test and the jitter phase decided; with it a line on a surface is in front and a line well behind a surface (a hidden part) still is not.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
 #ifdef HAS_NOISE
     vec2 screen_res;
@@ -16,7 +16,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     vec2 depth_jitter;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_depthMap;

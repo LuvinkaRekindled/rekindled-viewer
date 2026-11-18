@@ -1359,7 +1359,7 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
 
     {
         // <FS> native-vk: no pixel format and no OpenGL context at all. Vulkan presents into this window.
-        LLVkBridge::setMainWindow(mWindowHandle);
+        RKVkBridge::setMainWindow(mWindowHandle);
         if (!gDeviceCaps.initRenderDevice())
         {
             LLError::LLUserWarningMsg::show(mCallbacks->translateString("MBVideoDrvErr"), 8/*LAST_EXEC_GRAPHICS_INIT*/);
@@ -1516,7 +1516,7 @@ void LLWindowWin32::recreateWindow(RECT window_rect, DWORD dw_ex_style, DWORD dw
 
 void* LLWindowWin32::createSharedContext()
 {
-    // <FS> native-vk: there is no OpenGL context to share. The texture and media upload threads (LLImageTexThread, LLVertexBuffer's) only start when they get
+    // <FS> native-vk: there is no OpenGL context to share. The texture and media upload threads (RKImageTexThread, LLVertexBuffer's) only start when they get
     // a context from here, so a dummy token keeps them running (makeContextCurrent and destroySharedContext ignore it).
     return (void*)1;
 }

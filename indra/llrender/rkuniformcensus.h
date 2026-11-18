@@ -2,7 +2,7 @@
  * @file rkuniformcensus.h
  * @brief U0 (doc/vulkan/U-pass-uniforms-design.md): counters for where the uniform / shader bind / texture bind work of the main thread goes. Off unless LL_VK_UNICENSUS=1
  *        (every hook is one branch on a constant). Header only. Calls are attributed to the innermost CPU zone (LL_CPU_ZONE, FS_CPU_ZONES=1 is needed for that part) and to the program.
- *        The log lines (tag UniCensus) are written by LLCpuZoneScope::frame() every 600 frames.
+ *        The log lines (tag UniCensus) are written by RKCpuZoneScope::frame() every 600 frames.
  */
 #ifndef LL_LLUNIFORMCENSUS_H
 #define LL_LLUNIFORMCENSUS_H
@@ -14,9 +14,9 @@
 #include <unordered_map>
 #include <vector>
 
-class LLShaderProgram;
+class RKShaderProgram;
 
-namespace LLUniCensus
+namespace RKUniCensus
 {
     struct Counters
     {
@@ -24,7 +24,7 @@ namespace LLUniCensus
         U64 mChanged = 0;       // ... of which changed a value (a range goes to the worker)
         U64 mBytes = 0;         // bytes of those ranges
         U64 mTex = 0;           // LLTexUnit bind / bindManual / bindFast calls
-        U64 mBinds = 0;         // LLShaderProgram::bind calls
+        U64 mBinds = 0;         // RKShaderProgram::bind calls
         U64 mScopes = 0;        // times the zone was entered
         U64 mRecords = 0;       // S6 census: records the main thread wrote into the command stream (what the worker replays)
         U64 mDraws = 0;         // S6 census: draw* calls (indexed, arrays, immediate mode)
@@ -37,12 +37,12 @@ namespace LLUniCensus
     {
         U64 mCalls = 0, mChanged = 0, mBinds = 0;                       // everything that touched the program
         U64 mDefBinds = 0, mDefNs = 0, mDefCalls = 0, mDefChanged = 0, mDefTex = 0;       // LLPipeline::bindDeferredShader calls on it: count, wall time, uniform writes / changes and texture binds inside
-        U64 mUpdBinds = 0, mUpdNs = 0, mUpdCalls = 0;                   // the times LLShaderProgram::bind had to run LLShaderMgr::updateShaderUniforms (the program's environment uniforms were dirty): count, wall time, uniform writes
+        U64 mUpdBinds = 0, mUpdNs = 0, mUpdCalls = 0;                   // the times RKShaderProgram::bind had to run LLShaderMgr::updateShaderUniforms (the program's environment uniforms were dirty): count, wall time, uniform writes
         std::vector<U32> mUniCalls, mUniChanged;                        // by the program's own uniform index: writes and changes
         U64 mSec[SECTIONS] = {};                                        // wall time of the sections of bindDeferredShader (see pipeline.cpp)
         bool mReg = false;
     };
-    struct ProgReg { const std::string* mName; ProgStats* mStats; const LLShaderProgram* mProg; };
+    struct ProgReg { const std::string* mName; ProgStats* mStats; const RKShaderProgram* mProg; };
 
     inline const bool sOn = getenv("LL_VK_UNICENSUS") != nullptr;
     inline Counters sTotal;

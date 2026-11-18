@@ -114,10 +114,10 @@ void LLManipRotate::handleSelect()
 
 void LLManipRotate::render()
 {
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
     gRender.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
-    LLRenderState::DepthScope gls_depth(true);
-    LLRenderState::BlendScope gl_blend(true);
+    RKRenderState::DepthScope gls_depth(true);
+    RKRenderState::BlendScope gl_blend(true);
 
     // You can rotate if you can move
     LLViewerObject* first_object = mObjectSelection->getFirstMoveableObject(true);
@@ -131,11 +131,11 @@ void LLManipRotate::render()
         return;
     }
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     if (mObjectSelection->getSelectType() == SELECT_TYPE_HUD)
     {
         F32 zoom = gAgentCamera.mHUDCurZoom;
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, zoom, zoom, zoom);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, zoom, zoom, zoom);
     }
 
 
@@ -145,7 +145,7 @@ void LLManipRotate::render()
     LLColor4 highlight_inside( 0.7f, 0.7f, 0.f, 0.5f );
     F32 width_meters = WIDTH_PIXELS * mRadiusMeters / RADIUS_PIXELS;
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
 
         // are we in the middle of a constrained drag?
@@ -157,13 +157,13 @@ void LLManipRotate::render()
         {
             gDebugProgram.bind();
 
-            LLRenderState::CullScope cull_face(true);
-            LLRenderState::DepthScope gls_depth(false);
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            RKRenderState::CullScope cull_face(true);
+            RKRenderState::DepthScope gls_depth(false);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
             {
                 // Draw "sphere" (intersection of sphere with tangent cone that has apex at camera)
-                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, mCenterToProfilePlane.mV[VX], mCenterToProfilePlane.mV[VY], mCenterToProfilePlane.mV[VZ]);
-                LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
+                RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, mCenterToProfilePlane.mV[VX], mCenterToProfilePlane.mV[VY], mCenterToProfilePlane.mV[VZ]);
+                RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
 
                 // Inverse change of basis vectors
                 LLVector3 forward = mCenterToCamNorm;
@@ -180,14 +180,14 @@ void LLManipRotate::render()
                 LLMatrix4 mat;
                 mat.initRows(a, b, c, LLVector4(0.f, 0.f, 0.f, 1.f));
 
-                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, &mat.mMatrix[0][0]);
+                RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, &mat.mMatrix[0][0]);
 
-                LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, -90, 0.f, 1.f, 0.f);
+                RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, -90, 0.f, 1.f, 0.f);
                 LLColor4 color;
                 if (mManipPart == LL_ROT_ROLL || mHighlightedPart == LL_ROT_ROLL)
                 {
                     color.setVec(0.8f, 0.8f, 0.8f, 0.8f);
-                    LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VW], mManipulatorScales.mV[VW], mManipulatorScales.mV[VW]);
+                    RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VW], mManipulatorScales.mV[VW], mManipulatorScales.mV[VW]);
                 }
                 else
                 {
@@ -206,12 +206,12 @@ void LLManipRotate::render()
 
                 gRender.flush();
             }
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
             gUIProgram.bind();
         }
 
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
 
         LLQuaternion rot;
         F32 angle_radians, x, y, z;
@@ -223,7 +223,7 @@ void LLManipRotate::render()
         LLSelectMgr::getInstance()->getGrid(grid_origin, grid_rotation, grid_scale);
 
         grid_rotation.getAngleAxis(&angle_radians, &x, &y, &z);
-        LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
+        RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
 
         gDebugProgram.bind();
@@ -231,44 +231,44 @@ void LLManipRotate::render()
         if (mManipPart == LL_ROT_Z)
         {
             mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, 1.f, SELECTED_MANIPULATOR_SCALE, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
             {
                 // selected part
-                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ]);
+                RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ]);
                 // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
                 //renderActiveRing( mRadiusMeters, width_meters, LLColor4( 0.f, 0.f, 1.f, 1.f) , LLColor4( 0.f, 0.f, 1.f, 0.3f ));
                 renderActiveRing(mRadiusMeters, width_meters, getUserEditColor(VZ), getUserEditColor(VZ, 0.3f));
                 // </FS:AR> [FIRE-36909]
             }
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         }
         else if (mManipPart == LL_ROT_Y)
         {
             mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, SELECTED_MANIPULATOR_SCALE, 1.f, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
             {
-                LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 90.f, 1.f, 0.f, 0.f);
-                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VY], mManipulatorScales.mV[VY], mManipulatorScales.mV[VY]);
+                RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, 90.f, 1.f, 0.f, 0.f);
+                RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VY], mManipulatorScales.mV[VY], mManipulatorScales.mV[VY]);
                 // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
                 //renderActiveRing( mRadiusMeters, width_meters, LLColor4( 0.f, 1.f, 0.f, 1.f), LLColor4( 0.f, 1.f, 0.f, 0.3f));
                 renderActiveRing(mRadiusMeters, width_meters, getUserEditColor(VY), getUserEditColor(VY, 0.3f));
                 // </FS:AR> [FIRE-36909]
             }
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         }
         else if (mManipPart == LL_ROT_X)
         {
             mManipulatorScales = lerp(mManipulatorScales, LLVector4(SELECTED_MANIPULATOR_SCALE, 1.f, 1.f, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
             {
-                LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 90.f, 0.f, 1.f, 0.f);
-                LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VX], mManipulatorScales.mV[VX], mManipulatorScales.mV[VX]);
+                RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, 90.f, 0.f, 1.f, 0.f);
+                RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VX], mManipulatorScales.mV[VX], mManipulatorScales.mV[VX]);
                 // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
                 //renderActiveRing( mRadiusMeters, width_meters, LLColor4( 1.f, 0.f, 0.f, 1.f), LLColor4( 1.f, 0.f, 0.f, 0.3f));
                 renderActiveRing(mRadiusMeters, width_meters, getUserEditColor(VX), getUserEditColor(VX, 0.3f));
                 // </FS:AR> [FIRE-36909]
             }
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         }
         else if (mManipPart == LL_ROT_ROLL)
         {
@@ -281,21 +281,21 @@ void LLManipRotate::render()
                 mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, 1.f, 1.f, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
             }
 
-            LLRenderState::CullScope cull_face(true);
+            RKRenderState::CullScope cull_face(true);
             // F3.2: LLGLEnable clip_plane0(GL_CLIP_PLANE0) had no effect on the render state block (never mapped); dropped
-            LLRenderState::DepthScope gls_depth(false);
+            RKRenderState::DepthScope gls_depth(false);
             //LLGLDisable gls_stencil(GL_STENCIL_TEST);
 
             // First pass: centers. Second pass: sides.
             for( S32 i=0; i<2; i++ )
             {
 
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
                 {
                     if (mHighlightedPart == LL_ROT_Z)
                     {
                         mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, 1.f, SELECTED_MANIPULATOR_SCALE, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-                        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ]);
+                        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ], mManipulatorScales.mV[VZ]);
                         // hovering over part
                         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
                         //gl_ring( mRadiusMeters, width_meters, LLColor4( 0.f, 0.f, 1.f, 1.f ), LLColor4( 0.f, 0.f, 1.f, 0.5f ), CIRCLE_STEPS, i);
@@ -311,15 +311,15 @@ void LLManipRotate::render()
                         // </FS:AR> [FIRE-36909]
                     }
                 }
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
                 {
-                    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 90.f, 1.f, 0.f, 0.f);
+                    RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, 90.f, 1.f, 0.f, 0.f);
                     if (mHighlightedPart == LL_ROT_Y)
                     {
                         mManipulatorScales = lerp(mManipulatorScales, LLVector4(1.f, SELECTED_MANIPULATOR_SCALE, 1.f, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-                        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VY], mManipulatorScales.mV[VY], mManipulatorScales.mV[VY]);
+                        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VY], mManipulatorScales.mV[VY], mManipulatorScales.mV[VY]);
                         // hovering over part
                         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
                         //gl_ring( mRadiusMeters, width_meters, LLColor4( 0.f, 1.f, 0.f, 1.f ), LLColor4( 0.f, 1.f, 0.f, 0.5f ), CIRCLE_STEPS, i);
@@ -335,15 +335,15 @@ void LLManipRotate::render()
                         // </FS:AR> [FIRE-36909]
                     }
                 }
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
                 {
-                    LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, 90.f, 0.f, 1.f, 0.f);
+                    RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, 90.f, 0.f, 1.f, 0.f);
                     if (mHighlightedPart == LL_ROT_X)
                     {
                         mManipulatorScales = lerp(mManipulatorScales, LLVector4(SELECTED_MANIPULATOR_SCALE, 1.f, 1.f, 1.f), LLSmoothInterpolation::getInterpolant(MANIPULATOR_SCALE_HALF_LIFE));
-                        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VX], mManipulatorScales.mV[VX], mManipulatorScales.mV[VX]);
+                        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, mManipulatorScales.mV[VX], mManipulatorScales.mV[VX], mManipulatorScales.mV[VX]);
 
                         // hovering over part
                         // <FS:AR> [FIRE-36909] Build Tools - Provide Accessibility(Color Config)
@@ -360,7 +360,7 @@ void LLManipRotate::render()
                         // </FS:AR> [FIRE-36909]
                     }
                 }
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
                 if (mHighlightedPart == LL_ROT_ROLL)
                 {
@@ -373,8 +373,8 @@ void LLManipRotate::render()
 
         gUIProgram.bind();
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
 
     LLVector3 euler_angles;
@@ -794,13 +794,13 @@ void LLManipRotate::drag( S32 x, S32 y )
 
 void LLManipRotate::renderActiveRing( F32 radius, F32 width, const LLColor4& front_color, const LLColor4& back_color)
 {
-    LLRenderState::CullScope cull_face(true);
+    RKRenderState::CullScope cull_face(true);
     {
         gl_ring(radius, width, back_color, back_color * 0.5f, CIRCLE_STEPS, false);
         gl_ring(radius, width, back_color, back_color * 0.5f, CIRCLE_STEPS, true);
     }
     {
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
         gl_ring(radius, width, front_color, front_color * 0.5f, CIRCLE_STEPS, false);
         gl_ring(radius, width, front_color, front_color * 0.5f, CIRCLE_STEPS, true);
     }
@@ -896,18 +896,18 @@ void LLManipRotate::renderSnapGuides()
             }
         }
 
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
         for (S32 pass = 0; pass < 3; pass++)
         {
             // render snap guide ring
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
             LLQuaternion snap_guide_rot;
             F32 angle_radians, x, y, z;
             snap_guide_rot.shortestArc(LLVector3::z_axis, getConstraintAxis());
             snap_guide_rot.getAngleAxis(&angle_radians, &x, &y, &z);
-            LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
-            LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
+            RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, center.mV[VX], center.mV[VY], center.mV[VZ]);
+            RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
             LLColor4 line_color = setupSnapGuideRenderPass(pass);
 
@@ -930,7 +930,7 @@ void LLManipRotate::renderSnapGuides()
             {
                 gl_circle_2d(0.f, 0.f, mRadiusMeters * SNAP_GUIDE_INNER_RADIUS, CIRCLE_STEPS, false);
             }
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
             for (S32 i = 0; i < 64; i++)
             {
@@ -1145,7 +1145,7 @@ void LLManipRotate::renderSnapGuides()
                 gRender.end();
 
                 {
-                    LLRenderState::DepthScope gls_depth(true);
+                    RKRenderState::DepthScope gls_depth(true);
                     gRender.begin(LLRender::LINES);
                     {
                         gRender.vertex3fv(line_start.mV);

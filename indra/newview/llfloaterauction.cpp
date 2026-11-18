@@ -159,7 +159,7 @@ void LLFloaterAuction::draw()
                 rect.stretch(-1);
             }
             {
-                LLRenderPresetUIDefault gls_ui;
+                RKRenderPresetUIDefault gls_ui;
                 gRender.color3f(1.f, 1.f, 1.f);
                 gl_draw_scaled_image(rect.mLeft,
                                      rect.mBottom,

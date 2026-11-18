@@ -2,7 +2,7 @@
 // answer was a partial value (the avatar's self shadow, hair and glass translucency: 0.02 .. 0.98), which the denoiser's binary mask cannot carry. g, b and a (occlusion, the projector shadows) are
 // untouched. Pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseMap;      // the sun lightmap as the sun pass wrote it
     uint ll_ti_bumpMap;         // the denoiser's output (r: the filtered visibility, 1 lit)

@@ -39,7 +39,7 @@
 #include <cstdlib>
 #include <cstring>
 
-class LLInstances
+class RKInstances
 {
 public:
     static constexpr U32 kCapacity = 1u << 20;      // ~1M drawables; 32 MB of address space, committed as touched

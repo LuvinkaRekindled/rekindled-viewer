@@ -61,24 +61,24 @@ namespace
     // <FS> native-vk: a zone is a record in the command stream; the Vulkan worker stamps the GPU timeline there
     void zoneBegin(const char* name)
     {
-        if (isMainThread() && LLVkZones::available())
+        if (isMainThread() && RKVkZones::available())
         {
-            LLVkZones::zone(name, true);
+            RKVkZones::zone(name, true);
         }
     }
 
     void zoneEnd()
     {
-        if (isMainThread() && LLVkZones::available())
+        if (isMainThread() && RKVkZones::available())
         {
-            LLVkZones::zone(nullptr, false);
+            RKVkZones::zone(nullptr, false);
         }
     }
 
     void uninstall()
     {
-        LLGpuZoneHooks::sBegin = nullptr;
-        LLGpuZoneHooks::sEnd = nullptr;
+        RKGpuZoneHooks::sBegin = nullptr;
+        RKGpuZoneHooks::sEnd = nullptr;
         sHooked = false;
 
         sAggregates.clear();
@@ -137,15 +137,15 @@ namespace
 }
 
 // static
-void LLGpuZoneTimer::onFrameEnd()
+void RKGpuZoneTimer::onFrameEnd()
 {
     static LLCachedControl<bool> enabled(gSavedSettings, "FSGpuZoneTimers", false);
 
     if (enabled && !sHooked)
     {
         sMainThread = std::this_thread::get_id();
-        LLGpuZoneHooks::sBegin = &zoneBegin;
-        LLGpuZoneHooks::sEnd = &zoneEnd;
+        RKGpuZoneHooks::sBegin = &zoneBegin;
+        RKGpuZoneHooks::sEnd = &zoneEnd;
         sHooked = true;
         sLastLog = LLTimer::getElapsedSeconds();
         LL_INFOS("GPUZones") << "GPU zone timers enabled" << LL_ENDL;
@@ -173,13 +173,13 @@ void LLGpuZoneTimer::onFrameEnd()
 }
 
 // static
-bool LLGpuZoneTimer::isActive()
+bool RKGpuZoneTimer::isActive()
 {
     return sHooked;
 }
 
 // static
-void LLGpuZoneTimer::count(const char* name, double value)
+void RKGpuZoneTimer::count(const char* name, double value)
 {
     if (sHooked && std::this_thread::get_id() == sMainThread)
     {
@@ -357,7 +357,7 @@ namespace
     }
 }
 
-LLCpuZoneScope::LLCpuZoneScope(const char* name)
+RKCpuZoneScope::RKCpuZoneScope(const char* name)
     : mName(nullptr), mStart(0), mStartCycles(0)
 {
     if (sCpuZonesOn && sCpuMainThreadKnown && std::this_thread::get_id() == sCpuMainThread)
@@ -369,17 +369,17 @@ LLCpuZoneScope::LLCpuZoneScope(const char* name)
         {
             mStartCycles = thread_cycles();
         }
-        LLUniCensus::push(name);
+        RKUniCensus::push(name);
     }
 }
 
-LLCpuZoneScope::~LLCpuZoneScope()
+RKCpuZoneScope::~RKCpuZoneScope()
 {
     if (!mName)
     {
         return;
     }
-    LLUniCensus::pop();
+    RKUniCensus::pop();
     const long long d = cpu_now() - mStart;
     const bool measured = mStartCycles != 0;
     const unsigned long long cycles = measured ? thread_cycles() - mStartCycles : 0;
@@ -411,14 +411,14 @@ LLCpuZoneScope::~LLCpuZoneScope()
 namespace
 {
     // the draw time of the views near the top of the UI tree, by view name (inclusive: a floater counts its children)
-    std::vector<LLCpuZoneScope*> sViewScopes;
+    std::vector<RKCpuZoneScope*> sViewScopes;
     void cpu_view_hook(const LLView* view, bool begin)
     {
         if (begin)
         {
             // (zones are matched by name pointer: one pointer per distinct name, or every widget with the same name takes a slot of the table and the table is full before the render zones register)
             static std::unordered_set<std::string> names;
-            sViewScopes.push_back(new LLCpuZoneScope(names.insert(view->getName()).first->c_str()));
+            sViewScopes.push_back(new RKCpuZoneScope(names.insert(view->getName()).first->c_str()));
         }
         else if (!sViewScopes.empty())
         {
@@ -431,7 +431,7 @@ namespace
 // <FS> U0 (doc/vulkan/U-pass-uniforms-design.md): the census of uniform writes, shader binds and texture binds (LL_VK_UNICENSUS=1 with FS_CPU_ZONES=1), per frame over 600 frames
 static void uni_census_report(double frames)
 {
-    using namespace LLUniCensus;
+    using namespace RKUniCensus;
     if (!sOn)
     {
         return;
@@ -555,7 +555,7 @@ static void uni_census_report(double frames)
 }
 
 // static
-void LLCpuZoneScope::frame()
+void RKCpuZoneScope::frame()
 {
     if (!sCpuZonesOn)
     {
@@ -866,7 +866,7 @@ namespace
             double age = (double)(hw_now() - last) / ticks_per_ms;
             const char* clock_name = "the main loop has not finished frame";
             // the worker's presents are the second clock: a frame the main thread finished on time can still reach the screen late (the GPU, the swap chain, the worker waiting)
-            const long long present = LLVkBridge::lastPresentTicks();
+            const long long present = RKVkBridge::lastPresentTicks();
             if (present)
             {
                 const double present_age = (double)(hw_now() - present) / ticks_per_ms;
@@ -1307,8 +1307,8 @@ void fs_growth_probe()
     last_faults = pmc.PageFaultCount;
 }
 
-// <FS> LL_VK_SYNC_LOG: names the functions that wait in LLVkAsync::syncCall
-static const bool sSyncSymbolizerSet = []() { LLVkBridge::setSymbolizer(&fs_describe_address); return true; }();
+// <FS> LL_VK_SYNC_LOG: names the functions that wait in RKVkAsync::syncCall
+static const bool sSyncSymbolizerSet = []() { RKVkBridge::setSymbolizer(&fs_describe_address); return true; }();
 
 // <FS> one stack address as text: module+offset (what a pdb reads) and the nearest symbol
 std::string fs_describe_frame(const void* pc)

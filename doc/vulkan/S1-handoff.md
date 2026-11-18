@@ -1,6 +1,6 @@
 # S1 hand-off (2026-10-20): scene tables for static geometry, phase 0 measured
 
-For the next session. Read first: `PLAN-gpu-scene.md` (the S slices), `PLAN-retained-records.md` (phases 0-4, the invalidation list), `POST-F-REVIEW.md` (the London numbers: why S, what S takes), the memory notes `project-s-slices-status`, `project-f1-foundation-status` (the old names are renamed: `gGL` = `gRender`, `LLGLSLShader` = `LLShaderProgram`, `LLImageGL` = `LLImageTex`, `rkvkgl.*` = `rkvkworker.*`, `rkvkmirror.*` = `rkvkbridge.*`).
+For the next session. Read first: `PLAN-gpu-scene.md` (the S slices), `PLAN-retained-records.md` (phases 0-4, the invalidation list), `POST-F-REVIEW.md` (the London numbers: why S, what S takes), the memory notes `project-s-slices-status`, `project-f1-foundation-status` (the old names are renamed: `gGL` = `gRender`, `LLGLSLShader` = `RKShaderProgram`, `LLImageGL` = `RKImageTex`, `rkvkgl.*` = `rkvkworker.*`, `rkvkmirror.*` = `rkvkbridge.*`).
 
 ## Phase 0 is done: the counters and their result
 Added (the commit "S1 phase 0" in `git log`): `LLSpatialGroup::mDrawMapSerial` (bumped in `clearDrawMap()`: every creation of draw infos follows a clear), `LLSpatialGroup::sDrawMapsCleared`, `mSceneSeenSerial / mSceneSeenFrame`, and `LL_VK_SCENE_STATS=1` (counters in `postSort` of the main view only, log tag `VkScene`, every 600 frames; nothing changes what is drawn). Run: `$env:RT_NO_PHASES='1'; $env:RT_OPSTATS='1'; $env:RT_ENV='LL_VK_SCENE_STATS=1'; powershell -File <work>\rt-run-shot3.ps1 -Name <tag> -Wait 150` (run `f10a1-london-scene`).

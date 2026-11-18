@@ -1,7 +1,7 @@
 // waterhaze.vert: the water haze's geometry: a full screen triangle under the water, the water patch's own clip position above it. A line for line translation of "Water Haze Shader"
 // (class 3 deferred/waterHazeV.glsl); pairs with waterhaze.frag. (the uniform blocks are declared the same in both stages)
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     uvec2 ll_packet_table;      // the geometry is read from the record's rows (the water patches above the water, the full screen triangle under it): three buffer addresses written by the draw record
     uvec2 ll_packet_models;
@@ -14,7 +14,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     float waterFogKS;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
     uint ll_ti_exclusionTex;

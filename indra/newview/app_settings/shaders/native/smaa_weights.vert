@@ -1,6 +1,6 @@
 // smaa_weights.vert: the vertex stage of SMAA's blending weight calculation. A line for line translation of "SMAA Blending Weights" (deferred/SMAABlendWeightsV.glsl); pairs with smaa_weights.frag.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec4 SMAA_RT_METRICS;
 };

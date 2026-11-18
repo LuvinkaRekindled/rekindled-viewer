@@ -14,14 +14,14 @@
 
 #include <vector>
 
-namespace LLVkUpscale
+namespace RKVkUpscale
 {
     struct Params
     {
-        LLVk::Image* mColor = nullptr;            // render size, sampled
-        LLVk::Image* mDepth = nullptr;            // render size, sampled (depth aspect)
-        LLVk::Image* mMotion = nullptr;           // render size, RG: previous minus current position in pixels
-        LLVk::Image* mOutput = nullptr;           // window size, storage
+        RKVk::Image* mColor = nullptr;            // render size, sampled
+        RKVk::Image* mDepth = nullptr;            // render size, sampled (depth aspect)
+        RKVk::Image* mMotion = nullptr;           // render size, RG: previous minus current position in pixels
+        RKVk::Image* mOutput = nullptr;           // window size, storage
         U32 mRenderWidth = 0, mRenderHeight = 0;
         U32 mOutputWidth = 0, mOutputHeight = 0;
         float mJitterX = 0.f, mJitterY = 0.f;   // pixels of the render size, +x right, +y down
@@ -56,7 +56,7 @@ namespace LLVkUpscale
     float lodBias();
     void setLodBias(float bias);
 
-    VkImageLayout inputLayout(const LLVk::Image& image);
+    VkImageLayout inputLayout(const RKVk::Image& image);
     VkImageLayout outputLayout();
 }
 

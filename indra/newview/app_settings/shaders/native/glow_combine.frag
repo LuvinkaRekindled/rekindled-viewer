@@ -1,6 +1,6 @@
 // glow_combine.frag: the lit picture plus the glow target: the sum of two textures. A line for line translation of "Glow Combine Shader" (interface/glowcombineF.glsl); pairs with fullscreen.vert.
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseRect;
     uint ll_ti_emissiveRect;

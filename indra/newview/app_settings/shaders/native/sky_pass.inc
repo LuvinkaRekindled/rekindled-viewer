@@ -1,7 +1,7 @@
 // sky_pass.inc: the loose uniform blocks of the translated sky programs (sky, clouds, sun disc, moon, stars). Every name and type is the one the viewer's old programs use (the values are copied by name).
 // The blocks are the same in both stages of every program of the set.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     // the scene table of the record
     uvec2 ll_packet_table;
@@ -54,7 +54,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #endif
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_rainbow_map;
     uint ll_ti_halo_map;
@@ -67,7 +67,7 @@ layout(std140, set = 0, binding = 5) uniform LLLooseDraw
 #endif
 };
 
-layout(std140, set = 0, binding = 6) uniform LLLooseMaterial
+layout(std140, set = 0, binding = 6) uniform RKLooseMaterial
 {
     vec4 color;
 };

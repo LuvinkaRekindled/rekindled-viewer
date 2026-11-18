@@ -1,6 +1,6 @@
 # Where else the compute/apply split and the fork-join pool pay
 
-Written 2026-10-27 as a companion to `PLAN-statesort-offmain.md`. That plan moves the main view's stateSort to the shared `LLForkJoinPool` as a pure compute pass over chunks (workers write only item-owned fields, per-thread lists and POD delta records) followed by an apply pass on the main thread (queues, group state, rebuilds). This note asks where else in the frame the same shape fits, and ranks the places by return over work. Nothing here is built; numbers are from `MAINTHREAD-candidates.md` (club1/club2, the crowded plaza, laps of 2026-10-26/27) and are the serial main-thread time of each block today. Estimates are marked (est.).
+Written 2026-10-27 as a companion to `PLAN-statesort-offmain.md`. That plan moves the main view's stateSort to the shared `RKForkJoinPool` as a pure compute pass over chunks (workers write only item-owned fields, per-thread lists and POD delta records) followed by an apply pass on the main thread (queues, group state, rebuilds). This note asks where else in the frame the same shape fits, and ranks the places by return over work. Nothing here is built; numbers are from `MAINTHREAD-candidates.md` (club1/club2, the crowded plaza, laps of 2026-10-26/27) and are the serial main-thread time of each block today. Estimates are marked (est.).
 
 ## 1. What the pattern needs, and what it costs
 
@@ -33,7 +33,7 @@ Stage 3 of the stateSort plan already hoists this loop before the main cull so t
 
 ## 2.3 Ray-scene naming of rigged draws: chunk by avatar
 
-`rt_name_rigged_main_view` (pipeline.cpp 19760) walks the rigged render maps and the scene fragments, builds `ShadowSkinEntry` / `ShadowAlphaEntry` vectors with deduplicated matrices and palettes, and sends one blob per kind through `LLVkBridge::shadowPackets`. After `rt_name_avatar_due` (19737) it is 0.5-0.6 ms (1.0-1.2 before). Per entry it reads a draw info and writes local vectors: pure compute, except
+`rt_name_rigged_main_view` (pipeline.cpp 19760) walks the rigged render maps and the scene fragments, builds `ShadowSkinEntry` / `ShadowAlphaEntry` vectors with deduplicated matrices and palettes, and sends one blob per kind through `RKVkBridge::shadowPackets`. After `rt_name_avatar_due` (19737) it is 0.5-0.6 ms (1.0-1.2 before). Per entry it reads a draw info and writes local vectors: pure compute, except
 
 - `shadow_palette` calls `updateSkinInfoMatrixPalette`, which may compute and cache a palette on the avatar: safe if one job owns one avatar;
 - `rt_name_avatar_due` writes `mRtNameChecked` / `mRtNameDue` / `mRtNameLast` on the avatar: same rule;

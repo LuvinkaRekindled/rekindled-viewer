@@ -1,4 +1,4 @@
-// shadow_alpha.vert: an alpha tested shadow caster (leaves, glass, cut-out textures, glTF alpha mask) from a record of alpha shadow packets (the worker's 80 byte packet, LLVkBridge::shadowAlphaPackets):
+// shadow_alpha.vert: an alpha tested shadow caster (leaves, glass, cut-out textures, glTF alpha mask) from a record of alpha shadow packets (the worker's 80 byte packet, RKVkBridge::shadowAlphaPackets):
 // no vertex attributes; one packet a draw, drawn as a draw of its own whose instance index is the packet's number. Static and rigged casters are the same program: flag 32 of the packet says the vertex has
 // weights and a palette (the shared skin function of lib/rows.glsl, as shadow.vert). Stands in for "Deferred Shadow Alpha Pull Shader" (deferred/shadowAlphaPullV.glsl).
 // Packet flags: 1 fullbright (the vertex colour's alpha does not count), 2 tree style (no vertex alpha, no dithering), 4 one texture (no index in position.w), 8 texcoords present, 16 colours present,
@@ -8,7 +8,7 @@
 
 #include "lib/rows.glsl"
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     uvec2 ll_packet_table;      // the packets of the record
     uvec2 ll_packet_models;     // the model matrices of the record
@@ -68,7 +68,7 @@ void main()
     // GL clip space z is [-w, w], Vulkan's is [0, w]: the viewer's own vertex shaders get this line from the translator, a native one does it itself (see alpha.vert)
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
 
-    // texture windows (LLVkBridge::kAlphaWindowShift): a batch of more than four textures is drawn by several entries over the same index range, each naming the textures of one window (the number of the
+    // texture windows (RKVkBridge::kAlphaWindowShift): a batch of more than four textures is drawn by several entries over the same index range, each naming the textures of one window (the number of the
     // texture in position.w, shifted by the window's width; the window number is in bits 12 - 15 of the flags). The triangles of the other windows are moved outside the clip volume (the three vertices of
     // a triangle share the texture number, so a triangle goes whole)
     const uint tex_raw = (pk.flags & 4u) != 0u ? 0u : (floatBitsToUint(position.w) & 15u);

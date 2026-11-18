@@ -1,7 +1,7 @@
 // impostor_forward.vert: a textured shape with its own coordinates (the avatar preview's impostor pass: the old forward pass of LLDrawPoolAvatar, used by the preview renders of the appearance editor hints and the
 // animation / image preview floaters). A line for line translation of "Impostor Shader" (objects/impostorV.glsl); pairs with impostor_forward.frag. (the draw block is declared the same in both stages)
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 texture_matrix0;
     mat4 modelview_projection_matrix;

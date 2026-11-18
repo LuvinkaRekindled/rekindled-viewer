@@ -80,196 +80,196 @@ public:
 
     /* virtual */ std::string getShaderDirPrefix(void);
 
-    /* virtual */ void updateShaderUniforms(LLShaderProgram * shader);
+    /* virtual */ void updateShaderUniforms(RKShaderProgram * shader);
 
 }; //LLViewerShaderMgr
 
 extern LLVector4            gShinyOrigin;
 
 //utility shaders
-extern LLShaderProgram         gGlowCombineProgram;
-extern LLShaderProgram         gReflectionMipProgram;
-extern LLShaderProgram         gGaussianProgram;
-extern LLShaderProgram         gRadianceGenProgram;
-extern LLShaderProgram         gIrradianceGenProgram;
-extern LLShaderProgram         gGlowCombineFXAAProgram;
-extern LLShaderProgram         gDebugProgram;
+extern RKShaderProgram         gGlowCombineProgram;
+extern RKShaderProgram         gReflectionMipProgram;
+extern RKShaderProgram         gGaussianProgram;
+extern RKShaderProgram         gRadianceGenProgram;
+extern RKShaderProgram         gIrradianceGenProgram;
+extern RKShaderProgram         gGlowCombineFXAAProgram;
+extern RKShaderProgram         gDebugProgram;
 enum NormalDebugShaderVariant : S32
 {
     NORMAL_DEBUG_SHADER_DEFAULT,
     NORMAL_DEBUG_SHADER_WITH_TANGENTS,
     NORMAL_DEBUG_SHADER_COUNT
 };
-extern LLShaderProgram         gNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
-extern LLShaderProgram         gBenchmarkProgram;
-extern LLShaderProgram         gReflectionProbeDisplayProgram;
-extern LLShaderProgram         gCopyProgram;
-extern LLShaderProgram         gCopyDepthProgram;
-extern LLShaderProgram         gPBRTerrainBakeProgram;
-extern LLShaderProgram         gDrawColorProgram;
+extern RKShaderProgram         gNormalDebugProgram[NORMAL_DEBUG_SHADER_COUNT];
+extern RKShaderProgram         gBenchmarkProgram;
+extern RKShaderProgram         gReflectionProbeDisplayProgram;
+extern RKShaderProgram         gCopyProgram;
+extern RKShaderProgram         gCopyDepthProgram;
+extern RKShaderProgram         gPBRTerrainBakeProgram;
+extern RKShaderProgram         gDrawColorProgram;
 
 //output tex0[tc0] - tex1[tc1]
-extern LLShaderProgram         gTwoTextureCompareProgram;
+extern RKShaderProgram         gTwoTextureCompareProgram;
 //discard some fragments based on user-set color tolerance
-extern LLShaderProgram         gOneTextureFilterProgram;
+extern RKShaderProgram         gOneTextureFilterProgram;
 
 
 //object shaders
-extern LLShaderProgram     gObjectPreviewProgram;
-extern LLShaderProgram        gPhysicsPreviewProgram;
-extern LLShaderProgram     gObjectAlphaMaskNoColorProgram;
+extern RKShaderProgram     gObjectPreviewProgram;
+extern RKShaderProgram        gPhysicsPreviewProgram;
+extern RKShaderProgram     gObjectAlphaMaskNoColorProgram;
 
 //environment shaders
-extern LLShaderProgram         gWaterPullProgram;          // <FS> the table form of the water planes (WATER_PULL: the planes' vertex buffers read by address)
-extern LLShaderProgram         gUnderWaterPullProgram;
-extern LLShaderProgram         gWaterPullRtProgram;        // <FS> the water with the ray queries of the stock water (a session with ray queries)
-extern LLShaderProgram         gWaterPullRtReflectionProgram;       // <FS> and the one that also traces the reflection (FSVkRTWater)
+extern RKShaderProgram         gWaterPullProgram;          // <FS> the table form of the water planes (WATER_PULL: the planes' vertex buffers read by address)
+extern RKShaderProgram         gUnderWaterPullProgram;
+extern RKShaderProgram         gWaterPullRtProgram;        // <FS> the water with the ray queries of the stock water (a session with ray queries)
+extern RKShaderProgram         gWaterPullRtReflectionProgram;       // <FS> and the one that also traces the reflection (FSVkRTWater)
 bool ll_water_rt_reflection();   // it was made (the material table can be on)
 bool ll_water_rt();              // the water seen from above is drawn with it (a session with ray queries and sun shadows)
-extern LLShaderProgram         gGlowProgram;
-extern LLShaderProgram         gGlowExtractProgram;
+extern RKShaderProgram         gGlowProgram;
+extern RKShaderProgram         gGlowExtractProgram;
 
 //interface shaders
-extern LLShaderProgram         gHighlightProgram;
-extern LLShaderProgram         gHighlightPullSkinProgram;      // K6 B1: the rigged Highlight Transparent draws (native stand-in)
-extern LLShaderProgram         gDebugBatchPullProgram;         // K6 B1: the Batch Size / Texture Animation views (native stand-ins)
-extern LLShaderProgram         gDebugBatchPullSkinProgram;
-extern LLShaderProgram         gHighlightNormalProgram;
-extern LLShaderProgram         gHighlightSpecularProgram;
+extern RKShaderProgram         gHighlightProgram;
+extern RKShaderProgram         gHighlightPullSkinProgram;      // K6 B1: the rigged Highlight Transparent draws (native stand-in)
+extern RKShaderProgram         gDebugBatchPullProgram;         // K6 B1: the Batch Size / Texture Animation views (native stand-ins)
+extern RKShaderProgram         gDebugBatchPullSkinProgram;
+extern RKShaderProgram         gHighlightNormalProgram;
+extern RKShaderProgram         gHighlightSpecularProgram;
 
-extern LLShaderProgram         gDeferredHighlightProgram;
+extern RKShaderProgram         gDeferredHighlightProgram;
 
-extern LLShaderProgram         gPathfindingProgram;
-extern LLShaderProgram         gPathfindingNoNormalsProgram;
+extern RKShaderProgram         gPathfindingProgram;
+extern RKShaderProgram         gPathfindingNoNormalsProgram;
 
 // avatar shader handles
-extern LLShaderProgram         gAvatarProgram;
-extern LLShaderProgram         gImpostorProgram;
+extern RKShaderProgram         gAvatarProgram;
+extern RKShaderProgram         gImpostorProgram;
 
 // Post Process Shaders
-extern LLShaderProgram         gPostVignetteProgram;   // <FS:CR> Import Vignette from Exodus
-extern LLShaderProgram         gPostSnapshotFrameProgram;   // <FS:Beq/> Snapshot Frame overlay
+extern RKShaderProgram         gPostVignetteProgram;   // <FS:CR> Import Vignette from Exodus
+extern RKShaderProgram         gPostSnapshotFrameProgram;   // <FS:Beq/> Snapshot Frame overlay
 
 // Deferred rendering shaders
-extern LLShaderProgram         gDeferredImpostorProgram;
-extern LLShaderProgram         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
-extern LLShaderProgram         gDeferredNonIndexedDiffuseProgram;
-extern LLShaderProgram         gDeferredMultiLightProgram;
-extern LLShaderProgram         gDeferredMultiSpotLightProgram;
-extern LLShaderProgram         gDeferredSunProgram;
-extern LLShaderProgram         gDeferredSunProbeProgram;
-extern LLShaderProgram         gHazeProgram;
-extern LLShaderProgram         gWaterHazePullProgram;       // <FS> the table form of the water patches of the haze
-extern LLShaderProgram         gDeferredBlurLightProgram;
-extern LLShaderProgram         gNativeSunHalfProgram;           // <FS> native only (rkvknative.h): the sun lightmap at half resolution
-extern LLShaderProgram         gNativeLightUpsampleProgram;     // <FS> native only: the depth aware upsample of the half resolution lightmap
-extern LLShaderProgram         gDeferredAvatarProgram;
-extern LLShaderProgram         gDeferredSoftenProgram;
-extern LLShaderProgram         gDeferredRtReflectionProgram;     // <FS> the traced glossy reflection as a pass of its own (rtReflectionF.glsl, doc/vulkan/PLAN-rt-reflection-pass.md)
-extern LLShaderProgram         gDeferredShadowCubeProgram;
-extern LLShaderProgram         gDeferredShadowPullProgram;   // <FS> render packets: reads vertices and indices by address (Vulkan mirror only)
-extern LLShaderProgram         gDeferredShadowAlphaPullProgram;   // <FS> render packets: the same for alpha masked casters, textures from the bindless table
-extern LLShaderProgram         gDeferredShadowSkinPullProgram;   // <FS> render packets: rigged casters (weights and palette read by address)
-extern LLShaderProgram         gDeferredAlphaPullProgram;            // <FS> S5a: the lit alpha pass drawn from the scene table (alphaPullV + alphaF, textures from the bindless table)
-extern LLShaderProgram         gDeferredFullbrightAlphaPullProgram;  // <FS> S5a: ... and the fullbright alpha pass (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF)
-extern LLShaderProgram         gDeferredAlphaUberPullProgram;          // <FS> item D1: the lit alpha pull program that also draws fullbright alpha draws (ALPHA_UBER)
-extern LLShaderProgram         gDeferredAlphaUberPullSkinProgram;
-extern LLShaderProgram         gDeferredAlphaUberMatPullProgram;       // <FS> item D2: the merged lit alpha program that also draws the material alpha draws
-extern LLShaderProgram         gDeferredAlphaUberMatPullSkinProgram;
-extern LLShaderProgram         gDeferredTerrainPullProgram;           // <FS> S6.6a: the terrain pass from the geometry packet path (terrainPullV + terrainF)
-extern LLShaderProgram         gDeferredTreePullProgram;              // <FS> the Linden tree pass of the G-buffer from the geometry packet path (treeV + treeF with LL_VERTEX_PULL)
-extern LLShaderProgram         gDeferredPBRTerrainPullProgram[];       // <FS> S6.6a: the same for the PBR terrain (one per paint type)
-extern LLShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6 X1: the opaque fullbright pass from the scene table, static and rigged
-extern LLShaderProgram         gDeferredFullbrightPullSkinProgram;
-extern LLShaderProgram         gDeferredFullbrightShinyPullProgram;        // <FS> J1 K4: the fullbright shiny pass from the scene table, static and rigged (alphaPullV with IS_SHINY_PULL + fullbrightShinyF)
-extern LLShaderProgram         gDeferredFullbrightShinyPullSkinProgram;
-extern LLShaderProgram         gHUDFullbrightPullProgram;        // <FS> J1 K6 S1: the HUD's fullbright pass from the scene table (the fullbright pull program with IS_HUD)
-extern LLShaderProgram         gHUDFullbrightMaskPullProgram;        // <FS> J1 K6 S1: the HUD's alpha masked fullbright and fullbright shiny passes from the scene table
-extern LLShaderProgram         gHUDFullbrightShinyPullProgram;
-extern LLShaderProgram         gHUDPBROpaquePullProgram;         // <FS> J1 K6 S1: the HUD's glTF opaque / mask pass from the scene table (the PBR opaque pull program with IS_HUD)
-extern LLShaderProgram         gDeferredBumpPullProgram;        // <FS> J1 K4: the deferred bump pass from the scene table, static and rigged (alphaPullV with IS_BUMP_PULL + bumpF)
-extern LLShaderProgram         gDeferredBumpPullSkinProgram;
-extern LLShaderProgram         gDeferredEmbossPullProgram;        // <FS> J1 K4: the post deferred emboss (post bump) pass from the scene table, static and rigged (alphaPullV with IS_EMBOSS_PULL + objects/bumpF)
-extern LLShaderProgram         gDeferredEmbossPullSkinProgram;
-extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullProgram;       // <FS> S6 X3: the alpha masked passes from the scene table (static and rigged)
-extern LLShaderProgram         gDeferredDiffuseAlphaMaskPullSkinProgram;
-extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullProgram;
-extern LLShaderProgram         gDeferredFullbrightAlphaMaskPullSkinProgram;
-extern LLShaderProgram         gDeferredPBROpaquePullProgram;             // <FS> S6 X4: the glTF opaque / mask G-buffer pass from the scene table
-extern LLShaderProgram         gDeferredPBROpaquePullSkinProgram;
-extern LLShaderProgram         gDeferredLightPullProgram;                 // <FS> S6 LV1: the point light volumes from one record
-extern LLShaderProgram         gDeferredSpotLightPullProgram;             // <FS> S6 LV2: the projectors from one record
-extern LLShaderProgram         gDeferredPBRAlphaPullProgram;          // <FS> S5c: the PBR (glTF) blend pass, vertices by address, the four textures from the bindless table
-extern LLShaderProgram         gDeferredAlphaPullSkinProgram;          // <FS> S5d: the rigged variants of the alpha pull programs (weights and palette by address, indexed draws)
-extern LLShaderProgram         gDeferredFullbrightAlphaPullSkinProgram;
-extern LLShaderProgram         gDeferredPBRAlphaPullSkinProgram;
-extern LLShaderProgram         gDeferredEmissivePullProgram;          // <FS> S5e: the glow second draw of the alpha items from the table (alpha only): plain, rigged, PBR, PBR rigged
-extern LLShaderProgram         gDeferredEmissivePullSkinProgram;
-extern LLShaderProgram         gPBRGlowPullProgram;
-extern LLShaderProgram         gPBRGlowPullSkinProgram;
-extern LLShaderProgram         gHUDFullbrightAlphaPullProgram;         // <FS> S5f F4: the HUD, impostor and depth only (mask) variants of the alpha pull programs
-extern LLShaderProgram         gHUDPBRAlphaPullProgram;
-extern LLShaderProgram         gDeferredAlphaImpostorPullProgram;
-extern LLShaderProgram         gDeferredAlphaImpostorPullSkinProgram;
-extern LLShaderProgram         gDeferredFullbrightMaskPullProgram;
-extern LLShaderProgram         gDeferredFullbrightMaskPullSkinProgram;
-extern LLShaderProgram         gDeferredDiffusePullProgram;      // <FS> render packets: the deferred diffuse pass, vertices by address, textures from the bindless table
-extern LLShaderProgram         gDeferredMaterialPullProgram[16]; // <FS> render packets: the deferred materials passes (the unskinned indices of gDeferredMaterialProgram)
-extern LLShaderProgram         gDeferredDiffusePullSkinProgram;  // <FS> S4 A1: the rigged variants of the two (weights and palette read by address)
-extern LLShaderProgram         gDeferredMaterialPullSkinProgram[16];
-extern LLShaderProgram         gDeferredPostProgram;
-extern LLShaderProgram         gDeferredCoFProgram;
-extern LLShaderProgram         gDeferredDoFCombineProgram;
-extern LLShaderProgram         gFXAAProgram[4];
-extern LLShaderProgram         gSMAAEdgeDetectProgram[4];
-extern LLShaderProgram         gSMAABlendWeightsProgram[4];
-extern LLShaderProgram         gSMAANeighborhoodBlendProgram[4];
-extern LLShaderProgram         gCASProgram;
-extern LLShaderProgram         gCASLegacyGammaProgram;
-extern LLShaderProgram         gDeferredPostNoDoFProgram;
-extern LLShaderProgram         gDeferredPostNoDoFNoiseProgram;
-extern LLShaderProgram         gDeferredPostGammaCorrectProgram;
-extern LLShaderProgram         gLegacyPostGammaCorrectProgram;
-extern LLShaderProgram         gDeferredPostTonemapProgram;
-extern LLShaderProgram         gNoPostTonemapProgram;
-extern LLShaderProgram         gDeferredPostTonemapGammaCorrectProgram;
-extern LLShaderProgram         gNoPostTonemapGammaCorrectProgram;
-extern LLShaderProgram         gDeferredPostTonemapLegacyGammaCorrectProgram;
-extern LLShaderProgram         gNoPostTonemapLegacyGammaCorrectProgram;
-extern LLShaderProgram         gExposureProgram;
-extern LLShaderProgram         gExposureProgramNoFade;
-extern LLShaderProgram         gLuminanceProgram;
-extern LLShaderProgram         gMotionVectorProgram;
-extern LLShaderProgram         gRtShadowFilterProgram;        // <FS> the penumbra of the ray traced sun shadow from the blocker distance (rtShadowFilterF.glsl)
-extern LLShaderProgram         gRtShadowPrepProgram;          // <FS> its input: the hard sun shadow, the half-width and the blocker mask into the mipped target (rtShadowPrepF.glsl)
-extern LLShaderProgram         gDnsrSunPackProgram, gDnsrSunUnpackProgram;       // <FS> the AMD shadow denoiser's hit mask of the sun lightmap and its result back into it
-extern LLShaderProgram         gDnsrPrepProgram, gDnsrPackProgram, gDnsrUnpackProgram;       // <FS> the AMD reflection denoiser's inputs and its result back (PLAN-amd-denoiser.md)
-extern LLShaderProgram         gNRRimLiftProgram;             // <FS> DLSS-NR: the rim lift after the neural renderer (nrRimLiftF.glsl)
-extern LLShaderProgram         gAvatarVelocityDebugProgram;
-extern LLShaderProgram         gRtMaterialDebugProgram;
-extern LLShaderProgram         gDeferredAvatarShadowProgram;
-extern LLShaderProgram         gDeferredAvatarAlphaShadowProgram;
-extern LLShaderProgram         gDeferredAvatarAlphaMaskShadowProgram;
-extern LLShaderProgram         gDeferredAvatarAlphaProgram;
-extern LLShaderProgram         gEnvironmentMapProgram;
-extern LLShaderProgram         gDeferredWLSkyProgram;
-extern LLShaderProgram         gDeferredWLCloudProgram;
-extern LLShaderProgram         gDeferredWLSunProgram;
-extern LLShaderProgram         gDeferredWLMoonProgram;
-extern LLShaderProgram         gDeferredStarProgram;
-extern LLShaderProgram         gNormalMapGenProgram;
-extern LLShaderProgram         gDeferredGenBrdfLutProgram;
-extern LLShaderProgram         gDeferredBufferVisualProgram;
+extern RKShaderProgram         gDeferredImpostorProgram;
+extern RKShaderProgram         gDeferredNonIndexedDiffuseAlphaMaskNoColorProgram;
+extern RKShaderProgram         gDeferredNonIndexedDiffuseProgram;
+extern RKShaderProgram         gDeferredMultiLightProgram;
+extern RKShaderProgram         gDeferredMultiSpotLightProgram;
+extern RKShaderProgram         gDeferredSunProgram;
+extern RKShaderProgram         gDeferredSunProbeProgram;
+extern RKShaderProgram         gHazeProgram;
+extern RKShaderProgram         gWaterHazePullProgram;       // <FS> the table form of the water patches of the haze
+extern RKShaderProgram         gDeferredBlurLightProgram;
+extern RKShaderProgram         gNativeSunHalfProgram;           // <FS> native only (rkvknative.h): the sun lightmap at half resolution
+extern RKShaderProgram         gNativeLightUpsampleProgram;     // <FS> native only: the depth aware upsample of the half resolution lightmap
+extern RKShaderProgram         gDeferredAvatarProgram;
+extern RKShaderProgram         gDeferredSoftenProgram;
+extern RKShaderProgram         gDeferredRtReflectionProgram;     // <FS> the traced glossy reflection as a pass of its own (rtReflectionF.glsl, doc/vulkan/PLAN-rt-reflection-pass.md)
+extern RKShaderProgram         gDeferredShadowCubeProgram;
+extern RKShaderProgram         gDeferredShadowPullProgram;   // <FS> render packets: reads vertices and indices by address (Vulkan mirror only)
+extern RKShaderProgram         gDeferredShadowAlphaPullProgram;   // <FS> render packets: the same for alpha masked casters, textures from the bindless table
+extern RKShaderProgram         gDeferredShadowSkinPullProgram;   // <FS> render packets: rigged casters (weights and palette read by address)
+extern RKShaderProgram         gDeferredAlphaPullProgram;            // <FS> S5a: the lit alpha pass drawn from the scene table (alphaPullV + alphaF, textures from the bindless table)
+extern RKShaderProgram         gDeferredFullbrightAlphaPullProgram;  // <FS> S5a: ... and the fullbright alpha pass (alphaPullV with IS_FULLBRIGHT_PULL + fullbrightF)
+extern RKShaderProgram         gDeferredAlphaUberPullProgram;          // <FS> item D1: the lit alpha pull program that also draws fullbright alpha draws (ALPHA_UBER)
+extern RKShaderProgram         gDeferredAlphaUberPullSkinProgram;
+extern RKShaderProgram         gDeferredAlphaUberMatPullProgram;       // <FS> item D2: the merged lit alpha program that also draws the material alpha draws
+extern RKShaderProgram         gDeferredAlphaUberMatPullSkinProgram;
+extern RKShaderProgram         gDeferredTerrainPullProgram;           // <FS> S6.6a: the terrain pass from the geometry packet path (terrainPullV + terrainF)
+extern RKShaderProgram         gDeferredTreePullProgram;              // <FS> the Linden tree pass of the G-buffer from the geometry packet path (treeV + treeF with LL_VERTEX_PULL)
+extern RKShaderProgram         gDeferredPBRTerrainPullProgram[];       // <FS> S6.6a: the same for the PBR terrain (one per paint type)
+extern RKShaderProgram         gDeferredFullbrightPullProgram;        // <FS> S6 X1: the opaque fullbright pass from the scene table, static and rigged
+extern RKShaderProgram         gDeferredFullbrightPullSkinProgram;
+extern RKShaderProgram         gDeferredFullbrightShinyPullProgram;        // <FS> J1 K4: the fullbright shiny pass from the scene table, static and rigged (alphaPullV with IS_SHINY_PULL + fullbrightShinyF)
+extern RKShaderProgram         gDeferredFullbrightShinyPullSkinProgram;
+extern RKShaderProgram         gHUDFullbrightPullProgram;        // <FS> J1 K6 S1: the HUD's fullbright pass from the scene table (the fullbright pull program with IS_HUD)
+extern RKShaderProgram         gHUDFullbrightMaskPullProgram;        // <FS> J1 K6 S1: the HUD's alpha masked fullbright and fullbright shiny passes from the scene table
+extern RKShaderProgram         gHUDFullbrightShinyPullProgram;
+extern RKShaderProgram         gHUDPBROpaquePullProgram;         // <FS> J1 K6 S1: the HUD's glTF opaque / mask pass from the scene table (the PBR opaque pull program with IS_HUD)
+extern RKShaderProgram         gDeferredBumpPullProgram;        // <FS> J1 K4: the deferred bump pass from the scene table, static and rigged (alphaPullV with IS_BUMP_PULL + bumpF)
+extern RKShaderProgram         gDeferredBumpPullSkinProgram;
+extern RKShaderProgram         gDeferredEmbossPullProgram;        // <FS> J1 K4: the post deferred emboss (post bump) pass from the scene table, static and rigged (alphaPullV with IS_EMBOSS_PULL + objects/bumpF)
+extern RKShaderProgram         gDeferredEmbossPullSkinProgram;
+extern RKShaderProgram         gDeferredDiffuseAlphaMaskPullProgram;       // <FS> S6 X3: the alpha masked passes from the scene table (static and rigged)
+extern RKShaderProgram         gDeferredDiffuseAlphaMaskPullSkinProgram;
+extern RKShaderProgram         gDeferredFullbrightAlphaMaskPullProgram;
+extern RKShaderProgram         gDeferredFullbrightAlphaMaskPullSkinProgram;
+extern RKShaderProgram         gDeferredPBROpaquePullProgram;             // <FS> S6 X4: the glTF opaque / mask G-buffer pass from the scene table
+extern RKShaderProgram         gDeferredPBROpaquePullSkinProgram;
+extern RKShaderProgram         gDeferredLightPullProgram;                 // <FS> S6 LV1: the point light volumes from one record
+extern RKShaderProgram         gDeferredSpotLightPullProgram;             // <FS> S6 LV2: the projectors from one record
+extern RKShaderProgram         gDeferredPBRAlphaPullProgram;          // <FS> S5c: the PBR (glTF) blend pass, vertices by address, the four textures from the bindless table
+extern RKShaderProgram         gDeferredAlphaPullSkinProgram;          // <FS> S5d: the rigged variants of the alpha pull programs (weights and palette by address, indexed draws)
+extern RKShaderProgram         gDeferredFullbrightAlphaPullSkinProgram;
+extern RKShaderProgram         gDeferredPBRAlphaPullSkinProgram;
+extern RKShaderProgram         gDeferredEmissivePullProgram;          // <FS> S5e: the glow second draw of the alpha items from the table (alpha only): plain, rigged, PBR, PBR rigged
+extern RKShaderProgram         gDeferredEmissivePullSkinProgram;
+extern RKShaderProgram         gPBRGlowPullProgram;
+extern RKShaderProgram         gPBRGlowPullSkinProgram;
+extern RKShaderProgram         gHUDFullbrightAlphaPullProgram;         // <FS> S5f F4: the HUD, impostor and depth only (mask) variants of the alpha pull programs
+extern RKShaderProgram         gHUDPBRAlphaPullProgram;
+extern RKShaderProgram         gDeferredAlphaImpostorPullProgram;
+extern RKShaderProgram         gDeferredAlphaImpostorPullSkinProgram;
+extern RKShaderProgram         gDeferredFullbrightMaskPullProgram;
+extern RKShaderProgram         gDeferredFullbrightMaskPullSkinProgram;
+extern RKShaderProgram         gDeferredDiffusePullProgram;      // <FS> render packets: the deferred diffuse pass, vertices by address, textures from the bindless table
+extern RKShaderProgram         gDeferredMaterialPullProgram[16]; // <FS> render packets: the deferred materials passes (the unskinned indices of gDeferredMaterialProgram)
+extern RKShaderProgram         gDeferredDiffusePullSkinProgram;  // <FS> S4 A1: the rigged variants of the two (weights and palette read by address)
+extern RKShaderProgram         gDeferredMaterialPullSkinProgram[16];
+extern RKShaderProgram         gDeferredPostProgram;
+extern RKShaderProgram         gDeferredCoFProgram;
+extern RKShaderProgram         gDeferredDoFCombineProgram;
+extern RKShaderProgram         gFXAAProgram[4];
+extern RKShaderProgram         gSMAAEdgeDetectProgram[4];
+extern RKShaderProgram         gSMAABlendWeightsProgram[4];
+extern RKShaderProgram         gSMAANeighborhoodBlendProgram[4];
+extern RKShaderProgram         gCASProgram;
+extern RKShaderProgram         gCASLegacyGammaProgram;
+extern RKShaderProgram         gDeferredPostNoDoFProgram;
+extern RKShaderProgram         gDeferredPostNoDoFNoiseProgram;
+extern RKShaderProgram         gDeferredPostGammaCorrectProgram;
+extern RKShaderProgram         gLegacyPostGammaCorrectProgram;
+extern RKShaderProgram         gDeferredPostTonemapProgram;
+extern RKShaderProgram         gNoPostTonemapProgram;
+extern RKShaderProgram         gDeferredPostTonemapGammaCorrectProgram;
+extern RKShaderProgram         gNoPostTonemapGammaCorrectProgram;
+extern RKShaderProgram         gDeferredPostTonemapLegacyGammaCorrectProgram;
+extern RKShaderProgram         gNoPostTonemapLegacyGammaCorrectProgram;
+extern RKShaderProgram         gExposureProgram;
+extern RKShaderProgram         gExposureProgramNoFade;
+extern RKShaderProgram         gLuminanceProgram;
+extern RKShaderProgram         gMotionVectorProgram;
+extern RKShaderProgram         gRtShadowFilterProgram;        // <FS> the penumbra of the ray traced sun shadow from the blocker distance (rtShadowFilterF.glsl)
+extern RKShaderProgram         gRtShadowPrepProgram;          // <FS> its input: the hard sun shadow, the half-width and the blocker mask into the mipped target (rtShadowPrepF.glsl)
+extern RKShaderProgram         gDnsrSunPackProgram, gDnsrSunUnpackProgram;       // <FS> the AMD shadow denoiser's hit mask of the sun lightmap and its result back into it
+extern RKShaderProgram         gDnsrPrepProgram, gDnsrPackProgram, gDnsrUnpackProgram;       // <FS> the AMD reflection denoiser's inputs and its result back (PLAN-amd-denoiser.md)
+extern RKShaderProgram         gNRRimLiftProgram;             // <FS> DLSS-NR: the rim lift after the neural renderer (nrRimLiftF.glsl)
+extern RKShaderProgram         gAvatarVelocityDebugProgram;
+extern RKShaderProgram         gRtMaterialDebugProgram;
+extern RKShaderProgram         gDeferredAvatarShadowProgram;
+extern RKShaderProgram         gDeferredAvatarAlphaShadowProgram;
+extern RKShaderProgram         gDeferredAvatarAlphaMaskShadowProgram;
+extern RKShaderProgram         gDeferredAvatarAlphaProgram;
+extern RKShaderProgram         gEnvironmentMapProgram;
+extern RKShaderProgram         gDeferredWLSkyProgram;
+extern RKShaderProgram         gDeferredWLCloudProgram;
+extern RKShaderProgram         gDeferredWLSunProgram;
+extern RKShaderProgram         gDeferredWLMoonProgram;
+extern RKShaderProgram         gDeferredStarProgram;
+extern RKShaderProgram         gNormalMapGenProgram;
+extern RKShaderProgram         gDeferredGenBrdfLutProgram;
+extern RKShaderProgram         gDeferredBufferVisualProgram;
 // [RLVa:KB] - @setsphere
-extern LLShaderProgram         gRlvSphereProgram;
+extern RKShaderProgram         gRlvSphereProgram;
 // [/RLVa:KB]
 
 // Deferred materials shaders
 
-extern LLShaderProgram         gDeferredPBRAlphaProgram;
+extern RKShaderProgram         gDeferredPBRAlphaProgram;
 
 // GLTF shaders
-extern LLShaderProgram         gGLTFPBRMetallicRoughnessProgram;
+extern RKShaderProgram         gGLTFPBRMetallicRoughnessProgram;
 
 // Encodes detail level for dropping textures, in accordance with the GLTF spec where possible
 // 0 is highest detail, -1 drops emissive, etc

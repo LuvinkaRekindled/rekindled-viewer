@@ -440,14 +440,14 @@ void LLManip::renderGuidelines(bool draw_x, bool draw_y, bool draw_z)
     //LLVector3  center_agent  = LLSelectMgr::getInstance()->getBBoxOfSelection().getCenterAgent();
     LLVector3  center_agent  = getPivotPoint();
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
-        LLRenderMatrix::translate(LLRenderMatrix::Kind::Modelview, center_agent.mV[VX], center_agent.mV[VY], center_agent.mV[VZ]);
+        RKRenderMatrix::translate(RKRenderMatrix::Kind::Modelview, center_agent.mV[VX], center_agent.mV[VY], center_agent.mV[VZ]);
 
         F32 angle_radians, x, y, z;
 
         grid_rot.getAngleAxis(&angle_radians, &x, &y, &z);
-        LLRenderMatrix::rotate(LLRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
+        RKRenderMatrix::rotate(RKRenderMatrix::Kind::Modelview, angle_radians * RAD_TO_DEG, x, y, z);
 
         // <FS> OpenSim support
         //F32 region_size = LLWorld::getInstance()->getRegionWidthInMeters();
@@ -502,7 +502,7 @@ void LLManip::renderGuidelines(bool draw_x, bool draw_y, bool draw_z)
         }
         LLUI::setLineWidth(1.0f);
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 void LLManip::renderXYZ(const LLVector3 &vec)
@@ -514,7 +514,7 @@ void LLManip::renderXYZ(const LLVector3 &vec)
     S32 vertical_offset = window_center_y - VERTICAL_OFFSET;
 
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
         LLUIImagePtr imagep = LLUI::getUIImage("Rounded_Square");
         gViewerWindow->setup2DRender();
@@ -541,7 +541,7 @@ void LLManip::renderXYZ(const LLVector3 &vec)
         // </FS:AR> [FIRE-36909]
         LLFontGL* font = LLFontGL::getFontSansSerif();
         LLLocale locale(LLLocale::USER_LOCALE);
-        LLRenderState::DepthScope gls_depth(false);
+        RKRenderState::DepthScope gls_depth(false);
 
         // render drop shadowed text (manually because of bigger 'distance')
         F32 right_x;
@@ -637,7 +637,7 @@ void LLManip::renderXYZ(const LLVector3 &vec)
         // </FS:AR> [FIRE-36909]
         // </FS:Ansariel>
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 
     gViewerWindow->setup3DRender();
 }
@@ -647,7 +647,7 @@ void LLManip::renderTickText(const LLVector3& pos, const std::string& text, cons
     const LLFontGL* big_fontp = LLFontGL::getFontSansSerif();
 
     bool hud_selection = mObjectSelection->getSelectType() == SELECT_TYPE_HUD;
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     LLVector3 render_pos = pos;
     if (hud_selection)
     {
@@ -655,7 +655,7 @@ void LLManip::renderTickText(const LLVector3& pos, const std::string& text, cons
         F32 inv_zoom_amt = 1.f / zoom_amt;
         // scale text back up to counter-act zoom level
         render_pos = pos * zoom_amt;
-        LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, inv_zoom_amt, inv_zoom_amt, inv_zoom_amt);
+        RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, inv_zoom_amt, inv_zoom_amt, inv_zoom_amt);
     }
 
     // render shadow first
@@ -666,7 +666,7 @@ void LLManip::renderTickText(const LLVector3& pos, const std::string& text, cons
     gViewerWindow->setup3DViewport();
     hud_render_utf8text(text, render_pos, *big_fontp, LLFontGL::NORMAL, LLFontGL::NO_SHADOW, -0.5f * big_fontp->getWidthF32(text), 3.f, color, mObjectSelection->getSelectType() == SELECT_TYPE_HUD);
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 void LLManip::renderTickValue(const LLVector3& pos, F32 value, const std::string& suffix, const LLColor4 &color)
@@ -704,7 +704,7 @@ void LLManip::renderTickValue(const LLVector3& pos, F32 value, const std::string
     }
 
     bool hud_selection = mObjectSelection->getSelectType() == SELECT_TYPE_HUD;
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     {
         LLVector3 render_pos = pos;
         if (hud_selection)
@@ -713,7 +713,7 @@ void LLManip::renderTickValue(const LLVector3& pos, F32 value, const std::string
             F32 inv_zoom_amt = 1.f / zoom_amt;
             // scale text back up to counter-act zoom level
             render_pos = pos * zoom_amt;
-            LLRenderMatrix::scale(LLRenderMatrix::Kind::Modelview, inv_zoom_amt, inv_zoom_amt, inv_zoom_amt);
+            RKRenderMatrix::scale(RKRenderMatrix::Kind::Modelview, inv_zoom_amt, inv_zoom_amt, inv_zoom_amt);
         }
 
         // <FS:ND> Unused and GCC does not like this ...
@@ -733,7 +733,7 @@ void LLManip::renderTickValue(const LLVector3& pos, F32 value, const std::string
             hud_render_utf8text(val_string, render_pos, *big_fontp, LLFontGL::NORMAL, LLFontGL::DROP_SHADOW, -0.5f * big_fontp->getWidthF32(val_string), 3.f, color, hud_selection);
         }
     }
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 LLColor4 LLManip::setupSnapGuideRenderPass(S32 pass)

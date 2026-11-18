@@ -375,7 +375,7 @@ public:
     virtual std::string getShaderDirPrefix(void) = 0; // Pure Virtual
 
     // Implemented in the application to actually update out of date uniforms for a particular shader
-    virtual void updateShaderUniforms(LLShaderProgram * shader) = 0; // Pure Virtual
+    virtual void updateShaderUniforms(RKShaderProgram * shader) = 0; // Pure Virtual
 
     void clearShaderCache();       // (removes the cache directory of the old GL program binaries, if one is left on the disk)
 

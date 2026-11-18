@@ -18,7 +18,7 @@
 
 #include <string>
 
-namespace LLVkPassCensus
+namespace RKVkPassCensus
 {
     extern bool sOn;
     extern int sPoisonMask;     // LL_VK_PASSPOISON (default 127): which classes poison mode forgets: 1 program uniform blocks, 2 texture units, 4 uniform buffer bindings, 8 constant attributes, 16 vertex binding, 32 render state, 64 renderer program
@@ -37,7 +37,7 @@ namespace LLVkPassCensus
     }
     inline void stampNow(Stamp& s) { s.mPass = sPass; s.mFrame = sFrame; }
 
-    // kept in every LLVk::Program: when each uniform class block was last written by the stream, and what this pass has written / read of it
+    // kept in every RKVk::Program: when each uniform class block was last written by the stream, and what this pass has written / read of it
     struct ProgState
     {
         Stamp mWrite[5];
@@ -53,7 +53,7 @@ namespace LLVkPassCensus
 
     // ---- worker ----
     void init();
-    // a record of the stream is about to be played (op: LLVkAsync::Cmd; packet_kind: header kind for CMD_SHADOW_PACKETS)
+    // a record of the stream is about to be played (op: RKVkAsync::Cmd; packet_kind: header kind for CMD_SHADOW_PACKETS)
     void frameBegin();
     void present();                         // a frame was presented: the report is due every 600
     void passBegin(S32 fbo, U32 site);              // mode 1: a pass record

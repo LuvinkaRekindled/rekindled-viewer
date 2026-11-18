@@ -1,6 +1,6 @@
 // ui.frag: the user interface: the vertex colour times the texture. A line for line translation of "UI Shader" (interface/uiF.glsl); pairs with ui.vert.
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 texture_matrix0;
     mat4 modelview_projection_matrix;

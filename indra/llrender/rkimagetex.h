@@ -51,7 +51,7 @@ class LLWindow;
 #define BYTES_TO_MEGA_BYTES(x) ((x) >> 20)
 #define MEGA_BYTES_TO_BYTES(x) ((x) << 20)
 
-namespace LLImageTexMemory
+namespace RKImageTexMemory
 {
     void alloc_tex_image(U32 width, U32 height, TexelFormat intformat, U32 count);
     void free_tex_image(U32 texName);
@@ -60,7 +60,7 @@ namespace LLImageTexMemory
 }
 
 //============================================================================
-class LLImageTex : public LLRefCount
+class RKImageTex : public LLRefCount
 {
     friend class LLTexUnit;
 public:
@@ -112,22 +112,22 @@ public:
     static bool checkSize(S32 width, S32 height);
 
     //for server side use only.
-    // Not currently necessary for LLImageTex, but required in some derived classes,
+    // Not currently necessary for RKImageTex, but required in some derived classes,
     // so include for compatability
-    static bool create(LLPointer<LLImageTex>& dest, bool usemipmaps = true);
-    static bool create(LLPointer<LLImageTex>& dest, U32 width, U32 height, U8 components, bool usemipmaps = true);
-    static bool create(LLPointer<LLImageTex>& dest, const LLImageRaw* imageraw, bool usemipmaps = true);
+    static bool create(LLPointer<RKImageTex>& dest, bool usemipmaps = true);
+    static bool create(LLPointer<RKImageTex>& dest, U32 width, U32 height, U8 components, bool usemipmaps = true);
+    static bool create(LLPointer<RKImageTex>& dest, const LLImageRaw* imageraw, bool usemipmaps = true);
 
 public:
-    LLImageTex(bool usemipmaps = true, bool allow_compression = true);
-    LLImageTex(U32 width, U32 height, U8 components, bool usemipmaps = true, bool allow_compression = true);
-    LLImageTex(const LLImageRaw* imageraw, bool usemipmaps = true, bool allow_compression = true);
+    RKImageTex(bool usemipmaps = true, bool allow_compression = true);
+    RKImageTex(U32 width, U32 height, U8 components, bool usemipmaps = true, bool allow_compression = true);
+    RKImageTex(const LLImageRaw* imageraw, bool usemipmaps = true, bool allow_compression = true);
 
     // For wrapping textures created via GL elsewhere with our API only. Use with caution.
-    LLImageTex(U32 mTexName, U32 components, TextureTarget target, TexelFormat formatInternal, PixelFormat formatPrimary, ComponentType formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
+    RKImageTex(U32 mTexName, U32 components, TextureTarget target, TexelFormat formatInternal, PixelFormat formatPrimary, ComponentType formatType, LLTexUnit::eTextureAddressMode addressMode, const char* file = __builtin_FILE(), int line = __builtin_LINE());
 
 protected:
-    virtual ~LLImageTex();
+    virtual ~RKImageTex();
 
     void analyzeAlpha(const void* data_in, U32 w, U32 h);
     void calcAlphaChannelOffsetAndStride();
@@ -244,7 +244,7 @@ public:
     TextureTarget getTexTarget()const { return mTarget; }
 
     void init(bool usemipmaps, bool allow_compression);
-    virtual void cleanup(); // Clean up the LLImageTex so it can be reinitialized.  Be careful when using this in derived class destructors
+    virtual void cleanup(); // Clean up the RKImageTex so it can be reinitialized.  Be careful when using this in derived class destructors
 
     void setNeedsAlphaAndPickMask(bool need_mask);
 
@@ -321,7 +321,7 @@ public:
     void markTexOptionsDirty();
     static void flushDirtyTexOptions();
 private:
-    static std::vector<LLImageTex*> sDirtyOptionImages;
+    static std::vector<RKImageTex*> sDirtyOptionImages;
     static std::mutex sDirtyOptionMutex;
     LLTexUnit::eTextureAddressMode      mAddressMode;   // Defaults to TAM_WRAP
     LLTexUnit::eTextureFilterOptions    mFilterOption;  // Defaults to TFO_ANISOTROPIC
@@ -334,7 +334,7 @@ private:
 
     // STATICS
 public:
-    static std::unordered_set<LLImageTex*> sImageList;
+    static std::unordered_set<RKImageTex*> sImageList;
     static S32 sCount;
     static U32 sFrameCount;
     static F32 sLastFrameTime;
@@ -343,7 +343,7 @@ public:
     static U32 sBindCount;                  // Tracks number of texture binds for current frame
     static U32 sUniqueCount;                // Tracks number of unique texture binds for current frame
     static bool sGlobalUseAnisotropic;
-    static LLImageTex* sDefaultImageTexture ;
+    static RKImageTex* sDefaultImageTexture ;
     static bool sAutomatedTest;
     static bool sCompressTextures;          //use GL texture compression
 #if DEBUG_MISS
@@ -395,7 +395,7 @@ public:
 
 };
 
-class LLImageTexThread : public LLSimpleton<LLImageTexThread>, LL::ThreadPool
+class RKImageTexThread : public LLSimpleton<RKImageTexThread>, LL::ThreadPool
 {
 public:
     // follows gSavedSettings "RenderGLMultiThreadedTextures"
@@ -403,9 +403,9 @@ public:
     // follows gSavedSettings "RenderGLMultiThreadedMedia"
     static bool sEnabledMedia;
 
-    LLImageTexThread(LLWindow* window);
+    RKImageTexThread(LLWindow* window);
 
-    // post a function to be executed on the LLImageTex background thread
+    // post a function to be executed on the RKImageTex background thread
     template <typename CALLABLE>
     bool post(CALLABLE&& func)
     {

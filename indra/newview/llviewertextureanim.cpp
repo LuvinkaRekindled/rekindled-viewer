@@ -120,8 +120,8 @@ void LLViewerTextureAnim::updateClass()
     const bool skip = skip_hidden;
     // <FS> FSTexAnimOnGPU (rkvktexanim.h): 1 = the faces' matrix slots hold the animation's parameters and the vertex shader makes the matrices against this clock; 0 = the matrices
     // are made here; 2 = as 0, with the shader's formula compared against them. rt-debug.txt texanim=N decides while it is set (a same-lap A/B), the setting otherwise.
-    LLVkTexAnim::setClock(LLFrameTimer::getElapsedSeconds());
-    const S32 live = LLVkBridge::rtTexAnim();
+    RKVkTexAnim::setClock(LLFrameTimer::getElapsedSeconds());
+    const S32 live = RKVkBridge::rtTexAnim();
     const S32 mode = live >= 0 ? llmin(live, 2) : (on_gpu ? 1 : 0);
     const auto update_start = std::chrono::steady_clock::now();
     Stats& st = sStats;

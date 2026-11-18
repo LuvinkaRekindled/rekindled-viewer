@@ -10,7 +10,7 @@ Status: DESIGN for Adam's review. No S4 code. Read with `PLAN-gpu-scene.md` (S4:
 
 ## 2. What exists that S4 reuses (read from the code)
 - **Skinned pull shaders exist for shadows and velocity**: `shadowSkinPullV.glsl`, `avatarVelocityPullV.glsl`, `objectVelocityPullV.glsl` read positions / weights / joints / palette by buffer address and the palette from a per-frame float list (offset in the entry), no vertex attributes. A rigged **G-buffer** pull vertex shader is the diffuse / material pull shader (`diffusePullV`, `materialPullV`) plus that skinning block: the fragment shaders do not change (they take the flat slot varyings already).
-- **Persistent fragments and the worker table** (S1-S3): handles, pins for textures, buffer-change events, stale check, verify. Rigged draw infos are excluded from them today (`geometry_packet_ok`: rigged, `LLSceneFragment` rigged part empty).
+- **Persistent fragments and the worker table** (S1-S3): handles, pins for textures, buffer-change events, stale check, verify. Rigged draw infos are excluded from them today (`geometry_packet_ok`: rigged, `RKSceneFragment` rigged part empty).
 - **Per-frame palettes**: `LLVOAvatar::updateSkinInfoMatrixPalette(skinInfo)` caches the palette per avatar and skin (`MatrixPaletteCache`, `mGLMp`), so a palette is computed once per frame per (avatar, skin); the cost today is writing it per draw (uniform) and once more per shadow pass (the float list).
 - **Avatar motion vectors** (done 2026-10-12): a velocity pass over the rigged draws with the previous palette; any new rigged path must keep feeding it (`rt_name_rigged_main_view` names rigged draws to the ray scene every frame, independent of this).
 

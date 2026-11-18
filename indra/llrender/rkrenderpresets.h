@@ -32,13 +32,13 @@
 
 //----------------------------------------------------------------------------
 
-class LLRenderPresetDefault
+class RKRenderPresetDefault
 {
 protected:
-    LLRenderState::BlendScope mBlend;
-    LLRenderState::CullScope mCullFace;
+    RKRenderState::BlendScope mBlend;
+    RKRenderState::CullScope mCullFace;
 public:
-    LLRenderPresetDefault()
+    RKRenderPresetDefault()
         :
         // Disable
         mBlend(false),
@@ -46,13 +46,13 @@ public:
     { }
 };
 
-class LLRenderPresetObjectSelect
+class RKRenderPresetObjectSelect
 {
 protected:
-    LLRenderState::BlendScope mBlend;
-    LLRenderState::CullScope mCullFace;
+    RKRenderState::BlendScope mBlend;
+    RKRenderState::CullScope mCullFace;
 public:
-    LLRenderPresetObjectSelect()
+    RKRenderPresetObjectSelect()
         : mBlend(false),
           mCullFace(true)
     { }
@@ -60,86 +60,86 @@ public:
 
 //----------------------------------------------------------------------------
 
-class LLRenderPresetUIDefault
+class RKRenderPresetUIDefault
 {
 protected:
-    LLRenderState::BlendScope mBlend;
-    LLRenderState::CullScope mCullFace;
-    LLRenderState::DepthScope mDepthTest;
+    RKRenderState::BlendScope mBlend;
+    RKRenderState::CullScope mCullFace;
+    RKRenderState::DepthScope mDepthTest;
 public:
-    LLRenderPresetUIDefault()
+    RKRenderPresetUIDefault()
         : mBlend(true),
           mCullFace(false),
-          mDepthTest(false, true, LLRenderState::CompareOp::LessEqual)
+          mDepthTest(false, true, RKRenderState::CompareOp::LessEqual)
     {}
 };
 
 //----------------------------------------------------------------------------
 
-class LLRenderPresetPipeline
+class RKRenderPresetPipeline
 {
 protected:
-    LLRenderState::CullScope mCullFace;
-    LLRenderState::DepthScope mDepthTest;
+    RKRenderState::CullScope mCullFace;
+    RKRenderState::DepthScope mDepthTest;
 public:
-    LLRenderPresetPipeline()
+    RKRenderPresetPipeline()
         : mCullFace(true),
-          mDepthTest(true, true, LLRenderState::CompareOp::LessEqual)
+          mDepthTest(true, true, RKRenderState::CompareOp::LessEqual)
     { }
 };
 
-class LLRenderPresetPipelineAlpha // : public LLRenderPresetPipeline
+class RKRenderPresetPipelineAlpha // : public RKRenderPresetPipeline
 {
 protected:
-    LLRenderState::BlendScope mBlend;
+    RKRenderState::BlendScope mBlend;
 public:
-    LLRenderPresetPipelineAlpha()
+    RKRenderPresetPipelineAlpha()
         : mBlend(true)
     { }
 };
 
-class LLRenderPresetPipelineSelection
+class RKRenderPresetPipelineSelection
 {
 protected:
-    LLRenderState::CullScope mCullFace;
+    RKRenderState::CullScope mCullFace;
 public:
-    LLRenderPresetPipelineSelection()
+    RKRenderPresetPipelineSelection()
         : mCullFace(false)
     {}
 };
 
-class LLRenderPresetPipelineSkyBox
+class RKRenderPresetPipelineSkyBox
 {
 protected:
-    LLRenderState::CullScope mCullFace;
-    LLRenderSquashToFarClip mSquashClip;
+    RKRenderState::CullScope mCullFace;
+    RKRenderSquashToFarClip mSquashClip;
 public:
-    LLRenderPresetPipelineSkyBox();
-   ~LLRenderPresetPipelineSkyBox();
+    RKRenderPresetPipelineSkyBox();
+   ~RKRenderPresetPipelineSkyBox();
 };
 
-class LLRenderPresetPipelineDepthTestSkyBox : public LLRenderPresetPipelineSkyBox
+class RKRenderPresetPipelineDepthTestSkyBox : public RKRenderPresetPipelineSkyBox
 {
 public:
-    LLRenderPresetPipelineDepthTestSkyBox(bool depth_test, bool depth_write);
+    RKRenderPresetPipelineDepthTestSkyBox(bool depth_test, bool depth_write);
 
-    LLRenderState::DepthScope mDepth;
+    RKRenderState::DepthScope mDepth;
 };
 
-class LLRenderPresetPipelineBlendSkyBox : public LLRenderPresetPipelineDepthTestSkyBox
+class RKRenderPresetPipelineBlendSkyBox : public RKRenderPresetPipelineDepthTestSkyBox
 {
 public:
-    LLRenderPresetPipelineBlendSkyBox(bool depth_test, bool depth_write);
-    LLRenderState::BlendScope mBlend;
+    RKRenderPresetPipelineBlendSkyBox(bool depth_test, bool depth_write);
+    RKRenderState::BlendScope mBlend;
 };
 
-class LLRenderPresetTracker
+class RKRenderPresetTracker
 {
 protected:
-    LLRenderState::CullScope mCullFace;
-    LLRenderState::BlendScope mBlend;
+    RKRenderState::CullScope mCullFace;
+    RKRenderState::BlendScope mBlend;
 public:
-    LLRenderPresetTracker() :
+    RKRenderPresetTracker() :
         mCullFace(true),
         mBlend(true)
     { }

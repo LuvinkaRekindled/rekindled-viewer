@@ -21,12 +21,12 @@ constexpr ClearBits operator|(ClearBits a, ClearBits b) { return (ClearBits)((U3
 constexpr ClearBits operator&(ClearBits a, ClearBits b) { return (ClearBits)((U32)a & (U32)b); }
 constexpr bool hasBits(ClearBits mask, ClearBits bits) { return ((U32)mask & (U32)bits) != 0; }
 
-// F3.6d: buffers, vertex data and draws. The values equal LLVkFormat::BufKind / PType / Topology (the producer's records carry them as they are).
+// F3.6d: buffers, vertex data and draws. The values equal RKVkFormat::BufKind / PType / Topology (the producer's records carry them as they are).
 enum class BufferKind : U8 { Vertex = 0, Index = 1, Uniform = 2 };
 enum class ComponentType : U8 { None = 0, U8, S8, U16, S16, U32, S32, F32, F16 };        // vertex attribute and index component types
 enum class PrimitiveMode : U8 { Points = 0, Lines, LineStrip, Triangles, TriangleStrip, TriangleFan, Other };
 
-// F3.6e: texture data. The values equal LLVkFormat::Store / Comps / PType (static_asserts in rkvkformat.cpp), so the producer's records carry them as they are.
+// F3.6e: texture data. The values equal RKVkFormat::Store / Comps / PType (static_asserts in rkvkformat.cpp), so the producer's records carry them as they are.
 // TexelFormat: how a texture STORES its texels (was the GL internal format). One entry per distinct treatment: the quirks of the old decode are visible here,
 // a caller says what it gets (GL_RGB16F was stored as RGBA16F: write RGBA16F; GL_RGB / GL_RGB8 were stored as RGB8; every depth format is Depth).
 enum class TexelFormat : U8
@@ -42,7 +42,7 @@ enum class TexelFormat : U8
 // PixelFormat: the component layout of client pixel data (was the GL format: GL_RGBA, GL_RED ...). ComponentType (F3.6d) is its component type.
 enum class PixelFormat : U8 { None = 0, R, RG, RGB, BGR, RGBA, BGRA, Lum, LumAlpha, Alpha, Depth };
 
-// F3.6f: texture targets, sampler settings, level queries. Values equal LLVkFormat::Dim (+ 8 + face for a cube map face) / Filter / Wrap / Swizzle / Level (static_asserts in rkvkformat.cpp).
+// F3.6f: texture targets, sampler settings, level queries. Values equal RKVkFormat::Dim (+ 8 + face for a cube map face) / Filter / Wrap / Swizzle / Level (static_asserts in rkvkformat.cpp).
 // The compare function of a depth texture is CompareOp (rkrenderstate.h).
 enum class TextureTarget : U8
 {

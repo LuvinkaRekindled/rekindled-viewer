@@ -293,12 +293,12 @@ void LLHUDObject::updateAll()
 // static
 void LLHUDObject::renderAll()
 {
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
 
     gUIProgram.bind();
     gRender.color4f(1, 1, 1, 1);
 
-    LLRenderState::DepthScope depth(false, false);
+    RKRenderState::DepthScope depth(false, false);
 
     LLHUDObject *hud_objp;
 

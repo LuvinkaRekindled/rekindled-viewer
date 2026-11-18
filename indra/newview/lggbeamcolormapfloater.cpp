@@ -84,7 +84,7 @@ void lggBeamColorMapFloater::draw()
     LLFloater::draw();
 
     //Draw hues and pointers at color
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     F32 r, g, b;
     LLColor4 output;
     for (S32 i = 0; i <= 720; ++i)
@@ -150,7 +150,7 @@ void lggBeamColorMapFloater::draw()
         LLColor4::white, LLFontGL::HCENTER,
         LLFontGL::BASELINE, LLFontGL::DROP_SHADOW);
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 bool lggBeamColorMapFloater::handleMouseDown(S32 x, S32 y, MASK mask)

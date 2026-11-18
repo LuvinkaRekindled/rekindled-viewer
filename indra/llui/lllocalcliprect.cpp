@@ -33,7 +33,7 @@
 
 
 LLScreenClipRect::LLScreenClipRect(const LLRect& rect, bool enabled)
-:   mScissorState(LLRenderState::Keep{}),
+:   mScissorState(RKRenderState::Keep{}),
     mEnabled(enabled)
 {
     LLRender::UiCensusScope ui_census(5);

@@ -30,7 +30,7 @@
 #include "llvoavatar.h"
 
 #include "pipeline.h"
-#include "rkvkbridge.h"             // <FS> LLVkBridge::describeTextures (Show Textures: what the handle of each bake slot shows)
+#include "rkvkbridge.h"             // <FS> RKVkBridge::describeTextures (Show Textures: what the handle of each bake slot shows)
 #include "llviewertexturelist.h"    // <FS> TEX_LIST_STANDARD (monitorBakeSlots)
 
 #include "llagent.h" //  Get state values from here
@@ -2589,7 +2589,7 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
             if (tex)
             {
                 std::string uploaded;
-                if (LLImageTex* gl = tex->getImageTexture())
+                if (RKImageTex* gl = tex->getImageTexture())
                 {
                     gl_name = gl->getTexName();
                     finest_hash = gl->getUploadFinestHash();
@@ -2615,7 +2615,7 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
             finest.push_back(finest_hash);
             level_hashes.push_back(levels_here);
         }
-        LLVkBridge::describeTextures(names, labels, finest, level_hashes, quiet);
+        RKVkBridge::describeTextures(names, labels, finest, level_hashes, quiet);
     }
 
     // the faces of the agent's attachments that name a bake by its magic id (Bakes on Mesh: a mesh head's eyes and ears): the texture object each face holds now against the one the avatar's slot holds
@@ -2673,7 +2673,7 @@ void LLVOAvatarSelf::logBakeTextures(bool quiet) const
                             {
                                 auto describe = [](LLViewerTexture* t) {
                                     LLViewerFetchedTexture* f = dynamic_cast<LLViewerFetchedTexture*>(t);
-                                    LLImageTex* g = t ? t->getImageTexture() : nullptr;
+                                    RKImageTex* g = t ? t->getImageTexture() : nullptr;
                                     return std::string(f ? f->getID().asString().substr(0, 8) : (t ? "not fetched" : "none")) + " GL " + std::to_string(g ? g->getTexName() : 0);
                                 };
                                 examples += " [object " + obj->getID().asString().substr(0, 8) + " face " + std::to_string(te) + " magic " + tep->getID().asString().substr(0, 8) + ": the object holds " + describe(held) + ", the face DRAWS " + describe(drawn) + ", the slot holds " + describe(expected) + "]";
@@ -3736,7 +3736,7 @@ void LLVOAvatarSelf::deleteScratchTextures()
         it != end_it;
         ++it)
     {
-        LLImageTex::deleteTextures(1, (U32 *)it->second );
+        RKImageTex::deleteTextures(1, (U32 *)it->second );
     }
 
     if( sScratchTexBytes.value() )

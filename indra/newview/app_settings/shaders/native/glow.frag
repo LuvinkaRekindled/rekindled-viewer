@@ -1,12 +1,12 @@
 // glow.frag: the blur step of the glow chain: the eight taps weighted by the kernel, times glowStrength. A line for line translation of "Glow Shader (Post)" (effects/glowF.glsl); pairs with glow.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     vec2 glowDelta;
     float glowStrength;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_diffuseMap;
 };

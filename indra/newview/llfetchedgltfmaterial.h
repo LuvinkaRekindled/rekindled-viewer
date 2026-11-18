@@ -34,9 +34,9 @@
 #include <type_traits>
 
 class LLFetchedGLTFMaterial;
-using LLGLTFMatHandles = LLHandleTable<LLFetchedGLTFMaterial>;       // <FS> C2.4: the handles of fetched glTF materials (rkhandletable.h)
+using RKGLTFMatHandles = RKHandleTable<LLFetchedGLTFMaterial>;       // <FS> C2.4: the handles of fetched glTF materials (rkhandletable.h)
 
-class LLShaderProgram;
+class RKShaderProgram;
 class LLGLTFMaterialList;
 class LLTerrainMaterials;
 
@@ -63,10 +63,10 @@ public:
     bool isFetching() const { return mFetching; }
     bool isLoaded() const { return !mFetching && mFetchSuccess; }
 
-    // <FS> C2.4 (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (LLGLTFMatRef), and the retire list (llcommon/rkretirelist.h): the last owner letting go parks the material for a
+    // <FS> C2.4 (doc/vulkan/PLAN-clean-core.md section 7): a handle for render-side data (RKGLTFMatRef), and the retire list (llcommon/rkretirelist.h): the last owner letting go parks the material for a
     // few frames, so a draw info that still reads it through its handle finds it intact
     U32 getRenderHandle();
-    static LLFetchedGLTFMaterial* fromRenderHandle(U32 handle) { return LLGLTFMatHandles::resolve(handle); }
+    static LLFetchedGLTFMaterial* fromRenderHandle(U32 handle) { return RKGLTFMatHandles::resolve(handle); }
     /*virtual*/ bool retireOnLastRef() const override;
     /*virtual*/ U32 retireKind() const override { return 1; }
 
@@ -108,26 +108,26 @@ protected:
     std::vector<std::function<void()>> materialCompleteCallbacks;
 };
 
-// <FS> C2.4: a material reference that is a handle, not a counted pointer (the glTF counterpart of LLTexRef, llviewertexture.h). It holds no reference count and owns nothing: the owners (the texture
+// <FS> C2.4: a material reference that is a handle, not a counted pointer (the glTF counterpart of RKTexRef, llviewertexture.h). It holds no reference count and owns nothing: the owners (the texture
 // entries, the material list) keep the material alive and the retire list keeps it intact for the frames that could still read it after the last owner let go. It reads like the LLPointer it replaces:
 // get(), ->, *, conversion to a pointer, isNull / notNull, explicit bool (a test of "has a material" does not resolve). get() resolves the handle each time; a handle whose material is gone answers the
 // default material (never nullptr while a material was assigned) and counts it (sDeadResolved: in a healthy run it stays 0).
-class LLGLTFMatRef
+class RKGLTFMatRef
 {
 public:
-    LLGLTFMatRef() = default;
-    LLGLTFMatRef(std::nullptr_t) {}
-    LLGLTFMatRef(LLFetchedGLTFMaterial* mat) : mHandle(mat ? mat->getRenderHandle() : 0) {}
+    RKGLTFMatRef() = default;
+    RKGLTFMatRef(std::nullptr_t) {}
+    RKGLTFMatRef(LLFetchedGLTFMaterial* mat) : mHandle(mat ? mat->getRenderHandle() : 0) {}
     template <class U, class = std::enable_if_t<std::is_base_of<LLFetchedGLTFMaterial, U>::value>>
-    LLGLTFMatRef(const LLPointer<U>& p) : LLGLTFMatRef(static_cast<LLFetchedGLTFMaterial*>(p.get())) {}
-    LLGLTFMatRef& operator=(LLFetchedGLTFMaterial* mat) { mHandle = mat ? mat->getRenderHandle() : 0; return *this; }
+    RKGLTFMatRef(const LLPointer<U>& p) : RKGLTFMatRef(static_cast<LLFetchedGLTFMaterial*>(p.get())) {}
+    RKGLTFMatRef& operator=(LLFetchedGLTFMaterial* mat) { mHandle = mat ? mat->getRenderHandle() : 0; return *this; }
     template <class U, class = std::enable_if_t<std::is_base_of<LLFetchedGLTFMaterial, U>::value>>
-    LLGLTFMatRef& operator=(const LLPointer<U>& p) { return *this = static_cast<LLFetchedGLTFMaterial*>(p.get()); }
+    RKGLTFMatRef& operator=(const LLPointer<U>& p) { return *this = static_cast<LLFetchedGLTFMaterial*>(p.get()); }
 
     LLFetchedGLTFMaterial* get() const
     {
         if (!mHandle) return nullptr;
-        LLFetchedGLTFMaterial* mat = LLGLTFMatHandles::resolve(mHandle);
+        LLFetchedGLTFMaterial* mat = RKGLTFMatHandles::resolve(mHandle);
         return mat ? mat : deadMaterial();
     }
     operator LLFetchedGLTFMaterial*() const { return get(); }

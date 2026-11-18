@@ -580,15 +580,15 @@ void GLTFSceneManager::render(bool opaque, bool rigged, bool unlit)
     U8 variant = 0;
     if (rigged)
     {
-        variant |= LLShaderProgram::GLTFVariant::RIGGED;
+        variant |= RKShaderProgram::GLTFVariant::RIGGED;
     }
     if (!opaque)
     {
-        variant |= LLShaderProgram::GLTFVariant::ALPHA_BLEND;
+        variant |= RKShaderProgram::GLTFVariant::ALPHA_BLEND;
     }
     if (unlit)
     {
-        variant |= LLShaderProgram::GLTFVariant::UNLIT;
+        variant |= RKShaderProgram::GLTFVariant::UNLIT;
     }
 
     render(variant);
@@ -603,12 +603,12 @@ void GLTFSceneManager::render(U8 variant)
     // into buckets by material and shader.
 
     // HACK -- implicitly render multi-uv variant
-    if (!(variant & LLShaderProgram::GLTFVariant::MULTI_UV))
+    if (!(variant & RKShaderProgram::GLTFVariant::MULTI_UV))
     {
-        render((U8) (variant | LLShaderProgram::GLTFVariant::MULTI_UV));
+        render((U8) (variant | RKShaderProgram::GLTFVariant::MULTI_UV));
     }
 
-    bool rigged = variant & LLShaderProgram::GLTFVariant::RIGGED;
+    bool rigged = variant & RKShaderProgram::GLTFVariant::RIGGED;
 
     for (U32 i = 0; i < mObjects.size(); ++i)
     {
@@ -620,18 +620,18 @@ void GLTFSceneManager::render(U8 variant)
         }
 
         Asset* asset = mObjects[i]->mGLTFAsset.get();
-        LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
         LLMatrix4a mat = mObjects[i]->getGLTFAssetToAgentTransform();
 
         // provide a modelview matrix that goes from asset to camera space
         // (matrix palettes are in asset space)
-        LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
-        LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, mat.getF32ptr());
+        RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, gRenderModelView);
+        RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, mat.getF32ptr());
 
         render(*asset, variant);
 
-        LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+        RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 }
 
@@ -662,10 +662,10 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
             return;
         }
 
-        LLRenderState::CullScope cull_face(false, ds == 1);
+        RKRenderState::CullScope cull_face(false, ds == 1);
 
-        bool opaque = !(variant & LLShaderProgram::GLTFVariant::ALPHA_BLEND);
-        bool rigged = variant & LLShaderProgram::GLTFVariant::RIGGED;
+        bool opaque = !(variant & RKShaderProgram::GLTFVariant::ALPHA_BLEND);
+        bool rigged = variant & RKShaderProgram::GLTFVariant::RIGGED;
 
         bool shader_bound = false;
 
@@ -689,10 +689,10 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
                 if (!rigged)
                 {
-                    gRender.bindUniformBlock(LLShaderProgram::UB_GLTF_NODES, asset.mNodesUBO);
+                    gRender.bindUniformBlock(RKShaderProgram::UB_GLTF_NODES, asset.mNodesUBO);
                 }
 
-                gRender.bindUniformBlock(LLShaderProgram::UB_GLTF_MATERIALS, asset.mMaterialsUBO);
+                gRender.bindUniformBlock(RKShaderProgram::UB_GLTF_MATERIALS, asset.mMaterialsUBO);
 
                 for (U32 i = 0; i < TEXTURE_TYPE_COUNT; ++i)
                 {
@@ -717,7 +717,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
             else
             {
                 LLFetchedGLTFMaterial::sDefault.bind();
-                LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::GLTF_MATERIAL_ID, -1);
+                RKShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::GLTF_MATERIAL_ID, -1);
             }
 
             for (auto& pdata : batches[i].mPrimitives)
@@ -732,11 +732,11 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
                     LL_PROFILE_ZONE_NAMED_CATEGORY_GLTF("gltfdc - bind skin");
                     llassert(node.mSkin != INVALID_INDEX);
                     Skin& skin = asset.mSkins[node.mSkin];
-                    gRender.bindUniformBlock(LLShaderProgram::UB_GLTF_JOINTS, skin.mUBO);
+                    gRender.bindUniformBlock(RKShaderProgram::UB_GLTF_JOINTS, skin.mUBO);
                 }
                 else
                 {
-                    LLShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::GLTF_NODE_ID, pdata.mNodeIndex);
+                    RKShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::GLTF_NODE_ID, pdata.mNodeIndex);
                 }
 
                 {
@@ -767,7 +767,7 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
         LLShaderMgr::EMISSIVE_MAP
     };
 
-    S32 channel = LLShaderProgram::sCurBoundShaderPtr->getTextureChannel(uniform[(U8)type_idx]);
+    S32 channel = RKShaderProgram::sCurBoundShaderPtr->getTextureChannel(uniform[(U8)type_idx]);
 
     if (channel > -1)
     {
@@ -812,7 +812,7 @@ void GLTFSceneManager::bindTexture(Asset& asset, TextureType texture_type, Textu
 void GLTFSceneManager::bind(Asset& asset, Material& material)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_GLTF;
-    LLShaderProgram* shader = LLShaderProgram::sCurBoundShaderPtr;
+    RKShaderProgram* shader = RKShaderProgram::sCurBoundShaderPtr;
 
     bindTexture(asset, TextureType::BASE_COLOR, material.mPbrMetallicRoughness.mBaseColorTexture, LLViewerFetchedTexture::sWhiteImagep);
 
@@ -982,11 +982,11 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
     // assumes appropriate shader is already bound
     // assumes modelview matrix is already set
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
     // get raycast in asset space
     LLMatrix4a agent_to_asset = obj->getAgentToGLTFAssetTransform();
 
-    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, agent_to_asset.getF32ptr());
+    RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, agent_to_asset.getF32ptr());
 
     vec4 start;
     vec4 end;
@@ -1005,8 +1005,8 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
 
         if (node.mMesh != INVALID_INDEX)
         {
-            LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-            LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, (F32*)glm::value_ptr(node.mAssetMatrix));
+            RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, (F32*)glm::value_ptr(node.mAssetMatrix));
 
             // draw bounding box of mesh primitives
             if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_BBOXES))
@@ -1028,7 +1028,7 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
             if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_RAYCAST))
             {
                 gRender.flush();
-                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
 
                 // convert raycast to node local space
                 vec4 local_start = node.mAssetMatrixInv * start;
@@ -1046,14 +1046,14 @@ void renderAssetDebug(LLViewerObject* obj, Asset* asset)
                 }
 
                 gRender.flush();
-                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
+                gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
             }
 #endif
-            LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+            RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
         }
     }
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
 }
 
 void GLTFSceneManager::renderDebug()
@@ -1068,11 +1068,11 @@ void GLTFSceneManager::renderDebug()
 
     gDebugProgram.bind();
 
-    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-    LLRenderMatrix::load(LLRenderMatrix::Kind::Modelview, gRenderModelView);
+    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, gRenderModelView);
 
-    LLRenderState::CullScope cullface(false);
-    LLRenderState::BlendScope blend(true);
+    RKRenderState::CullScope cullface(false);
+    RKRenderState::BlendScope blend(true);
     gRender.setSceneBlendType(LLRender::BT_ALPHA);
     gRender.getTexUnit(0)->bindWhite();
     gPipeline.disableLights();
@@ -1094,8 +1094,8 @@ void GLTFSceneManager::renderDebug()
 
         for (U32 i = 0; i < 2; ++i)
         {
-            LLRenderState::DepthScope depth(true, i == 0 ? false : true, i == 0 ? LLRenderState::CompareOp::Greater : LLRenderState::CompareOp::LessEqual);
-            LLRenderState::BlendScope blend(i == 0 ? true : false);
+            RKRenderState::DepthScope depth(true, i == 0 ? false : true, i == 0 ? RKRenderState::CompareOp::Greater : RKRenderState::CompareOp::LessEqual);
+            RKRenderState::BlendScope blend(i == 0 ? true : false);
 
             for (auto& obj : mObjects)
             {
@@ -1104,16 +1104,16 @@ void GLTFSceneManager::renderDebug()
                     continue;
                 }
 
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
 
-                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, obj->getGLTFAssetToAgentTransform().getF32ptr());
+                RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, obj->getGLTFAssetToAgentTransform().getF32ptr());
 
                 Asset* asset = obj->mGLTFAsset.get();
 
                 for (auto& node : asset->mNodes)
                 {
-                    LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-                    LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, glm::value_ptr(node.mAssetMatrix));
+                    RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, glm::value_ptr(node.mAssetMatrix));
                     // render x-axis red, y-axis green, z-axis blue
                     gRender.color4f(1.f, 0.f, 0.f, 0.5f);
                     gRender.begin(LLRender::LINES);
@@ -1149,10 +1149,10 @@ void GLTFSceneManager::renderDebug()
                     }
                     gRender.end();
                     gRender.flush();
-                    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
                 }
 
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
             }
         }
     }
@@ -1172,30 +1172,30 @@ void GLTFSceneManager::renderDebug()
             LLViewerObject* obj = drawable->getVObj();
             if (obj)
             {
-                LLRenderMatrix::push(LLRenderMatrix::Kind::Modelview);
-                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, obj->getGLTFAssetToAgentTransform().getF32ptr());
+                RKRenderMatrix::push(RKRenderMatrix::Kind::Modelview);
+                RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, obj->getGLTFAssetToAgentTransform().getF32ptr());
                 Asset* asset = obj->mGLTFAsset.get();
                 Node* node = &asset->mNodes[node_hit];
                 Primitive* primitive = &asset->mMeshes[node->mMesh].mPrimitives[primitive_hit];
 
                 gRender.flush();
-                gRender.setPolygonMode(LLRenderState::PolygonMode::Line);
+                gRender.setPolygonMode(RKRenderState::PolygonMode::Line);
                 gRender.color3f(1, 0, 1);
                 drawBoxOutline(intersection, LLVector4a(0.1f, 0.1f, 0.1f, 0.f));
 
-                LLRenderMatrix::multiply(LLRenderMatrix::Kind::Modelview, glm::value_ptr(node->mAssetMatrix));
+                RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, glm::value_ptr(node->mAssetMatrix));
 
                 auto* listener = (LLVolumeOctreeListener*)primitive->mOctree->getListener(0);
                 drawBoxOutline(listener->mBounds[0], listener->mBounds[1]);
 
                 gRender.flush();
-                gRender.setPolygonMode(LLRenderState::PolygonMode::Fill);
-                LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+                gRender.setPolygonMode(RKRenderState::PolygonMode::Fill);
+                RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
             }
         }
     }
 
-    LLRenderMatrix::pop(LLRenderMatrix::Kind::Modelview);
+    RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     gDebugProgram.unbind();
 
 }

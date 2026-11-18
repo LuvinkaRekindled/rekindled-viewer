@@ -1,7 +1,7 @@
 // texfilter.vert: a textured shape with its own coordinates (the scene monitor's difference picture). A line for line translation of "One Texture Filter Shader" (interface/onetexturefilterV.glsl); pairs with
 // texfilter.frag. (the draw block is declared the same in both stages)
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat4 modelview_projection_matrix;
     uint ll_ti_tex0;

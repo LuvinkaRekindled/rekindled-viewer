@@ -27,13 +27,13 @@
 #include "rkbasetexture.h"
 
 
-LLBaseTexture::LLBaseTexture(bool usemipmaps)
+RKBaseTexture::RKBaseTexture(bool usemipmaps)
 {
     init();
     mUseMipMaps = usemipmaps;
 }
 
-LLBaseTexture::LLBaseTexture(const U32 width, const U32 height, const U8 components, bool usemipmaps)
+RKBaseTexture::RKBaseTexture(const U32 width, const U32 height, const U8 components, bool usemipmaps)
 {
     init();
     mFullWidth = width ;
@@ -43,29 +43,29 @@ LLBaseTexture::LLBaseTexture(const U32 width, const U32 height, const U8 compone
     setTexelsPerImage();
 }
 
-LLBaseTexture::LLBaseTexture(const LLImageRaw* raw, bool usemipmaps)
+RKBaseTexture::RKBaseTexture(const LLImageRaw* raw, bool usemipmaps)
 {
     init();
     mUseMipMaps = usemipmaps ;
     // Create an empty image of the specified size and width
-    mImageTexp = new LLImageTex(raw, usemipmaps) ;
+    mImageTexp = new RKImageTex(raw, usemipmaps) ;
     mFullWidth = mImageTexp->getWidth();
     mFullHeight = mImageTexp->getHeight();
     mComponents = mImageTexp->getComponents();
     setTexelsPerImage();
 }
 
-LLBaseTexture::~LLBaseTexture()
+RKBaseTexture::~RKBaseTexture()
 {
     cleanup();
 }
 
-void LLBaseTexture::init()
+void RKBaseTexture::init()
 {
-    mBoostLevel = LLBaseTexture::BOOST_NONE;
+    mBoostLevel = RKBaseTexture::BOOST_NONE;
     // <FS:minerjr> [FIRE-36016] - Re-added Store/Restore boost levels of selected objects
     // Added a previous boost level to allow for restoring boost after BOOST_SELECTED is applied
-    mPrevBoostLevel = LLBaseTexture::BOOST_NONE;
+    mPrevBoostLevel = RKBaseTexture::BOOST_NONE;
     // </FS:minerjr> [FIRE-36016]
 
     mFullWidth = 0;
@@ -79,7 +79,7 @@ void LLBaseTexture::init()
     mNeedsImageTexture = false ;
 }
 
-void LLBaseTexture::cleanup()
+void RKBaseTexture::cleanup()
 {
     if(mImageTexp)
     {
@@ -88,7 +88,7 @@ void LLBaseTexture::cleanup()
 }
 
 // virtual
-void LLBaseTexture::dump()
+void RKBaseTexture::dump()
 {
     if(mImageTexp)
     {
@@ -96,15 +96,15 @@ void LLBaseTexture::dump()
     }
 }
 
-void LLBaseTexture::setBoostLevel(S32 level)
+void RKBaseTexture::setBoostLevel(S32 level)
 {
     if(mBoostLevel != level)
     {
         mBoostLevel = level ;
-        if(mBoostLevel != LLBaseTexture::BOOST_NONE
-           && mBoostLevel != LLBaseTexture::BOOST_ICON
-           && mBoostLevel != LLBaseTexture::BOOST_THUMBNAIL
-           && mBoostLevel != LLBaseTexture::BOOST_TERRAIN)
+        if(mBoostLevel != RKBaseTexture::BOOST_NONE
+           && mBoostLevel != RKBaseTexture::BOOST_ICON
+           && mBoostLevel != RKBaseTexture::BOOST_THUMBNAIL
+           && mBoostLevel != RKBaseTexture::BOOST_TERRAIN)
         {
             setNoDelete() ;
         }
@@ -113,24 +113,24 @@ void LLBaseTexture::setBoostLevel(S32 level)
 
 // <FS:minerjr> [FIRE-36016] - Re-added Store/Restore boost levels of selected objects
 // Changes the current boost level back to the previous value
-void LLBaseTexture::restoreBoostLevel()
+void RKBaseTexture::restoreBoostLevel()
 {
     mBoostLevel = mPrevBoostLevel;
 }
 
 // Stores the current boost level in the previous boost
-void LLBaseTexture::storeBoostLevel()
+void RKBaseTexture::storeBoostLevel()
 {
     mPrevBoostLevel = mBoostLevel;
 }
 // </FS:minerjr> [FIRE-36016]
 
-void LLBaseTexture::forceActive()
+void RKBaseTexture::forceActive()
 {
     mTextureState = ACTIVE ;
 }
 
-void LLBaseTexture::setActive()
+void RKBaseTexture::setActive()
 {
     if(mTextureState != NO_DELETE)
     {
@@ -139,27 +139,27 @@ void LLBaseTexture::setActive()
 }
 
 //set the texture to stay in memory
-void LLBaseTexture::setNoDelete()
+void RKBaseTexture::setNoDelete()
 {
     mTextureState = NO_DELETE ;
 }
 
-void LLBaseTexture::generateImageTexture()
+void RKBaseTexture::generateImageTexture()
 {
     if(mImageTexp.isNull())
     {
-        mImageTexp = new LLImageTex(mFullWidth, mFullHeight, mComponents, mUseMipMaps) ;
+        mImageTexp = new RKImageTex(mFullWidth, mFullHeight, mComponents, mUseMipMaps) ;
     }
 }
 
-LLImageTex* LLBaseTexture::getImageTexture() const
+RKImageTex* RKBaseTexture::getImageTexture() const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp ;
 }
 
-bool LLBaseTexture::createImageTexture()
+bool RKBaseTexture::createImageTexture()
 {
     if(mImageTexp.isNull())
     {
@@ -169,7 +169,7 @@ bool LLBaseTexture::createImageTexture()
     return mImageTexp->createImageTexture() ;
 }
 
-bool LLBaseTexture::createImageTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename, bool to_create, S32 category, bool defer_copy, U32* tex_name)
+bool RKBaseTexture::createImageTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename, bool to_create, S32 category, bool defer_copy, U32* tex_name)
 {
     llassert(mImageTexp.notNull());
 
@@ -186,62 +186,62 @@ bool LLBaseTexture::createImageTexture(S32 discard_level, const LLImageRaw* imag
     return ret ;
 }
 
-void LLBaseTexture::setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format, const char* file, int line)
+void RKBaseTexture::setExplicitFormat(TexelFormat internal_format, PixelFormat primary_format, ComponentType type_format, const char* file, int line)
 {
     llassert(mImageTexp.notNull()) ;
 
     mImageTexp->setExplicitFormat(internal_format, primary_format, type_format, file, line) ;
 }
-void LLBaseTexture::setAddressMode(LLTexUnit::eTextureAddressMode mode)
+void RKBaseTexture::setAddressMode(LLTexUnit::eTextureAddressMode mode)
 {
     llassert(mImageTexp.notNull()) ;
     mImageTexp->setAddressMode(mode) ;
 }
-void LLBaseTexture::setFilteringOption(LLTexUnit::eTextureFilterOptions option)
+void RKBaseTexture::setFilteringOption(LLTexUnit::eTextureFilterOptions option)
 {
     llassert(mImageTexp.notNull()) ;
     mImageTexp->setFilteringOption(option) ;
 }
 
 //virtual
-S32 LLBaseTexture::getWidth(S32 discard_level) const
+S32 RKBaseTexture::getWidth(S32 discard_level) const
 {
     llassert(mImageTexp.notNull()) ;
     return mImageTexp->getWidth(discard_level) ;
 }
 
 //virtual
-S32 LLBaseTexture::getHeight(S32 discard_level) const
+S32 RKBaseTexture::getHeight(S32 discard_level) const
 {
     llassert(mImageTexp.notNull()) ;
     return mImageTexp->getHeight(discard_level) ;
 }
 
-S32 LLBaseTexture::getMaxDiscardLevel() const
+S32 RKBaseTexture::getMaxDiscardLevel() const
 {
     llassert(mImageTexp.notNull()) ;
     return mImageTexp->getMaxDiscardLevel() ;
 }
-S32 LLBaseTexture::getDiscardLevel() const
+S32 RKBaseTexture::getDiscardLevel() const
 {
     llassert(mImageTexp.notNull()) ;
     return mImageTexp->getDiscardLevel() ;
 }
-S8  LLBaseTexture::getComponents() const
+S8  RKBaseTexture::getComponents() const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->getComponents() ;
 }
 
-U32 LLBaseTexture::getTexName() const
+U32 RKBaseTexture::getTexName() const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->getTexName() ;
 }
 
-bool LLBaseTexture::hasImageTexture() const
+bool RKBaseTexture::hasImageTexture() const
 {
     if(mImageTexp.notNull())
     {
@@ -250,7 +250,7 @@ bool LLBaseTexture::hasImageTexture() const
     return false ;
 }
 
-bool LLBaseTexture::getBoundRecently() const
+bool RKBaseTexture::getBoundRecently() const
 {
     if(mImageTexp.notNull())
     {
@@ -259,13 +259,13 @@ bool LLBaseTexture::getBoundRecently() const
     return false ;
 }
 
-LLTexUnit::eTextureType LLBaseTexture::getTarget(void) const
+LLTexUnit::eTextureType RKBaseTexture::getTarget(void) const
 {
     llassert(mImageTexp.notNull()) ;
     return mImageTexp->getTarget() ;
 }
 
-bool LLBaseTexture::setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name)
+bool RKBaseTexture::setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     llassert(mImageTexp.notNull()) ;
@@ -273,7 +273,7 @@ bool LLBaseTexture::setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos
     return mImageTexp->setSubImage(imageraw, x_pos, y_pos, width, height, 0, use_name) ;
 }
 
-bool LLBaseTexture::setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name)
+bool RKBaseTexture::setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, U32 use_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     llassert(mImageTexp.notNull()) ;
@@ -281,63 +281,63 @@ bool LLBaseTexture::setSubImage(const U8* datap, S32 data_width, S32 data_height
     return mImageTexp->setSubImage(datap, data_width, data_height, x_pos, y_pos, width, height, 0, use_name) ;
 }
 
-void LLBaseTexture::setImageTextureCreated (bool initialized)
+void RKBaseTexture::setImageTextureCreated (bool initialized)
 {
     llassert(mImageTexp.notNull()) ;
 
     mImageTexp->setImageTextureCreated (initialized) ;
 }
 
-void  LLBaseTexture::setCategory(S32 category)
+void  RKBaseTexture::setCategory(S32 category)
 {
     llassert(mImageTexp.notNull()) ;
 
     mImageTexp->setCategory(category) ;
 }
 
-void LLBaseTexture::setTexName(U32 texName)
+void RKBaseTexture::setTexName(U32 texName)
 {
     llassert(mImageTexp.notNull());
     return mImageTexp->setTexName(texName);
 }
 
-void LLBaseTexture::setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target)
+void RKBaseTexture::setTarget(const TextureTarget target, const LLTexUnit::eTextureType bind_target)
 {
     llassert(mImageTexp.notNull());
     return mImageTexp->setTarget(target, bind_target);
 }
 
-LLTexUnit::eTextureAddressMode LLBaseTexture::getAddressMode(void) const
+LLTexUnit::eTextureAddressMode RKBaseTexture::getAddressMode(void) const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->getAddressMode() ;
 }
 
-S32Bytes LLBaseTexture::getTextureMemory() const
+S32Bytes RKBaseTexture::getTextureMemory() const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->mTextureMemory ;
 }
 
-PixelFormat LLBaseTexture::getPrimaryFormat() const
+PixelFormat RKBaseTexture::getPrimaryFormat() const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->getPrimaryFormat() ;
 }
 
-bool LLBaseTexture::getIsAlphaMask() const
+bool RKBaseTexture::getIsAlphaMask() const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->getIsAlphaMask() ;
 }
 
-//bool LLBaseTexture::getMask(const LLVector2 &tc)
+//bool RKBaseTexture::getMask(const LLVector2 &tc)
 // [RLVa:KB] - Checked: RLVa-2.2 (@setoverlay)
-bool LLBaseTexture::getMask(const LLVector2 &tc) const
+bool RKBaseTexture::getMask(const LLVector2 &tc) const
 // [/RLVa:KB]
 {
     llassert(mImageTexp.notNull()) ;
@@ -345,41 +345,41 @@ bool LLBaseTexture::getMask(const LLVector2 &tc) const
     return mImageTexp->getMask(tc) ;
 }
 
-F32 LLBaseTexture::getTimePassedSinceLastBound()
+F32 RKBaseTexture::getTimePassedSinceLastBound()
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->getTimePassedSinceLastBound() ;
 }
-bool LLBaseTexture::getMissed() const
+bool RKBaseTexture::getMissed() const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->getMissed() ;
 }
 
-bool LLBaseTexture::isJustBound() const
+bool RKBaseTexture::isJustBound() const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->isJustBound() ;
 }
 
-void LLBaseTexture::forceUpdateBindStats(void) const
+void RKBaseTexture::forceUpdateBindStats(void) const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->forceUpdateBindStats() ;
 }
 
-bool LLBaseTexture::isImageTextureCreated() const
+bool RKBaseTexture::isImageTextureCreated() const
 {
     llassert(mImageTexp.notNull()) ;
 
     return mImageTexp->isImageTextureCreated() ;
 }
 
-void LLBaseTexture::destroyImageTexture()
+void RKBaseTexture::destroyImageTexture()
 {
     if(mImageTexp.notNull() && mImageTexp->getHasImageTexture())
     {
@@ -388,7 +388,7 @@ void LLBaseTexture::destroyImageTexture()
     }
 }
 
-void LLBaseTexture::setTexelsPerImage()
+void RKBaseTexture::setTexelsPerImage()
 {
     U32 fullwidth = llmin(mFullWidth,U32(MAX_IMAGE_SIZE_DEFAULT));
     U32 fullheight = llmin(mFullHeight,U32(MAX_IMAGE_SIZE_DEFAULT));
@@ -397,4 +397,4 @@ void LLBaseTexture::setTexelsPerImage()
 
 static LLUUID sStubUUID;
 
-const LLUUID& LLBaseTexture::getID() const { return sStubUUID; }
+const LLUUID& RKBaseTexture::getID() const { return sStubUUID; }

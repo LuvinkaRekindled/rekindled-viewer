@@ -39,7 +39,7 @@
 #include "llcheckboxctrl.h"
 #include "llclipboard.h"
 #include "llfocusmgr.h"
-#include "rkdevicecaps.h"               // LLRenderPresetUIDefault()
+#include "rkdevicecaps.h"               // RKRenderPresetUIDefault()
 #include "lllocalcliprect.h"
 //#include "llrender.h"
 #include "llresmgr.h"
@@ -1746,7 +1746,7 @@ void LLScrollListCtrl::drawItems()
 
     LLRect item_rect;
 
-    LLRenderPresetUIDefault gls_ui;
+    RKRenderPresetUIDefault gls_ui;
 
     F32 alpha = getCurrentTransparency(); // Don't rely on the current getDrawContext().mAlpha value -Zi
 

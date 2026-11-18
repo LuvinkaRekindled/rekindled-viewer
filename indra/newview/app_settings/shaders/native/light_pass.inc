@@ -13,7 +13,7 @@
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer LightRows { vec4 v[]; };
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
 #ifdef LIGHT_VOLUME
     mat4 modelview_projection_matrix;
@@ -51,7 +51,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
 #endif
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_depthMap;
     uint ll_ti_normalMap;

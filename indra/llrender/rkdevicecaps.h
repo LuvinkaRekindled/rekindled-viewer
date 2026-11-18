@@ -63,10 +63,10 @@ void ll_close_fail_log();
 class LLSD;
 
 // Manage GL extensions...
-class LLDeviceCaps
+class RKDeviceCaps
 {
 public:
-    LLDeviceCaps();
+    RKDeviceCaps();
 
     bool initRenderDevice();
     bool initFromDevice();     // <FS> LL_VK_NOGL: everything comes from the Vulkan device
@@ -157,7 +157,7 @@ public:
 private:
 };
 
-extern LLDeviceCaps gDeviceCaps;
+extern RKDeviceCaps gDeviceCaps;
 
 class LLQuaternion;
 class LLMatrix4;
@@ -184,12 +184,12 @@ void rotate_quat(LLQuaternion& rotation);
   Does not stack.
   Caches inverse of projection matrix used in gRenderObliqueProjectionInverse
 */
-class LLRenderUserClipPlane
+class RKRenderUserClipPlane
 {
 public:
 
-    LLRenderUserClipPlane(const LLPlane& plane, const glm::mat4& modelview, const glm::mat4& projection, bool apply = true);
-    ~LLRenderUserClipPlane();
+    RKRenderUserClipPlane(const LLPlane& plane, const glm::mat4& modelview, const glm::mat4& projection, bool apply = true);
+    ~RKRenderUserClipPlane();
 
     void setPlane(F32 a, F32 b, F32 c, F32 d);
     void disable();
@@ -208,37 +208,37 @@ private:
   Saves/restores matrix mode around projection manipulation.
   Does not stack.
 */
-class LLRenderSquashToFarClip
+class RKRenderSquashToFarClip
 {
 public:
-    LLRenderSquashToFarClip();
-    LLRenderSquashToFarClip(const glm::mat4& projection, U32 layer = 0);
+    RKRenderSquashToFarClip();
+    RKRenderSquashToFarClip(const glm::mat4& projection, U32 layer = 0);
 
     void setProjectionMatrix(glm::mat4 projection, U32 layer);
 
-    ~LLRenderSquashToFarClip();
+    ~RKRenderSquashToFarClip();
 };
 
 /*
     Interface for objects that need periodic GL updates applied to them.
     Used to synchronize GL updates with GL thread.
 */
-class LLRenderUpdate
+class RKRenderUpdate
 {
 public:
 
-    static std::list<LLRenderUpdate*> sUpdateQueue;
+    static std::list<RKRenderUpdate*> sUpdateQueue;
 
     bool mInQ;
-    LLRenderUpdate()
+    RKRenderUpdate()
         : mInQ(false)
     {
     }
-    virtual ~LLRenderUpdate()
+    virtual ~RKRenderUpdate()
     {
         if (mInQ)
         {
-            std::list<LLRenderUpdate*>::iterator iter = std::find(sUpdateQueue.begin(), sUpdateQueue.end(), this);
+            std::list<RKRenderUpdate*>::iterator iter = std::find(sUpdateQueue.begin(), sUpdateQueue.end(), this);
             if (iter != sUpdateQueue.end())
             {
                 sUpdateQueue.erase(iter);

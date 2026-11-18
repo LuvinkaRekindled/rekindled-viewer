@@ -70,7 +70,7 @@
 #include "llselectmgr.h"
 #include "rkforkjoinpool.h"
 #include "pipeline.h"
-#include "rkvkbridge.h"     // <FS> LLVkBridge::readbackAffordable (sculpt maps)
+#include "rkvkbridge.h"     // <FS> RKVkBridge::readbackAffordable (sculpt maps)
 #include "llsdutil.h"
 #include "llmatrix4a.h"
 #include "llmediaentry.h"
@@ -440,13 +440,13 @@ U32 LLVOVolume::processUpdateMessage(LLMessageSystem *mesgsys,
                         if (facep && facep->mTextureMatrix)
                         {
                             // delete or reset
-                            LLMatrixTable::free(facep->mTextureMatrix);       // <FS> C3.4
+                            RKMatrixTable::free(facep->mTextureMatrix);       // <FS> C3.4
                             facep->mTextureMatrix = NULL;
                         }
                     }
 
                     gPipeline.markTextured(mDrawable);
-                    // <FS> LL d67326e62 (heap-use-after-free in LLDrawBatch texture matrix): the matrices just deleted are named by the draw infos of the group, which must be rebuilt
+                    // <FS> LL d67326e62 (heap-use-after-free in RKDrawBatch texture matrix): the matrices just deleted are named by the draw infos of the group, which must be rebuilt
                     if (LLSpatialGroup* group = mDrawable->getSpatialGroup())
                     {
                         group->dirtyGeom();
@@ -646,7 +646,7 @@ U32 LLVOVolume::processUpdateMessage(LLMessageSystem *mesgsys,
                     if (facep && facep->mTextureMatrix)
                     {
                         // delete or reset
-                        LLMatrixTable::free(facep->mTextureMatrix);       // <FS> C3.4
+                        RKMatrixTable::free(facep->mTextureMatrix);       // <FS> C3.4
                         facep->mTextureMatrix = NULL;
                     }
                 }
@@ -828,7 +828,7 @@ void LLVOVolume::animateTextures()
 
                 if (!facep->mTextureMatrix)
                 {
-                    facep->mTextureMatrix = LLMatrixTable::alloc(facep);       // <FS> C3.4: from the matrix table, as `new LLMatrix4()` made it (identity)
+                    facep->mTextureMatrix = RKMatrixTable::alloc(facep);       // <FS> C3.4: from the matrix table, as `new LLMatrix4()` made it (identity)
                     if (facep->getVirtualSize() > MIN_TEX_ANIM_SIZE)
                     {
                         // Fix the one edge case missed in
@@ -978,7 +978,7 @@ static F32 texanim_sine_sign()
     return sign;
 }
 
-static void texanim_source(const LLViewerTextureAnim* anim, LLVkTexAnim::Source& src)
+static void texanim_source(const LLViewerTextureAnim* anim, RKVkTexAnim::Source& src)
 {
     src.mMode = anim->mMode;
     src.mSizeX = anim->mSizeX;
@@ -1010,10 +1010,10 @@ void LLVOVolume::resolveTexAnimMatrices()
     for (S32 i = 0, n = mDrawable->getNumFaces(); i < n; ++i)
     {
         LLFace* facep = mDrawable->getFace(i);
-        if (facep && facep->mTextureMatrix && LLVkTexAnim::isParams((const F32*)facep->mTextureMatrix->mMatrix))
+        if (facep && facep->mTextureMatrix && RKVkTexAnim::isParams((const F32*)facep->mTextureMatrix->mMatrix))
         {
             F32 evaluated[16];
-            LLVkTexAnim::evaluateNow((const F32*)facep->mTextureMatrix->mMatrix, evaluated);
+            RKVkTexAnim::evaluateNow((const F32*)facep->mTextureMatrix->mMatrix, evaluated);
             memcpy(facep->mTextureMatrix->mMatrix, evaluated, sizeof(evaluated));
         }
     }
@@ -1057,9 +1057,9 @@ void LLVOVolume::animateTexturesGpu()
         mFaceMappingChanged = true;
         gPipeline.markTextured(mDrawable);
     }
-    mTexAnimMode = LLVkTexAnim::resultBits(anim->mMode, anim->mSizeX, anim->mSizeY) | anim->mMode;
+    mTexAnimMode = RKVkTexAnim::resultBits(anim->mMode, anim->mSizeX, anim->mSizeY) | anim->mMode;
 
-    LLVkTexAnim::Source src;
+    RKVkTexAnim::Source src;
     texanim_source(anim, src);
     LLViewerTextureAnim::Stats& stats = LLViewerTextureAnim::sStats;
     S32 start, end;
@@ -1083,10 +1083,10 @@ void LLVOVolume::animateTexturesGpu()
         te->getScale(&src.mScaleS, &src.mScaleT);
         te->getRotation(&src.mRot);
         F32 params[16];
-        LLVkTexAnim::makeParams(params, src);
+        RKVkTexAnim::makeParams(params, src);
         if (!facep->mTextureMatrix)
         {
-            facep->mTextureMatrix = LLMatrixTable::alloc(facep);       // <FS> C3.4: from the matrix table, as `new LLMatrix4()` made it (identity)
+            facep->mTextureMatrix = RKMatrixTable::alloc(facep);       // <FS> C3.4: from the matrix table, as `new LLMatrix4()` made it (identity)
             if (!small)
             {
                 // the one edge case of LLVOVolume::updateTextureVirtualSize when the matrix is not yet present (as animateTextures)
@@ -1104,7 +1104,7 @@ void LLVOVolume::animateTexturesGpu()
         {
             // a face too small to be drawn with the matrix: it is baked into its texture coordinates once, as animateTextures does, from the matrix of this moment
             ++stats.mSmallFaces;
-            LLVkTexAnim::evaluateNow(params, (F32*)facep->mTextureMatrix->mMatrix);
+            RKVkTexAnim::evaluateNow(params, (F32*)facep->mTextureMatrix->mMatrix);
             continue;
         }
         ++stats.mGpuFaces;
@@ -1129,7 +1129,7 @@ void LLVOVolume::compareTexAnimGpu()
     {
         return;
     }
-    LLVkTexAnim::Source src;
+    RKVkTexAnim::Source src;
     texanim_source(anim, src);
     LLViewerTextureAnim::Stats& stats = LLViewerTextureAnim::sStats;
     S32 start, end;
@@ -1137,7 +1137,7 @@ void LLVOVolume::compareTexAnimGpu()
     for (S32 i = start; i <= end; i++)
     {
         LLFace* facep = mDrawable->getFace(i);
-        if (!facep || !facep->mTextureMatrix || facep->getVirtualSize() <= MIN_TEX_ANIM_SIZE || LLVkTexAnim::isParams((const F32*)facep->mTextureMatrix->mMatrix))
+        if (!facep || !facep->mTextureMatrix || facep->getVirtualSize() <= MIN_TEX_ANIM_SIZE || RKVkTexAnim::isParams((const F32*)facep->mTextureMatrix->mMatrix))
         {
             continue;
         }
@@ -1150,8 +1150,8 @@ void LLVOVolume::compareTexAnimGpu()
         te->getScale(&src.mScaleS, &src.mScaleT);
         te->getRotation(&src.mRot);
         F32 params[16], mine[16];
-        LLVkTexAnim::makeParams(params, src);
-        LLVkTexAnim::evaluateNow(params, mine);
+        RKVkTexAnim::makeParams(params, src);
+        RKVkTexAnim::evaluateNow(params, mine);
         const F32* theirs = (const F32*)facep->mTextureMatrix->mMatrix;
         F32 diff = 0.f;
         for (int k : { 0, 1, 4, 5, 12, 13 })
@@ -1286,7 +1286,7 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
         {
             F32 area = (F32) camera->getScreenPixelArea();
             vsize = area;
-            imagep->setBoostLevel(LLBaseTexture::BOOST_HUD);
+            imagep->setBoostLevel(RKBaseTexture::BOOST_HUD);
             face->setPixelArea(area); // treat as full screen
             face->setVirtualSize(vsize);
         }
@@ -1311,9 +1311,9 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
                 gPipeline.markRebuild(mDrawable, LLDrawable::REBUILD_TCOORD);
                 // dirtyGeom+markRebuild tells the engine to call
                 // LLVolumeGeometryManager::rebuildGeom, which rebuilds the
-                // LLDrawBatch for the spatial group containing this LLFace,
+                // RKDrawBatch for the spatial group containing this LLFace,
                 // safely copying the mTextureMatrix from the LLFace the the
-                // LLDrawBatch. While it's not ideal to call it here, prims with
+                // RKDrawBatch. While it's not ideal to call it here, prims with
                 // animated faces get moved to a smaller partition to reduce
                 // side-effects of their updates (see shrinkWrap in
                 // LLVOVolume::animateTextures).
@@ -1394,7 +1394,7 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
     {
         LLLightImageParams* params = getLightImageParams();
         LLUUID id = params->getLightTexture();
-        mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE);
+        mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, RKBaseTexture::BOOST_NONE);
         if (mLightTexture.notNull())
         {
             F32 rad = getLightRadius();
@@ -1620,7 +1620,7 @@ bool LLVOVolume::setVolume(const LLVolumeParams &params_in, const S32 detail, bo
 
     if (is404)
     {
-        setIcon(LLViewerTextureManager::getFetchedTextureFromFile("icons/Inv_Mesh.png", FTT_LOCAL_FILE, true, LLBaseTexture::BOOST_UI));
+        setIcon(LLViewerTextureManager::getFetchedTextureFromFile("icons/Inv_Mesh.png", FTT_LOCAL_FILE, true, RKBaseTexture::BOOST_UI));
         //render prim proxy when mesh loading attempts give up
         volume_params.setSculptID(LLUUID::null, LL_SCULPT_TYPE_NONE);
 
@@ -1718,7 +1718,7 @@ void LLVOVolume::updateSculptTexture()
             LLUUID id = sculpt_params->getSculptTexture();
             if (id.notNull())
             {
-                mSculptTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_SCULPTED, LLViewerTexture::LOD_TEXTURE);
+                mSculptTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, RKBaseTexture::BOOST_SCULPTED, LLViewerTexture::LOD_TEXTURE);
                 mSculptTexture->forceToSaveRawImage(0, F32_MAX);
                 mSculptTexture->setKnownDrawSize(256, 256);
             }
@@ -1863,7 +1863,7 @@ void LLVOVolume::sculpt()
             {
                 mSculptDeferStamp = frame;
             }
-            if (frame - mSculptDeferStamp < 180 || !LLVkBridge::readbackAffordable())
+            if (frame - mSculptDeferStamp < 180 || !RKVkBridge::readbackAffordable())
             {
                 mSculptDeferred = true;
                 return;
@@ -3922,7 +3922,7 @@ LLViewerTexture* LLVOVolume::getLightTexture()
     {
         if (mLightTexture.isNull() || id != mLightTexture->getID())
         {
-            mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLBaseTexture::BOOST_NONE);
+            mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, RKBaseTexture::BOOST_NONE);
         }
     }
     else
@@ -6221,7 +6221,7 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         }
     }
 
-    LLDrawBatch* info = idx >= 0 ? draw_vec[idx] : nullptr;
+    RKDrawBatch* info = idx >= 0 ? draw_vec[idx] : nullptr;
 
     if (info &&
         info->mVertexBuffer == facep->getVertexBuffer() &&
@@ -6256,7 +6256,7 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         U32 end = start + facep->getGeomCount()-1;
         U32 offset = facep->getIndicesStart();
         U32 count = facep->getIndicesCount();
-        LLPointer<LLDrawBatch> draw_info = new LLDrawBatch(start,end,count,offset, tex,
+        LLPointer<RKDrawBatch> draw_info = new RKDrawBatch(start,end,count,offset, tex,
             facep->getVertexBuffer(), fullbright, bump);
 
         info = draw_info;
@@ -6397,7 +6397,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
         return;
     }
 
-    if (LLRebuildBatch* batch = LLRebuildBatch::current())
+    if (RKRebuildBatch* batch = RKRebuildBatch::current())
     {
         if (batch->pending(group))
         {   // rebuilt again before the loop is over: the first rebuild's fill goes first
@@ -6930,7 +6930,7 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
         extra_mask |= LLVertexBuffer::MAP_WEIGHT4;
         rigged = true;
     }
-    if (LLRebuildBatch* batch = LLRebuildBatch::current())
+    if (RKRebuildBatch* batch = RKRebuildBatch::current())
     {
         batch->add(this, group, fill_tasks);
     }
@@ -6965,7 +6965,7 @@ void LLVolumeGeometryManager::rebuildMesh(LLSpatialGroup* group)
     llassert(group);
     if (group && group->hasState(LLSpatialGroup::MESH_DIRTY) && !group->hasState(LLSpatialGroup::GEOM_DIRTY))
     {
-        if (LLRebuildBatch* batch = LLRebuildBatch::current())
+        if (RKRebuildBatch* batch = RKRebuildBatch::current())
         {
             if (batch->pending(group))
             {   // its geometry is not filled yet
@@ -7565,7 +7565,7 @@ void LLVolumeGeometryManager::fillBatch(FillTask& task)
         }
 }
 
-// LL_VK_REBUILD_PARALLEL: 0 = the fills on this thread, 1 = the fill tasks of one group on the pool, 2 (the default since 2026-10-31) = the fills of all the groups of a rebuild loop together (LLRebuildBatch)
+// LL_VK_REBUILD_PARALLEL: 0 = the fills on this thread, 1 = the fill tasks of one group on the pool, 2 (the default since 2026-10-31) = the fills of all the groups of a rebuild loop together (RKRebuildBatch)
 static int rebuild_parallel_mode()
 {
     static const int mode = getenv("LL_VK_REBUILD_PARALLEL") ? atoi(getenv("LL_VK_REBUILD_PARALLEL")) : 2;
@@ -7577,7 +7577,7 @@ void LLVolumeGeometryManager::runFillTasks(LLSpatialGroup* group, std::vector<Fi
 {
     LL_CPU_ZONE("rebuild: fill tasks (geometry and registration)");
     static const bool parallel_on = rebuild_parallel_mode() == 1;
-    LLForkJoinPool* pool = parallel_on && !LLGpuZoneTimer::isActive() ? LLForkJoinPool::shared() : nullptr;
+    RKForkJoinPool* pool = parallel_on && !RKGpuZoneTimer::isActive() ? RKForkJoinPool::shared() : nullptr;
     std::vector<size_t> parallel;
     for (size_t k = 0; k < tasks.size(); ++k)
     {
@@ -7620,27 +7620,27 @@ void LLVolumeGeometryManager::runFillTasks(LLSpatialGroup* group, std::vector<Fi
     }
 }
 
-thread_local LLRebuildBatch* LLRebuildBatch::sCurrent = nullptr;
+thread_local RKRebuildBatch* RKRebuildBatch::sCurrent = nullptr;
 
-LLRebuildBatch::Scope::Scope()
+RKRebuildBatch::Scope::Scope()
 {
-    mOwner = rebuild_parallel_mode() == 2 && !LLRebuildBatch::sCurrent && !LLGpuZoneTimer::isActive();
+    mOwner = rebuild_parallel_mode() == 2 && !RKRebuildBatch::sCurrent && !RKGpuZoneTimer::isActive();
     if (mOwner)
     {
-        LLRebuildBatch::sCurrent = &mBatch;
+        RKRebuildBatch::sCurrent = &mBatch;
     }
 }
 
-LLRebuildBatch::Scope::~Scope()
+RKRebuildBatch::Scope::~Scope()
 {
     if (mOwner)
     {
         mBatch.flush();
-        LLRebuildBatch::sCurrent = nullptr;
+        RKRebuildBatch::sCurrent = nullptr;
     }
 }
 
-void LLRebuildBatch::add(LLVolumeGeometryManager* manager, LLSpatialGroup* group, std::vector<LLVolumeGeometryManager::FillTask>& tasks)
+void RKRebuildBatch::add(LLVolumeGeometryManager* manager, LLSpatialGroup* group, std::vector<LLVolumeGeometryManager::FillTask>& tasks)
 {
     mEntries.emplace_back();
     Entry& entry = mEntries.back();
@@ -7662,7 +7662,7 @@ void LLRebuildBatch::add(LLVolumeGeometryManager* manager, LLSpatialGroup* group
     mJustDeferred = group;
 }
 
-void LLRebuildBatch::fragmentLater(LLSpatialGroup* group)
+void RKRebuildBatch::fragmentLater(LLSpatialGroup* group)
 {
     auto it = mIndex.find(group);
     if (it != mIndex.end())
@@ -7671,7 +7671,7 @@ void LLRebuildBatch::fragmentLater(LLSpatialGroup* group)
     }
 }
 
-void LLRebuildBatch::flush()
+void RKRebuildBatch::flush()
 {
     if (mEntries.empty())
     {
@@ -7692,7 +7692,7 @@ void LLRebuildBatch::flush()
             (task.mPrepared ? parallel : serial).push_back(Job(entry.mManager, &task));
         }
     }
-    LLForkJoinPool* pool = LLForkJoinPool::shared();
+    RKForkJoinPool* pool = RKForkJoinPool::shared();
     if (pool && parallel.size() >= 2)
     {
         const std::function<void(size_t)> job = [&](size_t j) { parallel[j].first->fillBatch(*parallel[j].second); };
@@ -7767,7 +7767,7 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
 
     LLViewerTexture* last_tex = NULL;
 
-    S32 texture_index_channels = LLShaderProgram::sIndexedTextureChannels;
+    S32 texture_index_channels = RKShaderProgram::sIndexedTextureChannels;
 
     bool flexi = false;
 

@@ -1,7 +1,7 @@
 // normgen.frag: a normal map from a picture: the height is the picture's luminance (or its inverse, bump_code 2), the normal is made from the four neighbours' differences, the height goes in alpha. A line for
 // line translation of "Normal Map Generation Program" (deferred/normgenF.glsl); pairs with normgen.vert.
 
-layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
+layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float stepX;
     float stepY;
@@ -9,7 +9,7 @@ layout(std140, set = 0, binding = 0) uniform LLLooseUniforms
     int bump_code;
 };
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint ll_ti_srcMap;
 };

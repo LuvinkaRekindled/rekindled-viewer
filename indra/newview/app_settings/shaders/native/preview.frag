@@ -1,7 +1,7 @@
 // preview.frag: the preview model's texture times the lit vertex colour. A line for line translation of "Object Preview Shader" (objects/previewF.glsl); pairs with preview.vert.
 // (the draw block is declared the same in both stages)
 
-layout(std140, set = 0, binding = 5) uniform LLLooseDraw
+layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     mat3 normal_matrix;
     mat4 texture_matrix0;

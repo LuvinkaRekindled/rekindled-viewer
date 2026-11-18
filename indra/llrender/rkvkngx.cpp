@@ -19,10 +19,10 @@
 #include <deque>
 #include <string>
 
-namespace LLVkNgx
+namespace RKVkNgx
 {
 
-using namespace LLVk;       // the loaded Vulkan entry points live there
+using namespace RKVk;       // the loaded Vulkan entry points live there
 
 #if !defined(LL_NGX_NR)
 
@@ -30,7 +30,7 @@ void addInstanceExtensions(std::vector<const char*>&) {}
 void addDeviceExtensions(VkInstance, VkPhysicalDevice, std::vector<const char*>&) {}
 bool init(VkInstance, VkPhysicalDevice, VkDevice)
 {
-    if (LLVkDlssNr::requested() > 0)
+    if (RKVkDlssNr::requested() > 0)
     {
         LL_WARNS("VkNgx") << "LL_VK_DLSS_NR is set but this build has no NGX support (DLSS-NR is a local build option: REKINDLED_LOCAL_NR)" << LL_ENDL;
     }
@@ -38,7 +38,7 @@ bool init(VkInstance, VkPhysicalDevice, VkDevice)
 }
 bool ready() { return false; }
 void shutdown() {}
-VkImageLayout inputLayout(const LLVk::Image&) { return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; }
+VkImageLayout inputLayout(const RKVk::Image&) { return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL; }
 VkImageLayout outputLayout() { return VK_IMAGE_LAYOUT_GENERAL; }
 
 #else
@@ -83,7 +83,7 @@ NVSDK_NGX_FeatureDiscoveryInfo discovery_info(NVSDK_NGX_Feature feature)
 
 NVSDK_NGX_Feature nr_feature()
 {
-    return (NVSDK_NGX_Feature)LLVkDlssNr::featureId();
+    return (NVSDK_NGX_Feature)RKVkDlssNr::featureId();
 }
 
 bool ok(NVSDK_NGX_Result r, const char* what)
@@ -186,12 +186,12 @@ bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device)
         return false;
     }
     // DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): whether the feature is usable here (the capability object is owned by NGX); the probe logs everything the core says about feature 18 when LL_VK_DLSS_NR is set
-    LLVkDlssNr::queryAvailability(instance, physical, device, capabilities, discovery_info(NVSDK_NGX_Feature_SuperSampling));
-    if (LLVkDlssNr::requested() > 0)
+    RKVkDlssNr::queryAvailability(instance, physical, device, capabilities, discovery_info(NVSDK_NGX_Feature_SuperSampling));
+    if (RKVkDlssNr::requested() > 0)
     {
-        LLVkDlssNr::probe(instance, physical, device, capabilities, discovery_info(NVSDK_NGX_Feature_SuperSampling));
+        RKVkDlssNr::probe(instance, physical, device, capabilities, discovery_info(NVSDK_NGX_Feature_SuperSampling));
     }
-    if (!LLVkDlssNr::available() && LLVkDlssNr::requested() == 0)
+    if (!RKVkDlssNr::available() && RKVkDlssNr::requested() == 0)
     {
         NVSDK_NGX_VULKAN_Shutdown1(device);
         LL_INFOS("VkNgx") << "DLSS-NR is not available here: NGX is shut down again" << LL_ENDL;
@@ -214,12 +214,12 @@ void shutdown()
         return;
     }
     vkDeviceWaitIdle(gDevice);
-    LLVkDlssNr::shutdown();
+    RKVkDlssNr::shutdown();
     NVSDK_NGX_VULKAN_Shutdown1(gDevice);
     gReady = false;
 }
 
-VkImageLayout inputLayout(const LLVk::Image& image)
+VkImageLayout inputLayout(const RKVk::Image& image)
 {
     return (image.mAspect & VK_IMAGE_ASPECT_DEPTH_BIT) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
