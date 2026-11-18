@@ -28,13 +28,9 @@
 #include <array>
 #include "llasyncpool.h"
 #include "lltracethreadrecorder.h"
-#include "llvksubstream.h"
 #include "lldrawpoolmaterials.h"
 #include <chrono>
 #include <functional>
-#include <condition_variable>
-#include <mutex>
-#include <thread>
 #include <memory>
 
 #include "llviewerdisplay.h"
@@ -2141,206 +2137,6 @@ void render_ui_3d()
 
 }
 
-#if LL_WINDOWS
-#include <dbghelp.h>
-// <FS> test aid: an exception on the helper thread is logged with its stack (symbols from the pdb next to the exe) before the viewer goes down
-static LONG ui_thread_filter(EXCEPTION_POINTERS* info)
-{
-    static bool said = false;
-    if (said)
-    {
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-    said = true;
-    HANDLE process = GetCurrentProcess();
-    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-    SymInitialize(process, nullptr, TRUE);
-    LL_WARNS("UiThread") << "exception " << std::hex << info->ExceptionRecord->ExceptionCode << " at " << info->ExceptionRecord->ExceptionAddress << std::dec << LL_ENDL;
-    CONTEXT context = *info->ContextRecord;
-    STACKFRAME64 frame = {};
-    frame.AddrPC.Offset = context.Rip;
-    frame.AddrPC.Mode = AddrModeFlat;
-    frame.AddrFrame.Offset = context.Rbp;
-    frame.AddrFrame.Mode = AddrModeFlat;
-    frame.AddrStack.Offset = context.Rsp;
-    frame.AddrStack.Mode = AddrModeFlat;
-    for (int i = 0; i < 24; ++i)
-    {
-        if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, process, GetCurrentThread(), &frame, &context, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr) || !frame.AddrPC.Offset)
-        {
-            break;
-        }
-        char buffer[sizeof(SYMBOL_INFO) + 256] = {};
-        SYMBOL_INFO* symbol = (SYMBOL_INFO*)buffer;
-        symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
-        symbol->MaxNameLen = 255;
-        DWORD64 displacement = 0;
-        std::string name = "?";
-        if (SymFromAddr(process, frame.AddrPC.Offset, &displacement, symbol))
-        {
-            name = symbol->Name;
-        }
-        IMAGEHLP_LINE64 line = { sizeof(IMAGEHLP_LINE64) };
-        DWORD line_displacement = 0;
-        std::string where;
-        if (SymGetLineFromAddr64(process, frame.AddrPC.Offset, &line_displacement, &line))
-        {
-            where = std::string(line.FileName) + ":" + std::to_string(line.LineNumber);
-        }
-        LL_WARNS("UiThread") << "  #" << i << " " << name << " " << where << LL_ENDL;
-    }
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-
-static bool ui_thread_run_guarded(void (*fn)(void*), void* arg)
-{
-    __try
-    {
-        fn(arg);
-        return true;
-    }
-    __except (ui_thread_filter(GetExceptionInformation()))
-    {
-        return false;
-    }
-}
-#endif
-
-namespace LLTrace { void set_frame_recording_override(PeriodicRecording* recording); }      // lltracerecording.cpp (not in the header: it is included everywhere)
-
-// <FS> One persistent thread for the UI draw: the statistics (LLTrace) of the widgets are tied to the thread that started them (a stat graph or the status bar creates a recording while it
-// draws and keeps it from frame to frame), so the thread that draws the UI is always the same one, with a recorder of its own that reports to the master's like any LLThread's.
-class UiDrawThread
-{
-public:
-    static UiDrawThread& instance()
-    {
-        static UiDrawThread* thread = new UiDrawThread;       // never destroyed: it ends with the process
-        return *thread;
-    }
-
-    // runs the job on the thread and returns when it is done (false: it raised an exception)
-    bool run(const std::function<void()>& job)
-    {
-        std::unique_lock<std::mutex> lock(mMutex);
-        mJob = &job;
-        mOk = true;
-        mDone = false;
-        mWake.notify_one();
-        mFinished.wait(lock, [this] { return mDone; });
-        return mOk;
-    }
-
-private:
-    UiDrawThread() : mThread([this] { loop(); }) { mThread.detach(); }
-
-    static void call(void* arg)
-    {
-        (*static_cast<const std::function<void()>*>(arg))();
-    }
-
-    void loop()
-    {
-        LLTrace::ThreadRecorder recorder(*LLTrace::get_master_thread_recorder());
-        std::unique_lock<std::mutex> lock(mMutex);
-        for (;;)
-        {
-            mWake.wait(lock, [this] { return mJob != nullptr; });
-            const std::function<void()>* job = mJob;
-            lock.unlock();
-#if LL_WINDOWS
-            const bool ok = ui_thread_run_guarded(&UiDrawThread::call, const_cast<std::function<void()>*>(job));
-#else
-            (*job)();
-            const bool ok = true;
-#endif
-            recorder.pushToParent();
-            lock.lock();
-            mOk = ok;
-            mJob = nullptr;
-            mDone = true;
-            mFinished.notify_one();
-        }
-    }
-
-    std::mutex mMutex;
-    std::condition_variable mWake, mFinished;
-    const std::function<void()>* mJob = nullptr;
-    bool mDone = false;
-    bool mOk = true;
-    std::thread mThread;
-};
-
-// <FS> The widgets of the UI recorded as a sub-stream (F3, see doc/vulkan/F2-start.md, "the UI draw as a builder"). LL_VK_UI_SUBSTREAM=1: on this thread, spliced at once (the stream must
-// come out the same). =2: on a helper thread while this one waits (the thread gets the state of this one's gRender, hands it back when it is done): shows what a second thread needs
-// without racing anything.
-namespace LLVkState { void setScissorTraceFrame(U32 frame); }       // llvkstate.cpp
-
-static void draw_widgets()
-{
-    static const char* mode_env = getenv("LL_VK_UI_SUBSTREAM");
-    static const bool alternate = mode_env && mode_env[0] == 'a';       // "alt": 60 frames on the main stream, 60 as a sub-stream (the same session, so the UI is the same)
-    const int mode = alternate ? (int)((LLFrameTimer::getFrameCount() / 60) % 2) : (mode_env ? atoi(mode_env) : 0);
-    static bool trace_set = false;
-    if (!trace_set)
-    {
-        trace_set = true;
-        // LL_VK_SCISSOR_TRACE=rel: a frame in the odd 60-frame block (the sub-stream one) about ten seconds from now, and the one 60 frames later (the main one)
-        U32 block = LLFrameTimer::getFrameCount() / 60 + 10;
-        if ((block % 2) == 0)
-        {
-            ++block;
-        }
-        LLVkState::setScissorTraceFrame(block * 60 + 5);
-    }
-    static int last_logged = -2;
-    if (mode_env && last_logged != mode)
-    {
-        last_logged = mode;
-        LL_INFOS("UiThread") << "frame " << LLFrameTimer::getFrameCount() << ": UI draw mode " << mode << " (LL_VK_UI_SUBSTREAM=" << mode_env << ", sub-streams usable: " << LLVkSubStream::usable() << ")" << LL_ENDL;
-    }
-    if (mode == 0 || !LLVkSubStream::usable())
-    {
-        gViewerWindow->draw();
-        return;
-    }
-    LLVkSubStream sub;
-    if (mode == 1)
-    {
-        sub.begin();
-        gViewerWindow->draw();
-        sub.end();
-        sub.splice();
-        return;
-    }
-    std::unique_ptr<LLRender> state_after;
-    const LLRender* state_before = &gRender;
-    LLTrace::PeriodicRecording* main_frame_recording = &LLTrace::get_frame_recording();
-    static U32 traced = 0;
-    const bool trace = traced < 3;
-    if (trace) { LL_INFOS("UiThread") << "frame " << traced << ": handing the widget draw to the UI thread" << LL_ENDL; }
-    const bool ok = UiDrawThread::instance().run([&]()
-    {
-        if (trace) { LL_INFOS("UiThread") << "ui thread: copying gRender" << LL_ENDL; }
-        LLTrace::set_frame_recording_override(main_frame_recording);       // the status bar and the stat graphs read the frame statistics, which only the main thread's recording has
-        gRender = *state_before;                    // what the main thread's gRender believes and holds (matrix stacks, texture units, the immediate buffer)
-        sub.begin();
-        gViewerWindow->draw();
-        sub.end();
-        state_after.reset(new LLRender(gRender));   // and what it believes now
-        LLTrace::set_frame_recording_override(nullptr);
-        if (trace) { LL_INFOS("UiThread") << "ui thread: done" << LL_ENDL; }
-    });
-    if (!ok)
-    {
-        LL_ERRS("UiThread") << "the widget draw on the UI thread raised an exception (see the lines above)" << LL_ENDL;
-    }
-    if (trace) { LL_INFOS("UiThread") << "back on the main thread: taking the state back and splicing" << LL_ENDL; }
-    gRender = *state_after;
-    sub.splice();
-    ++traced;
-}
-
 void render_ui_2d()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
@@ -2435,7 +2231,7 @@ void render_ui_2d()
 
                     gRender.clearBuffers(ClearBits::Color);
 
-                    { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); draw_widgets(); }
+                    { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
                 }
 
             }
@@ -2459,7 +2255,7 @@ void render_ui_2d()
     }
     else
     {
-        { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); draw_widgets(); }
+        { LL_CPU_ZONE("ui: gViewerWindow->draw (widgets)"); gViewerWindow->draw(); }
     }
 
     // reset current origin for font rendering, in case of tiling render

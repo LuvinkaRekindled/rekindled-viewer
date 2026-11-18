@@ -232,9 +232,6 @@ public:
 
     U32 getCurrTexture(void) { return mCurrTexture; }
 
-    // <FS> U1: the sequence number of the last slot write of a unit, and the newest number of all (nothing wrote the unit since a number N when its stamp is <= N)
-    static U32 getUnitStamp(S32 unit);
-    static U32 getWriteSeq();
 
     eTextureType getCurrType(void) { return mCurrTexType; }
 

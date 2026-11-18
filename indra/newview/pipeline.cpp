@@ -2667,20 +2667,16 @@ bool LLPipeline::coldGroup(const LLSpatialGroup* group)
 
 void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
 {
-    if (&moved_list == &mMovedList && updateMovedListParallel(moved_list))
-    {
-        return;
-    }
-    updateMovedListSerial(moved_list, 0);
+    updateMovedListSerial(moved_list);
 }
 
-void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list, size_t first)
+void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list)
 {
     LL_CPU_ZONE("pipeline: updateMovedList");
     LL_PROFILE_ZONE_SCOPED;
     // <FS> by index: updateMove marks the parent and the children of a drawable moved (markMoved, from makeActive), which pushes onto this very list; a push that moves the vector's storage left the iterator of the
     // old loop pointing at freed memory (a crash reading 0xFFFFFFFFFFFFFFFF during the loading of a crowd). An entry pushed during the pass is reached later in the same pass, as the loop always meant.
-    size_t next = first;
+    size_t next = 0;
     while (next < moved_list.size())
     {
         const size_t cur = next++;
@@ -2798,275 +2794,6 @@ void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list
         }
     }
     sMovedCurrent = nullptr;
-}
-
-// <FS> view rework O1 (LL_VK_MOVED_PARALLEL=1; default off until soaked): see pipeline.h. The unit of a job is a linkset (a child reads its parent's transform, and the list holds parents first): every entry of
-// a root, in list order, runs in one job whose writes to shared state (the moved lists, the octree moves, makeActive, the HUD text, the rebuild and partition marks, the group flags, the texture stamps) go
-// into the job's ledgers. A serial pass in list order then makes each entry's writes and does its done handling, or runs the entry the old way when it is not plain (an avatar, an attachment, a flexible
-// prim, a rigged or animated object, a linkset with one of those in it).
-enum MovedAction : U8 { ERASE_NULL, KEEP, SERIAL, JOB };
-struct MovedEnt
-{
-    LLDrawable* mDrawable = nullptr;
-    MovedAction mAction = SERIAL;
-    bool mDone = false;
-    U32 mLinkset = 0;
-    size_t mOps[2] = { 0, 0 };
-    size_t mSort[2] = { 0, 0 };
-    size_t mStamps[2] = { 0, 0 };
-};
-struct MovedLed
-{
-    std::vector<LLPipeline::AvOp> mOps;
-    std::vector<LLPipeline::SortDelta> mSort;
-    std::vector<LLFace*> mStamps;
-    std::vector<U32> mEntries;
-    bool mPlain = true;
-};
-
-static bool moved_entry_plain(LLDrawable* d)
-{
-    if (!d || d->isDead() || d->isSpatialBridge() || d->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
-    {
-        return false;
-    }
-    LLViewerObject* vobj = d->getVObj();
-    if (!vobj || vobj->isDead() || vobj->getPCode() != LL_PCODE_VOLUME || vobj->isAvatar() || vobj->isAttachment() || vobj->isHUDAttachment() || vobj->isAnimatedObject() || vobj->isRiggedMesh())
-    {
-        return false;
-    }
-    return !static_cast<LLVOVolume*>(vobj)->isFlexible();
-}
-
-bool LLPipeline::updateMovedListParallel(LLDrawable::drawable_vector_t& moved_list)
-{
-    static const int mode = getenv("LL_VK_MOVED_PARALLEL") ? atoi(getenv("LL_VK_MOVED_PARALLEL")) : 0;
-    static const size_t kMinEntries = 48;
-    if (mode == 0 || moved_list.size() < kMinEntries || LLAttCensus::sOn || ItemCensus::on() || LLGpuZoneTimer::isActive())
-    {
-        return false;
-    }
-    LLForkJoinPool* pool = LLForkJoinPool::shared();
-    if (!pool)
-    {
-        return false;
-    }
-    LL_CPU_ZONE("pipeline: updateMovedList (parallel)");
-
-    typedef MovedAction Action __attribute__((unused));
-    typedef MovedEnt Ent;
-    typedef MovedLed Led;
-    static std::vector<Ent> ents;
-    static std::vector<Led> leds;
-    static std::unordered_map<LLDrawable*, U32> linkset_of;
-    ents.clear();
-    linkset_of.clear();
-    size_t used_leds = 0;
-
-    const size_t n = moved_list.size();
-    ents.resize(n);
-    for (size_t i = 0; i < n; ++i)
-    {
-        Ent& e = ents[i];
-        LLDrawable* drawablep = moved_list[i];
-        e.mDrawable = drawablep;
-        if (!drawablep)
-        {
-            e.mAction = ERASE_NULL;
-            continue;
-        }
-        // the cold skip, as in the serial loop (it leaves the entry on the list unmoved)
-        if (coldMode() > 0 && !drawablep->isDead() && drawablep->isRoot() && !drawablep->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD | LLDrawable::EARLY_MOVE))
-        {
-            LLViewerObject* vobj = drawablep->getVObj();
-            LLSpatialGroup* group = drawablep->getSpatialGroup();
-            if (vobj && group && !vobj->isAvatar() && !vobj->isAttachment() && !vobj->isHUDAttachment())
-            {
-                ++sColdMovedSeen;
-                if (coldGroup(group))
-                {
-                    const LLVector4a* b = group->getBounds();
-                    LLVector4a p;
-                    p.load3(vobj->getPositionAgent().mV);
-                    LLVector4a d;
-                    d.setSub(p, b[0]);
-                    d.setAbs(d);
-                    LLVector4a over;
-                    over.setSub(d, b[1]);
-                    if (over.getF32ptr()[0] <= 0.f && over.getF32ptr()[1] <= 0.f && over.getF32ptr()[2] <= 0.f)
-                    {
-                        ++sColdMovedSkipped;
-                        if (coldMode() >= 2)
-                        {
-                            drawablep->setState(LLDrawable::MOVE_UNDAMPED);
-                            e.mAction = KEEP;
-                            continue;
-                        }
-                    }
-                }
-            }
-        }
-        e.mAction = SERIAL;
-        if (!drawablep->isDead() && !drawablep->isState(LLDrawable::EARLY_MOVE))
-        {
-            LLDrawable* root = drawablep->getRoot();
-            auto it = linkset_of.find(root);
-            if (it == linkset_of.end())
-            {
-                if (used_leds == leds.size())
-                {
-                    leds.emplace_back();
-                }
-                Led& led = leds[used_leds];
-                led.mOps.clear();
-                led.mSort.clear();
-                led.mStamps.clear();
-                led.mEntries.clear();
-                led.mPlain = moved_entry_plain(root);
-                it = linkset_of.emplace(root, (U32)used_leds).first;
-                ++used_leds;
-            }
-            Led& led = leds[it->second];
-            led.mPlain = led.mPlain && moved_entry_plain(drawablep);
-            led.mEntries.push_back((U32)i);
-            e.mLinkset = it->second;
-        }
-    }
-    // a linkset becomes jobs only when every entry of it is plain
-    std::vector<U32> job_leds;
-    for (size_t k = 0; k < used_leds; ++k)
-    {
-        if (leds[k].mPlain)
-        {
-            job_leds.push_back((U32)k);
-            for (U32 i : leds[k].mEntries)
-            {
-                ents[i].mAction = JOB;
-            }
-        }
-    }
-    static U64 calls = 0, entries_total = 0, job_entries = 0, linksets = 0, ops_total = 0, stamps_total = 0;
-    ++calls;
-    entries_total += n;
-    job_entries += std::count_if(ents.begin(), ents.end(), [](const Ent& e) { return e.mAction == JOB; });
-    linksets += job_leds.size();
-
-    if (job_leds.size() >= 2)
-    {
-        const std::function<void(size_t)> job = [&](size_t j)
-        {
-            Led& led = leds[job_leds[j]];
-            std::vector<AvOp>* saved_av = sAvSink;
-            std::vector<SortDelta>* saved_sort = sSortSink;
-            std::vector<LLFace*>* saved_stamps = LLFace::sStampSink;
-            sAvSink = &led.mOps;
-            sSortSink = &led.mSort;
-            LLFace::sStampSink = &led.mStamps;
-            for (U32 i : led.mEntries)
-            {
-                Ent& e = ents[i];
-                e.mOps[0] = led.mOps.size();
-                e.mSort[0] = led.mSort.size();
-                e.mStamps[0] = led.mStamps.size();
-                e.mDone = e.mDrawable->updateMove();
-                e.mOps[1] = led.mOps.size();
-                e.mSort[1] = led.mSort.size();
-                e.mStamps[1] = led.mStamps.size();
-            }
-            sAvSink = saved_av;
-            sSortSink = saved_sort;
-            LLFace::sStampSink = saved_stamps;
-        };
-        pool->runLabeled("avatar attachment ledger", job_leds.size(), job);
-    }
-    else
-    {
-        // nothing worth a launch: every entry the old way
-        for (Ent& e : ents)
-        {
-            if (e.mAction == JOB)
-            {
-                e.mAction = SERIAL;
-            }
-        }
-    }
-
-    // the writes and the done handling, in list order
-    LLDrawable::drawable_vector_t kept;
-    kept.reserve(n);
-    for (size_t i = 0; i < n; ++i)
-    {
-        Ent& e = ents[i];
-        LLDrawable* drawablep = e.mDrawable;
-        if (e.mAction == ERASE_NULL)
-        {
-            continue;
-        }
-        if (e.mAction == KEEP)
-        {
-            kept.push_back(drawablep);
-            continue;
-        }
-        bool done = true;
-        if (e.mAction == JOB)
-        {
-            Led& led = leds[e.mLinkset];
-            applyAvOpsRange(led.mOps.data() + e.mOps[0], led.mOps.data() + e.mOps[1]);
-            applySortDeltasRange(led.mSort.data() + e.mSort[0], led.mSort.data() + e.mSort[1]);
-            for (size_t k = e.mStamps[0]; k < e.mStamps[1]; ++k)
-            {
-                led.mStamps[k]->stampTextures();
-            }
-            ops_total += e.mOps[1] - e.mOps[0];
-            stamps_total += e.mStamps[1] - e.mStamps[0];
-            done = e.mDone;
-        }
-        else if (!drawablep->isDead() && !drawablep->isState(LLDrawable::EARLY_MOVE))
-        {
-            done = drawablep->updateMove();
-        }
-        drawablep->clearState(LLDrawable::EARLY_MOVE | LLDrawable::MOVE_UNDAMPED);
-        if (done)
-        {
-            if (drawablep->isRoot() && !drawablep->isState(LLDrawable::ACTIVE))
-            {
-                drawablep->makeStatic();
-            }
-            drawablep->clearState(LLDrawable::ON_MOVE_LIST);
-            if (drawablep->isState(LLDrawable::ANIMATED_CHILD))
-            {
-                drawablep->clearState(LLDrawable::ANIMATED_CHILD);
-                markRebuild(drawablep, LLDrawable::REBUILD_VOLUME);
-                if (drawablep->getVObj())
-                {
-                    drawablep->getVObj()->dirtySpatialGroup();
-                }
-            }
-        }
-        else
-        {
-            kept.push_back(drawablep);
-        }
-    }
-    // what the serial entries and the replayed writes pushed while this ran is the tail of the list: the old loop reached those entries in the same call
-    LLDrawable::drawable_vector_t tail;
-    if (moved_list.size() > n)
-    {
-        tail.assign(moved_list.begin() + n, moved_list.end());
-    }
-    moved_list = kept;
-    const size_t first_tail = moved_list.size();
-    moved_list.insert(moved_list.end(), tail.begin(), tail.end());
-    if (!tail.empty())
-    {
-        updateMovedListSerial(moved_list, first_tail);
-    }
-    if (calls % 3000 == 0)
-    {
-        LL_INFOS("MovedParallel") << "moved list in " << calls << " calls: " << (double)entries_total / calls << " entries a call, " << (double)job_entries / calls << " of them run as jobs in "
-                                  << (double)linksets / calls << " linksets; writes replayed a call " << (double)ops_total / calls << ", texture stamps " << (double)stamps_total / calls << LL_ENDL;
-    }
-    return true;
 }
 
 // <FS> LL_VK_SCENECENSUS=1: how much the scene holds (objects, drawables, spatial groups with built geometry, draw infos and triangles, lights, queues) against what is inside the world camera's frustum.
@@ -9789,7 +9516,7 @@ struct LLSceneFragment
     bool mResidentSent = false;
     std::vector<U32> mSlots;
     F32 mBounds[4] = {};
-    // S2 alpha (LL_VK_SCENE_RAYALPHA): the group's static alpha masked casters, what build_shadow_alpha makes of them. mMatrix: 0 = none, else 1 + index into mMatrices; mTextures: local texture
+    // S2 alpha: the group's static alpha masked casters, what build_shadow_alpha makes of them. mMatrix: 0 = none, else 1 + index into mMatrices; mTextures: local texture
     // number (1-based, into mTexLocal), 0 = none. Texture names are not kept here: the registry (sAlphaTex) resolves them once a frame.
     std::vector<LLVkBridge::ShadowAlphaEntry> mAlpha;
     std::vector<LLVkBridge::ShadowAlphaEntry> mAlphaTex;      // C5 J3: the alpha casters with a texture matrix (raster only): never registered with the worker; mAlphaTexPtrs: their matrices (values read when a record is made)
@@ -9900,12 +9627,7 @@ struct LLSceneFragment
 
 namespace
 {
-bool scene_env(const char* name)
-{
-    const char* e = getenv(name);
-    return e && e[0] == '1';
-}
-// <FS> K6 (draw info removal, stage 1): the scene table with resident fragments is the only path. The switches that chose another one are gone: LL_VK_SCENE_RESIDENT and the FSVkResidentScene setting,
+// <FS> K6 (draw info removal, stage 1): the scene table with resident fragments is the only path. The switches that chose another one are gone: the FSVkResidentScene setting,
 // LL_VK_SCENE_FRAGMENTS, LL_VK_SCENE_VERIFY, LL_VK_SCENE_GEO (0 = no table, 1 = verify only), LL_VK_VIEWJOBS and its A/B alternation, LL_VK_BUILDER_VERIFY. The accessors stay as constants for this step so that the
 // branches they guard can be removed one at a time (a branch of the "off" side is dead code now).
 constexpr bool scene_resident_on() { return true; }
@@ -9924,7 +9646,7 @@ bool scene_geo_rigged_on()
 // the alpha masked casters of resident fragments too (ray shadows, with the range membership)
 bool scene_alpha_on()
 {
-    return true;        // (the switches LL_VK_SCENE_RESIDENT, LL_VK_SCENE_RAYRANGE and LL_VK_SCENE_RAYALPHA are gone, 2026-11-12: always on)
+    return true;        // (the switches that chose another path are gone, 2026-11-12: always on)
 }
 // <FS> item B of doc/vulkan/PLAN-crowd-worker-and-gpu.md: the worker draws the alpha masked static casters of the cascades from its own resident table (kinds 18, 38, 37) instead of one entry
 // each every pass. Always on since 2026-11-12 (LL_VK_ALPHARES and the live key alphares of rt-debug.txt, the same-lap A/B, are gone: the user judged the shadows good on 2026-11-04)
@@ -13680,21 +13402,7 @@ bool ll_scene_geo_serving()
     if (sGeoServingFrame != (U32)gFrameCount)
     {
         sGeoServingFrame = (U32)gFrameCount;
-        bool on = LLVkBridge::sceneGeoAvailable() && LLRenderPass::deferredPacketsEnabled();
-        static const int period = []() { const char* e = getenv("LL_VK_SCENE_GEO_AB"); return e ? atoi(e) : 0; }();
-        if (period > 0)
-        {
-            const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-            const bool phase = ((seconds / period) % 2) == 1;
-            static int last = -1;
-            if ((int)phase != last)
-            {
-                last = (int)phase;
-                LL_DIAG("VkScene") << "[phase] scene geometry table now " << (phase ? "ON" : "off") << LL_ENDL;
-            }
-            on = on && phase;
-        }
-        sGeoServingNow = on;
+        sGeoServingNow = LLVkBridge::sceneGeoAvailable() && LLRenderPass::deferredPacketsEnabled();
     }
     return sGeoServingNow;
 }
@@ -13836,8 +13544,7 @@ static void scene_alpha_frame(U64 frame);
 void ll_scene_geo_palette_kick(LLCullResult* cull)
 {
     sBindJob.reset();
-    static const bool no_job = getenv("LL_VK_NO_BINDJOB") != nullptr;       // (a test: the palettes of the rigged table items are made inline, later in the frame, as the per frame records make theirs)
-    if (no_job || !scene_geo_rigged_on() || !cull || !ll_scene_geo_serving() || !ll_scene_geo_main_view())
+    if (!scene_geo_rigged_on() || !cull || !ll_scene_geo_serving() || !ll_scene_geo_main_view())
     {
         return;
     }
@@ -23288,146 +22995,7 @@ void LLPipeline::bindShadowMaps(LLShaderProgram& shader)
     }
 }
 
-// <FS> U1: the Fast bind of the alpha pool (one per draw group, about 1,030 a frame in London) skips what is current. Design: doc/vulkan/U-pass-uniforms-design.md section 8.
-// The pass state (the GL names the Fast bind puts on the texture units, the probe UBO, the values it writes) is built on every call and compared by value with the last one: a change
-// bumps a version, no source of it has to be listed. A program remembers the version and the texture unit write sequence number of its last Fast fill; it is current when the version is
-// the same and none of its pass units was written since (every slot write stamps its unit, see ll_bindTexUnit_impl).
-static U32 ssr_trace_mode_bits();
-void ll_pass_uni_log();
-
-namespace
-{
-struct PassFastState
-{
-    U32 mId[16];        // 0 light function, 1 BRDF LUT, 2-5 sun shadow maps, 6-7 spot shadow maps, 8 probes, 9 irradiance, 10 hero probe, 11 scene map, 12 scene depth, 13 probe UBO, 14 flags
-    F32 mVal[16];       // 0-8 env matrix, 9-14 the six screen space reflection values, 15 trace mode bits
-};
-constexpr S32 kFastUnits = 13;      // the first 13 ids are bound to a texture unit
-const S32 kFastUniform[kFastUnits] = {
-    LLShaderMgr::DEFERRED_LIGHTFUNC, LLShaderMgr::DEFERRED_BRDF_LUT,
-    LLShaderMgr::DEFERRED_SHADOW0, LLShaderMgr::DEFERRED_SHADOW0 + 1, LLShaderMgr::DEFERRED_SHADOW0 + 2, LLShaderMgr::DEFERRED_SHADOW0 + 3, LLShaderMgr::DEFERRED_SHADOW0 + 4, LLShaderMgr::DEFERRED_SHADOW0 + 5,
-    LLShaderMgr::REFLECTION_PROBES, LLShaderMgr::IRRADIANCE_PROBES, LLShaderMgr::HERO_PROBE, LLShaderMgr::SCENE_MAP, LLShaderMgr::SCENE_DEPTH };
-const char* const kFastUnitName[kFastUnits] = { "lightFunc", "brdfLut", "shadow0", "shadow1", "shadow2", "shadow3", "shadow4", "shadow5", "probes", "irradiance", "hero", "sceneMap", "sceneDepth" };
-
-PassFastState sFastState = {};
-U32 sFastVer = 1;
-bool sFastWasOn = false;
-U32 sFastModeFrame = ~0u;
-bool sFastModeNow = false;
-
-struct PassUniStats
-{
-    U64 mPartial = 0, mUnitsRebound = 0;
-    U64 mCalls = 0, mHits = 0, mFull = 0, mMissCold = 0, mMissVer = 0, mMissUnit = 0, mMissOff = 0, mVerified = 0, mMismatch = 0, mLogged = 0;
-    U64 mMissUnitBy[kFastUnits] = {};
-    U64 mVerBy[32] = {};
-    U64 mFrom = 0;
-} sPU;
-
-bool pass_uni_enabled()
-{
-    static const int base = []() { const char* e = getenv("LL_VK_PASSUNI"); return e ? atoi(e) : 0; }();
-    static const int period = []() { const char* e = getenv("LL_VK_PASSUNI_AB"); return e ? atoi(e) : 0; }();
-    if (sFastModeFrame != (U32)gFrameCount)
-    {
-        sFastModeFrame = (U32)gFrameCount;
-        bool on = base != 0 || period > 0;
-        if (period > 0)
-        {
-            const long long seconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
-            const bool phase = ((seconds / period) % 2) == 1;
-            static int last = -1;
-            if ((int)phase != last)
-            {
-                last = (int)phase;
-                LL_DIAG("VkScene") << "[phase] pass uniform skip now " << (phase ? "ON" : "off") << LL_ENDL;
-            }
-            on = on && phase;
-        }
-        sFastModeNow = on;
-    }
-    return sFastModeNow;
-}
-
-bool pass_uni_verify()
-{
-    static const bool on = []() { const char* e = getenv("LL_VK_PASSUNI_VERIFY"); return e && atoi(e) != 0; }();
-    return on;
-}
-}
-
-bool ll_pass_uni_on()
-{
-    return pass_uni_enabled() && LLShaderProgram::vkMainOnlyProducer();
-}
-
-bool ll_pass_uni_verify()
-{
-    return pass_uni_verify();
-}
-
-U64 gPassUniAlphaMade = 0, gPassUniAlphaSkipped = 0, gPassUniAlphaMismatch = 0;
-
-void LLPipeline::passFastState(void* out)
-{
-    PassFastState& st = *static_cast<PassFastState*>(out);
-    memset(&st, 0, sizeof(st));
-    st.mId[0] = mLightFunc;
-    st.mId[1] = mPbrBrdfLut.getTexture(0);
-    for (U32 i = 0; i < 4; i++)
-    {
-        st.mId[2 + i] = getSunShadowTarget(i)->getDepth();
-    }
-    for (U32 i = 0; i < 2; i++)
-    {
-        st.mId[6 + i] = getSpotShadowTarget(i)->getDepth();
-    }
-    if (sReflectionProbesEnabled)
-    {
-        st.mId[8] = mReflectionMapManager.mTexture.notNull() ? mReflectionMapManager.mTexture->getTextureHandle() : 0;
-        st.mId[9] = mReflectionMapManager.mIrradianceMaps.notNull() ? mReflectionMapManager.mIrradianceMaps->getTextureHandle() : 0;
-        st.mId[10] = (RenderMirrors && mHeroProbeManager.mTexture.notNull()) ? mHeroProbeManager.mTexture->getTextureHandle() : 0;
-        st.mId[11] = mSceneMap.getTexture(0);
-        st.mId[12] = mSceneMap.getDepth();
-        st.mId[13] = mReflectionMapManager.mUBO;
-        const F32* m = gRenderModelView;
-        const F32 env[9] = { m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10] };
-        memcpy(st.mVal, env, sizeof(env));
-        st.mVal[9] = (F32)RenderScreenSpaceReflectionIterations;
-        st.mVal[10] = RenderScreenSpaceReflectionDistanceBias;
-        st.mVal[11] = RenderScreenSpaceReflectionRayStep;
-        st.mVal[12] = (F32)RenderScreenSpaceReflectionGlossySamples;
-        st.mVal[13] = RenderScreenSpaceReflectionDepthRejectBias;
-        st.mVal[14] = RenderScreenSpaceReflectionAdaptiveStepMultiplier;
-        st.mVal[15] = (F32)ssr_trace_mode_bits();
-    }
-    st.mId[14] = (sReflectionProbesEnabled ? 1u : 0u) | (RenderMirrors ? 2u : 0u);
-}
-
-// one pass sampler of the Fast bind, with the calls of bindLightFunc / bindShadowMaps / bindReflectionProbes (k = the index in kFastUniform; the probe ones only exist with the probes on)
-void LLPipeline::bindFastUnit(S32 k, S32 unit)
-{
-    if (unit < 0)
-    {
-        return;
-    }
-    LLTexUnit* tu = gRender.getTexUnit(unit);
-    switch (k)
-    {
-    case 0: tu->bindManual(LLTexUnit::TT_TEXTURE, mLightFunc); break;
-    case 1: mPbrBrdfLut.bindTexture(0, unit); break;
-    case 2: case 3: case 4: case 5: tu->bind(getSunShadowTarget(k - 2), true); break;
-    case 6: case 7: tu->bind(getSpotShadowTarget(k - 6), true); break;
-    case 8: if (sReflectionProbesEnabled && mReflectionMapManager.mTexture.notNull()) mReflectionMapManager.mTexture->bind(unit); break;
-    case 9: if (sReflectionProbesEnabled && mReflectionMapManager.mIrradianceMaps.notNull()) mReflectionMapManager.mIrradianceMaps->bind(unit); break;
-    case 10: if (sReflectionProbesEnabled && RenderMirrors && mHeroProbeManager.mTexture.notNull()) mHeroProbeManager.mTexture->bind(unit); break;
-    case 11: if (sReflectionProbesEnabled) tu->bind(&mSceneMap); break;
-    case 12: if (sReflectionProbesEnabled) tu->bind(&mSceneMap, true); break;
-    default: break;
-    }
-}
-
-// the old Fast bind in full (also what a miss does)
+// the Fast bind in full (also what a miss does)
 void LLPipeline::bindDeferredFill(LLShaderProgram& shader)
 {
     shader.bind();
@@ -23439,186 +23007,15 @@ void LLPipeline::bindDeferredFill(LLShaderProgram& shader)
 void LLPipeline::bindDeferredShaderFast(LLShaderProgram& shader)
 {
     LL_CPU_ZONE("bindDeferredShaderFast");
-    ll_pass_uni_log();
-    ++sPU.mCalls;
-    const bool on = pass_uni_enabled() && LLShaderProgram::vkMainOnlyProducer();
-    if (!on)
-    {
-        sFastWasOn = false;
-        ++sPU.mMissOff;
-        if (shader.mCanBindFast)
-        { // was previously fully bound, use fast path
-            bindDeferredFill(shader);
-        }
-        else
-        { //wasn't previously bound, use slow path
-            bindDeferredShader(shader);
-            shader.mCanBindFast = true;
-        }
-        return;
-    }
-
-    PassFastState now;
-    passFastState(&now);
-    if (!sFastWasOn || memcmp(&now, &sFastState, sizeof(now)) != 0)
-    {
-        // the version is new when the skip was off in between (nothing was watching), or a source changed
-        if (sFastWasOn)
-        {
-            for (U32 i = 0; i < 16; ++i)
-            {
-                if (now.mId[i] != sFastState.mId[i]) ++sPU.mVerBy[i];
-                if (memcmp(&now.mVal[i], &sFastState.mVal[i], 4) != 0) ++sPU.mVerBy[16 + i];
-            }
-        }
-        sFastState = now;
-        ++sFastVer;
-        sFastWasOn = true;
-    }
-
-    bool hit = false;           // the program's pass state is current (the version is the same): hit, or the units written since are bound again
-    U32 stale = 0;              // bit k: the unit of sampler k was written since the last fill
     if (shader.mCanBindFast)
-    {
-        if (shader.mFastVer == 0)
-        {
-            ++sPU.mMissCold;
-        }
-        else if (shader.mFastVer != sFastVer)
-        {
-            ++sPU.mMissVer;
-        }
-        else
-        {
-            hit = true;
-            for (S32 k = 0; k < kFastUnits; ++k)
-            {
-                const S32 unit = shader.mFastUnits[k];
-                if (unit >= 0 && LLTexUnit::getUnitStamp(unit) > shader.mFastSeq)
-                {
-                    stale |= 1u << k;
-                    ++sPU.mMissUnitBy[k];
-                }
-            }
-            if (stale)
-            {
-                ++sPU.mPartial;
-                sPU.mUnitsRebound += (U64)__popcnt(stale);
-            }
-        }
-    }
-    else
-    {
-        ++sPU.mMissCold;
-    }
-
-    if (hit)
-    {
-        ++sPU.mHits;
-        const S32 offset_before = mPoissonOffset;
-        shader.bind();
-        for (S32 k = 0; stale && k < kFastUnits; ++k)
-        {
-            if (stale & (1u << k))
-            {
-                bindFastUnit(k, shader.mFastUnits[k]);
-            }
-        }
-        if (stale)
-        {
-            shader.mFastSeq = LLTexUnit::getWriteSeq();
-        }
-        if (sReflectionProbesEnabled)
-        {
-            stepPoissonOffset(shader);
-            // bind() of a cube map array leaves the unit in the array (its unbind clears that one)
-            if (shader.mFastUnits[8] >= 0 && mReflectionMapManager.mTexture.notNull()) mReflectionMapManager.mTexture->setTextureStage(shader.mFastUnits[8]);
-            if (shader.mFastUnits[9] >= 0 && mReflectionMapManager.mIrradianceMaps.notNull()) mReflectionMapManager.mIrradianceMaps->setTextureStage(shader.mFastUnits[9]);
-            if (shader.mFastUnits[10] >= 0 && RenderMirrors && mHeroProbeManager.mTexture.notNull()) mHeroProbeManager.mTexture->setTextureStage(shader.mFastUnits[10]);
-        }
-        if (pass_uni_verify())
-        {
-            // the old fill into the same program: the class blocks and the texture units must not change by it (the poisson step is taken back so both write the same value)
-            ++sPU.mVerified;
-            std::vector<U8> blocks[5];
-            for (U32 c = 0; c < 5; ++c) blocks[c] = shader.vkBlock(c);
-            U32 units[kFastUnits];
-            for (S32 k = 0; k < kFastUnits; ++k)
-            {
-                const S32 unit = shader.mFastUnits[k];
-                units[k] = unit >= 0 ? gRender.getTexUnit(unit)->getCurrTexture() : 0;
-            }
-            const S32 stages[3] = { mReflectionMapManager.mTexture.notNull() ? mReflectionMapManager.mTexture->getTextureStage() : -2,
-                                    mReflectionMapManager.mIrradianceMaps.notNull() ? mReflectionMapManager.mIrradianceMaps->getTextureStage() : -2,
-                                    mHeroProbeManager.mTexture.notNull() ? mHeroProbeManager.mTexture->getTextureStage() : -2 };
-            const S32 offset_after = mPoissonOffset;
-            mPoissonOffset = offset_before;
-            bindDeferredFill(shader);
-            bool bad = mPoissonOffset != offset_after;
-            for (U32 c = 0; c < 5 && !bad; ++c)
-            {
-                const std::vector<U8>& now_block = shader.vkBlock(c);
-                if (now_block.size() != blocks[c].size() || memcmp(now_block.data(), blocks[c].data(), now_block.size()) != 0)
-                {
-                    bad = true;
-                    ++sPU.mMismatch;
-                    if (sPU.mLogged++ < 40)
-                    {
-                        U32 off = 0;
-                        while (off < blocks[c].size() && off < now_block.size() && blocks[c][off] == now_block[off]) ++off;
-                        LL_WARNS("VkScene") << "[PassUni] MISMATCH program " << shader.getName() << " class " << c << " byte " << off << " uniform " << shader.vkUniformAt(c, off) << LL_ENDL;
-                    }
-                }
-            }
-            for (S32 k = 0; k < kFastUnits && !bad; ++k)
-            {
-                const S32 unit = shader.mFastUnits[k];
-                if (unit >= 0 && gRender.getTexUnit(unit)->getCurrTexture() != units[k])
-                {
-                    bad = true;
-                    ++sPU.mMismatch;
-                    if (sPU.mLogged++ < 40)
-                    {
-                        LL_WARNS("VkScene") << "[PassUni] MISMATCH program " << shader.getName() << " unit " << unit << " (" << kFastUnitName[k] << ") held " << units[k] << " the fill binds " << gRender.getTexUnit(unit)->getCurrTexture() << LL_ENDL;
-                    }
-                }
-            }
-            const S32 stages_after[3] = { mReflectionMapManager.mTexture.notNull() ? mReflectionMapManager.mTexture->getTextureStage() : -2,
-                                          mReflectionMapManager.mIrradianceMaps.notNull() ? mReflectionMapManager.mIrradianceMaps->getTextureStage() : -2,
-                                          mHeroProbeManager.mTexture.notNull() ? mHeroProbeManager.mTexture->getTextureStage() : -2 };
-            for (U32 i = 0; i < 3 && !bad; ++i)
-            {
-                if (sReflectionProbesEnabled && shader.mFastUnits[8 + i] >= 0 && stages[i] != stages_after[i])
-                {
-                    bad = true;
-                    ++sPU.mMismatch;
-                    if (sPU.mLogged++ < 40)
-                    {
-                        LL_WARNS("VkScene") << "[PassUni] MISMATCH program " << shader.getName() << " cube array " << i << " stage " << stages[i] << " the fill sets " << stages_after[i] << LL_ENDL;
-                    }
-                }
-            }
-        }
-        return;
-    }
-
-    ++sPU.mFull;
-    if (shader.mCanBindFast)
-    {
+    { // was previously fully bound, use fast path
         bindDeferredFill(shader);
     }
     else
-    {
+    { //wasn't previously bound, use slow path
         bindDeferredShader(shader);
         shader.mCanBindFast = true;
     }
-    // what this fill leaves: the version, the unit write sequence number, the units
-    shader.mFastVer = sFastVer;
-    for (S32 k = 0; k < kFastUnits; ++k)
-    {
-        shader.mFastUnits[k] = (S8)shader.enableTexture(kFastUniform[k]);
-    }
-    shader.mFastSeq = LLTexUnit::getWriteSeq();
 }
 
 // <FS> S5 A0 (doc/vulkan/S5-design.md): does the group hold a current fragment (the S2 / S3 persistent scene entries), and is it resident
@@ -23628,33 +23025,6 @@ bool ll_group_fragment_state(const LLSpatialGroup* group, bool* resident)
     const bool current = fragment && fragment->mSerial == group->mGeometrySerial;
     *resident = current && fragment->mResident;
     return current;
-}
-
-void ll_pass_uni_log()
-{
-    if (gFrameCount < sPU.mFrom + 600 || sPU.mCalls == 0)
-    {
-        return;
-    }
-    const double frames = (double)(gFrameCount - sPU.mFrom);
-    sPU.mFrom = gFrameCount;
-    std::string by_unit, by_ver;
-    for (S32 k = 0; k < kFastUnits; ++k)
-    {
-        if (sPU.mMissUnitBy[k]) by_unit += std::string(" ") + kFastUnitName[k] + " " + std::to_string(sPU.mMissUnitBy[k] / frames).substr(0, 6);
-    }
-    for (U32 i = 0; i < 32; ++i)
-    {
-        if (sPU.mVerBy[i]) by_ver += std::string(i < 16 ? " id" : " val") + std::to_string(i % 16) + " " + std::to_string(sPU.mVerBy[i]);
-    }
-    LL_DIAG("VkScene") << "[PassUni] per frame over " << (U32)frames << " frames: Fast calls " << sPU.mCalls / frames << ", skipped " << sPU.mHits / frames << " (of which " << sPU.mPartial / frames << " rebind " << sPU.mUnitsRebound / frames << " units)" << ", filled " << sPU.mFull / frames
-        << " (cold " << sPU.mMissCold / frames << ", state changed " << sPU.mMissVer / frames << "), skip off " << sPU.mMissOff / frames
-        << "; units rebound by sampler:" << by_unit << "; state changes by field:" << by_ver << "; verified " << sPU.mVerified << " mismatches " << sPU.mMismatch
-        << "; alpha pool material setters (spec / env / brightness per draw): made " << gPassUniAlphaMade / frames << " skipped " << gPassUniAlphaSkipped / frames << " per frame, verify mismatches " << gPassUniAlphaMismatch << LL_ENDL;
-    gPassUniAlphaMade = gPassUniAlphaSkipped = 0;
-    sPU.mPartial = sPU.mUnitsRebound = sPU.mCalls = sPU.mHits = sPU.mFull = sPU.mMissCold = sPU.mMissVer = sPU.mMissUnit = sPU.mMissOff = 0;
-    memset(sPU.mMissUnitBy, 0, sizeof(sPU.mMissUnitBy));
-    memset(sPU.mVerBy, 0, sizeof(sPU.mVerBy));
 }
 
 void LLPipeline::bindDeferredShader(LLShaderProgram& shader, LLRenderTarget* light_target, LLRenderTarget* depth_target)
@@ -27256,10 +26626,6 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
             LL_CPU_ZONE("packets: shadow alpha: resident filter");
             // S2 alpha: the casters the worker holds as resident fragments are not named again. With LL_VK_SCENE_VERIFY=1 every builder entry must be one the worker holds (the fragment is in
             // range of the cascades' frusta) with the textures the builder resolved (a stale name would be a missed update)
-            const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
-            F32 planes[6][4];
-            scene_frustum_planes(view_proj, planes);
-            static const U32 plane_count = scene_env("LL_VK_SCENE_NEARFAR") ? 6 : 4;
             std::vector<LLVkBridge::ShadowAlphaEntry>& list = build_owned->mEntries;
             size_t kept = 0;
             for (size_t i = 0; i < list.size(); ++i)
@@ -28812,59 +28178,12 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         {
             merge_render_lists(*pending[c.mPrep].mResult, *c.mLocal);
         };
-        // <FS> LL_VK_PREP_PIPELINE (default OFF, 1 = on; 0 = the stages one after the other as before): the render map of every cascade is launched at once, and the cascades are then taken in order (the nearest, smallest one first): join its map,
-        // merge, submit its builders, record it, while the pool is still making the maps of the later ones. The main thread's wait for the maps is hidden behind the recording of the earlier cascades. The flags
-        // of the shadow state stay until the last cascade is recorded (renderShadow sets and restores them itself).
-        static const bool prep_pipeline = getenv("LL_VK_PREP_PIPELINE") && atoi(getenv("LL_VK_PREP_PIPELINE")) != 0;       // off by default: measured worse (8.13) until the builders are submitted a cascade ahead
-        bool recorded_in_pipeline = false;
-        if (prep_pipeline && !job_census)
+        { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->runLabeled("shadow prep: render map job", map_chunks.size(), map_job); }
+        { LL_CPU_ZONE("shadow prep: merge render map chunks");
+        for (MapChunk& c : map_chunks)
         {
-            std::vector<size_t> first(pending.size() + 1, map_chunks.size());
-            for (size_t c = map_chunks.size(); c-- > 0;)
-            {
-                first[map_chunks[c].mPrep] = c;
-            }
-            for (size_t p = pending.size(); p-- > 0;)
-            {
-                first[p] = std::min(first[p], first[p + 1]);
-            }
-            std::vector<std::function<void(size_t)>> map_fns(pending.size());
-            std::vector<LLForkJoinPool::Handle> handles(pending.size());
-            for (size_t p = 0; p < pending.size(); ++p)
-            {
-                map_fns[p] = [&map_job, base = first[p]](size_t c) { map_job(base + c); };
-                handles[p] = prep_pool->launchLabeled("shadow prep: render map job", first[p + 1] - first[p], map_fns[p]);
-            }
-            for (size_t p = 0; p < pending.size(); ++p)
-            {
-                { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->join(handles[p]); }
-                { LL_CPU_ZONE("shadow prep: merge render map chunks");
-                for (size_t c = first[p]; c < first[p + 1]; ++c)
-                {
-                    merge_map_chunk(map_chunks[c]);
-                }
-                }
-                if (p == 0)
-                {
-                    lap.mark(PH_RENDER_MAP);
-                    note_shadow_prep_time(true, prep_start);
-                }
-                shadowPrepSubmitBuilds(pending[p]);
-                render_one(pending[p]);
-            }
-            sUseOcclusion = saved_occlusion;
-            LLPipeline::sShadowRender = saved_shadow_render;
-            recorded_in_pipeline = true;
+            merge_map_chunk(c);
         }
-        else
-        {
-            { LL_CPU_ZONE("shadow prep: render map job (wait for the pool)"); prep_pool->runLabeled("shadow prep: render map job", map_chunks.size(), map_job); }
-            { LL_CPU_ZONE("shadow prep: merge render map chunks");
-            for (MapChunk& c : map_chunks)
-            {
-                merge_map_chunk(c);
-            }
-            }
         }
         if (job_census)
         {
@@ -28881,24 +28200,21 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
             }
             c.mLongestMs[1] += longest;
         }
-        if (!recorded_in_pipeline)
+        lap.mark(PH_RENDER_MAP);
+
+        for (ShadowCascadePrep& prep : pending)
         {
-            lap.mark(PH_RENDER_MAP);
+            shadowPrepSubmitBuilds(prep);
+        }
 
-            for (ShadowCascadePrep& prep : pending)
-            {
-                shadowPrepSubmitBuilds(prep);
-            }
+        sUseOcclusion = saved_occlusion;
+        LLPipeline::sShadowRender = saved_shadow_render;
 
-            sUseOcclusion = saved_occlusion;
-            LLPipeline::sShadowRender = saved_shadow_render;
+        note_shadow_prep_time(true, prep_start);
 
-            note_shadow_prep_time(true, prep_start);
-
-            for (ShadowCascadePrep& prep : pending)
-            {
-                render_one(prep);
-            }
+        for (ShadowCascadePrep& prep : pending)
+        {
+            render_one(prep);
         }
         for (ShadowCascadePrep& prep : pending)
         {

@@ -502,7 +502,6 @@ private:
     U32 mPassTag = 0;
     U32 mBeginTag = 0;
     bool mBeginSplit = false;
-    bool mSerialPass = true;            // LL_VK_DRAW_SERIAL applies to this pass (LL_VK_DRAW_SERIAL_ONLY / _SKIP by target width)
     bool mDrawStamps = false;           // this pass stamps every draw (LL_VK_DRAW_STAMPS: avatar impostors by default), see stampDraw
     U32 mDrawStampCount = 0;            // draws stamped in this pass
     U32 drawTag(const char* what, U32 count, U32 first, S32 vertex_offset);

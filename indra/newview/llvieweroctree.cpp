@@ -1427,11 +1427,6 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
 
 void LLOcclusionCullingGroup::hizEntryMoved(const LLVector4a* entry_extents)
 {
-    static const bool off = getenv("LL_VK_HIZ_ENTRY_OFF") != nullptr;
-    if (off)
-    {
-        return;
-    }
     const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
     for (LLViewerOctreeGroup* g = this; g; g = g->getParent())

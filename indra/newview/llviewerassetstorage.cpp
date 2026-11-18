@@ -659,8 +659,6 @@ void LLViewerAssetStorage::assetRequestCoro(
             bytes_fetched = size;
             // <FS> view prep rework (ingest): the cache file is written and renamed on the general queue while this coroutine waits, not on the main thread (a file open that the
             // OS or a virus scanner holds up for a second or more stalled the whole frame: hitch watcher, cold login 2026-10-31). The callbacks below still run after the file is in place.
-            // LL_VK_ASSET_WRITE_MAIN=1: on this thread, as before.
-            static const bool write_on_main = getenv("LL_VK_ASSET_WRITE_MAIN") && atoi(getenv("LL_VK_ASSET_WRITE_MAIN")) != 0;
             auto write_file = [&raw, size, atype, uuid, temp_id]() -> int
             {
                 LLFileSystem vf(temp_id, atype, LLFileSystem::WRITE);
@@ -670,7 +668,7 @@ void LLViewerAssetStorage::assetRequestCoro(
                 }
                 return vf.rename(uuid, atype) ? 0 : 2;
             };
-            LL::WorkQueue::ptr_t general_queue = (write_on_main || LLApp::isExiting()) ? LL::WorkQueue::ptr_t() : LL::WorkQueue::getInstance("General");
+            LL::WorkQueue::ptr_t general_queue = LLApp::isExiting() ? LL::WorkQueue::ptr_t() : LL::WorkQueue::getInstance("General");
             const int write_result = general_queue ? general_queue->waitForResult(write_file) : write_file();
             if (write_result == 1)
             {

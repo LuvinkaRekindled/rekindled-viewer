@@ -414,17 +414,7 @@ public:
     // hacky flag used for optimization in LLDrawPoolAlpha
     bool mCanBindFast = false;
 
-    // <FS> U1: what the last Fast bind of this program left (LLPipeline::bindDeferredShaderFast): the pass state version it was made under, the texture unit write
-    // sequence number after it, and the units its pass samplers use (-1 = none); mFastVer 0 = no record
-    U32 mFastVer = 0;
-    U32 mFastSeq = 0;
-    F32 mAlphaVals[6] = {};         // U1: specular_color, env_intensity, emissive_brightness as the alpha pool last wrote them in the epoch mAlphaEpoch (lldrawpoolalpha.cpp)
-    U32 mAlphaEpoch = 0;
-    S8 mFastUnits[16] = { -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1 };
-    std::string vkUniformAt(U32 cls, U32 offset) const;     // U1 verify: the name of the uniform that owns a byte of a class block copy
     const char* getName() const { return mName.c_str(); }
-    static bool vkMainOnlyProducer();                       // U1: the main thread outside a sub-stream (the owner of the class block copies)
-    const std::vector<U8>& vkBlock(U32 cls) const { return mVkShadow[cls]; }       // U1 verify: the producer's copy of a class block
 
     LLUniCensus::ProgStats mCensus;     // <FS> U0 counters (LL_VK_UNICENSUS=1)
     void censusProgram();               // registers the program with the census (first call)

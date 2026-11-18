@@ -2796,7 +2796,7 @@ void on_bufferData(U32 name, unsigned kind, S64 size, const void* data)
     Buf& b = it->second;
     Context& ctx = Context::instance();
     // large vertex / index buffers take the device path (GPU copies, no CPU access, no shadow copy)
-    const bool want_device = (kind == LLVkFormat::BK_VERTEX || kind == LLVkFormat::BK_INDEX) && (U64)size >= device_buffer_min_bytes() && !getenv("LL_VK_NO_DEVICE_BUFFERS");
+    const bool want_device = (kind == LLVkFormat::BK_VERTEX || kind == LLVkFormat::BK_INDEX) && (U64)size >= device_buffer_min_bytes();
     if (want_device && b.mDevicePath && b.mVk.valid() && b.mVk.mSize == (VkDeviceSize)size)
     {
         // the same size again (the viewer re-specifies a buffer to rewrite it): keep the Vulkan buffer, queue the data
@@ -6325,7 +6325,6 @@ struct ResPair
 {
     ResFrag* mFrag = nullptr; U32 mIndex = 0;                  // its fragment and its place in the fragment's pairs (the events of its buffers find the entries by them)
     U32 mVb = 0, mIb = 0; Buf* mPvb = nullptr; Buf* mPib = nullptr; U64 mGen = ~0ull, mEvb = 0, mMvb = 0, mEib = 0, mMib = 0; bool mOk = false;
-    U64 mNote[6] = {};                                          // epoch, moves, version of both buffers at the last full ray note (the cheap note is valid while they are the same)
     U64 mBaseEvb = ~0ull, mBaseEib = ~0ull;                     // <FS> the epochs of both buffers when the entries were last written (kept across the lookups of a generation change): an epoch that differs later means the entries' ranges were made for other contents
 };
 struct ResFrag
@@ -6335,9 +6334,7 @@ struct ResFrag
     std::vector<U32> mPairOf;                                   // per entry: index into mPairs
     std::vector<ResPair> mPairs;
     F32 mBounds[4] = {};                                        // the sphere (the table copy is write-combined memory: never read back by the CPU)
-    std::vector<LLVk::Rt::CasterRef> mRefs;                     // ray scene: the group each entry was filed under (LL_VK_SCENE_RAYFAST)
-    std::vector<U32> mRefMat;                                   // the matrix version of the entry's region slot at its last full note
-    U64 mNoteFrame = ~0ull;                                     // the frame a pass of which noted this fragment (the other passes of the frame need not)
+    std::vector<LLVk::Rt::CasterRef> mRefs;                     // ray scene: the group each entry was filed under
     size_t mCullIndex = 0;                                      // its row in sRes.mCull
     bool mInCull = false;
     // ray scene alpha casters (kind 18): mMatrix = region slot, mTextures = GL names as last told (kind 19 changes them), ALPHA_NOT_READY keeps an entry out of the scene
@@ -6386,7 +6383,6 @@ static struct ResState
     U64 mRefreshFrame = ~0ull;
     U64 mRefreshNs = 0;
     std::vector<F32> mMatrixCpu = std::vector<F32>(16 * 256, 0.f);     // the region matrices as sent (the ray notes read them: the table copy is write-combined)
-    std::vector<U32> mMatrixVersion = std::vector<U32>(256, 1);         // bumped when a slot's matrix changes value (a region shift)
     U64 mPasses = 0, mDrawn = 0, mReport = 0, mOverflow = 0, mUnresolved = 0, mRecheck = 0;
 } sRes;
 
@@ -6566,7 +6562,6 @@ static void res_buffer_gone(U32 name)
         if (p->mIb == name) { p->mPib = nullptr; }
         p->mOk = false;
         p->mGen = ~0ull;
-        p->mNote[0] = ~0ull;                // the cheap note is not valid until a full one
     }
 }
 
@@ -6650,7 +6645,6 @@ static void res_full_note(ResFrag& f, size_t i)
     void* before = f.mRefs[i].mGroup;
     note_rt_caster_ref(0, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, &f.mRefs[i]);
     ++(!before ? sRes.mHandleFirst[0] : (before != f.mRefs[i].mGroup ? sRes.mHandleReplaced[0] : sRes.mHandleSame[0]));
-    f.mRefMat[i] = sRes.mMatrixVersion[e.mMatrix];
 }
 
 // the fragment comes into range: all its pairs have to be there, then every entry is named in full and its group held
@@ -6770,7 +6764,6 @@ static void res_retain(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     memcpy(f.mBounds, h.mViewProj, sizeof(f.mBounds));
     f.mEntries.assign(entries, entries + h.mEntries);
     f.mRefs.assign(h.mEntries, LLVk::Rt::CasterRef());
-    f.mRefMat.assign(h.mEntries, 0);
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         U32 slot;
@@ -7002,7 +6995,6 @@ static void res_matrices(const LLVkBridge::ShadowPacketsHeader& h, const U8* blo
     {
         if (memcmp(sRes.mMatrixCpu.data() + 16 * (size_t)s, blob + 64 * (size_t)s, 64) != 0)
         {
-            ++sRes.mMatrixVersion[s];
             sRes.mMatrixDirty[s] = true;
         }
     }
@@ -7595,10 +7587,9 @@ static void alpha_res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* b
         sAR.mCopyMatrices = m;
         sAR.mMatFrame = frame_now; sAR.mMatVersion = sRes.mVersion;
     }
-    static const U32 plane_count = []() { const char* e = getenv("LL_VK_SCENE_NEARFAR"); return e && e[0] == '1' ? 6u : 4u; }();
     memcpy(params.mPtr, blob, 96);
     ((U32*)params.mPtr)[24] = n;
-    ((U32*)params.mPtr)[25] = plane_count;
+    ((U32*)params.mPtr)[25] = 4u;       // the four sides of the frustum
     // J2 shader pass: the cull appends the visible draws and the pass draws that many (vkCmdDraw*IndirectCount) instead of every row with the culled ones zero sized (a row costs about 8 ns of front end even empty).
     // rt-debug.txt residentcompact=0: the old way, every row (temporary switch, delete after a week of use)
     static WorkerDebugKey compact_key = { "residentcompact", 1, {} };
@@ -7807,24 +7798,10 @@ static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         }
         return;
     }
-    static const bool fast = getenv("LL_VK_SCENE_RAYFAST") && getenv("LL_VK_SCENE_RAYFAST")[0] == '1';
     const U64 frame_now = Context::instance().getFrameNumber();
-    if (fast)
-    {
-        // nothing reads the table's addresses in ray shadow mode (nothing is drawn): the pairs are checked when they are named, and dropped by res_buffer_gone; only the slots are given back
-        res_reclaim(frame_now);
-    }
-    else
-    {
-        res_refresh(frame_now);
-    }
-    if (fast)
-    {
-        Rt::passRendered(h.mPass);      // the groups' stamps for this pass are read against it, whichever fragments it ends up naming
-    }
-    static const U32 plane_count = []() { const char* e = getenv("LL_VK_SCENE_NEARFAR"); return e && e[0] == '1' ? 6u : 4u; }();
+    res_refresh(frame_now);
     const F32* planes = (const F32*)blob;
-    static U64 passes = 0, noted = 0, fragments_in = 0, again = 0, full = 0;
+    static U64 passes = 0, noted = 0, fragments_in = 0;
     static U64 ns_refresh = 0, ns_sweep = 0, ns_notes = 0;
     static const bool timed = getenv("LL_VK_SCENE_TIMES") != nullptr;
     const auto t_start = std::chrono::steady_clock::now();
@@ -7834,7 +7811,7 @@ static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         const F32* m0 = item.mSlot ? sRes.mMatrixCpu.data() + 16 * (size_t)item.mSlot : nullptr;
         const F32 c[3] = { item.mC[0] + (m0 ? m0[12] : 0.f), item.mC[1] + (m0 ? m0[13] : 0.f), item.mC[2] + (m0 ? m0[14] : 0.f) };
         bool inside = true;
-        for (U32 p = 0; p < plane_count && inside; ++p)
+        for (U32 p = 0; p < 4 && inside; ++p)
         {
             inside = planes[4 * p] * c[0] + planes[4 * p + 1] * c[1] + planes[4 * p + 2] * c[2] + planes[4 * p + 3] >= -item.mR;
         }
@@ -7843,37 +7820,15 @@ static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             continue;
         }
         ResFrag& f = *item.mFrag;
-        if (fast && f.mNoteFrame == frame_now)
-        {
-            continue;                   // an earlier pass of this frame named it (the pass stamp of that pass keeps its groups alive)
-        }
         ++fragments_in;
-        f.mNoteFrame = frame_now;
         for (size_t i = 0; i < f.mEntries.size(); ++i)
         {
             ResPair& pair = f.mPairs[f.mPairOf[i]];
-            if (fast ? !res_pair_ready(pair) : !pair.mOk)
+            if (!pair.mOk)
             {
                 continue;
             }
             const LLVkBridge::ShadowPacketEntry& e = f.mEntries[i];
-            if (fast)
-            {
-                // the cheap note: the group was filed at a full note, and nothing it was made from changed since (buffers: epoch, moves, version; the region matrix: its version)
-                const U64 stamp[6] = { pair.mPvb->mEpoch, pair.mPvb->mMoves, pair.mPvb->mVersion, pair.mPib->mEpoch, pair.mPib->mMoves, pair.mPib->mVersion };
-                if (f.mRefs[i].mGroup && f.mRefMat[i] == sRes.mMatrixVersion[e.mMatrix] && memcmp(stamp, pair.mNote, sizeof(stamp)) == 0 && Rt::noteAgain(f.mRefs[i], h.mPass))
-                {
-                    ++again;
-                    ++noted;
-                    continue;
-                }
-                ++full;
-                note_rt_caster_ref(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, &f.mRefs[i]);
-                f.mRefMat[i] = sRes.mMatrixVersion[e.mMatrix];
-                memcpy(pair.mNote, stamp, sizeof(stamp));
-                ++noted;
-                continue;
-            }
             note_rt_caster(h.mPass, e.mVertexBuffer, e.mIndexBuffer, *pair.mPvb, *pair.mPib, e.mFirstIndex, e.mIndexCount, e.mMatrixId, 0, e.mMatrix ? sRes.mMatrixCpu.data() + 16 * (size_t)e.mMatrix : nullptr, nullptr);
             ++noted;
         }
@@ -7888,7 +7843,7 @@ static void res_note(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     if (passes % 2400 == 0)
     {
-        LL_DIAG("VkScene") << "resident ray notes: " << passes << " passes, " << noted << " casters named (" << again << " cheap, " << full << " full), " << fragments_in << " fragments inside the frustum" << LL_ENDL;
+        LL_DIAG("VkScene") << "resident ray notes: " << passes << " passes, " << noted << " casters named, " << fragments_in << " fragments inside the frustum" << LL_ENDL;
     }
 }
 
@@ -7907,7 +7862,6 @@ static void res_ray_membership(U64 frame)
     last = frame;
     const auto t0 = std::chrono::steady_clock::now();
     res_reclaim(frame);
-    static const U32 plane_count = []() { const char* e = getenv("LL_VK_SCENE_NEARFAR"); return e && e[0] == '1' ? 6u : 4u; }();
     const U32 mask = sRes.mPlaneMask;
     U64 held = 0;
     for (ResCullItem& item : sRes.mCull)
@@ -7925,7 +7879,7 @@ static void res_ray_membership(U64 frame)
                 }
                 const F32* planes = sRes.mPlanes[pass];
                 bool in = true;
-                for (U32 p = 0; p < plane_count && in; ++p)
+                for (U32 p = 0; p < 4 && in; ++p)
                 {
                     in = planes[4 * p] * c[0] + planes[4 * p + 1] * c[1] + planes[4 * p + 2] * c[2] + planes[4 * p + 3] >= -item.mR;
                 }
@@ -8117,10 +8071,9 @@ static void res_draw(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         sRes.mCopyT = ct; sRes.mCopyB = cb; sRes.mCopyM = cm;
         sRes.mCopyFrame = frame_now; sRes.mCopyVersion = sRes.mVersion; sRes.mCopyN = n;
     }
-    static const U32 plane_count = []() { const char* e = getenv("LL_VK_SCENE_NEARFAR"); return e && e[0] == '1' ? 6u : 4u; }();
     memcpy(params.mPtr, blob, 96);
     ((U32*)params.mPtr)[24] = n;
-    ((U32*)params.mPtr)[25] = plane_count;
+    ((U32*)params.mPtr)[25] = 4u;       // the four sides of the frustum
     // J2 shader pass: the cull appends the visible draws and the pass draws that many (vkCmdDraw*IndirectCount) instead of every row with the culled ones zero sized (a row costs about 8 ns of front end even empty).
     // rt-debug.txt residentcompact=0: the old way, every row (temporary switch, delete after a week of use)
     static WorkerDebugKey compact_key = { "residentcompact", 1, {} };
@@ -13557,12 +13510,6 @@ std::unordered_map<U32, U64> sQueryLatest;   // GL query name -> serial of its l
 std::map<U32, U64> sQueryActive;                 // kind -> serial of the query in progress
 U64 sQuerySerial = 0;
 
-bool queries_on()
-{
-    static const bool disabled = getenv("LL_VK_NO_QUERIES") != nullptr;
-    return !disabled;
-}
-
 // pulls finished Vulkan query results and hands them to the main thread
 void drain_query_results()
 {
@@ -13621,13 +13568,13 @@ void create_queries(S32 n, U32* ids)
 
 void destroy_queries(S32 n, const U32* ids)
 {
-    if (!queries_on() || !ids) return;
+    if (!ids) return;
     for (S32 i = 0; i < n; ++i) sQueryLatest.erase(ids[i]);
 }
 
 void query_begin(unsigned kind, unsigned id)
 {
-    if (!queries_on() || !LLVkBridge::inFrame() || !Renderer::instance().isReady())
+    if (!LLVkBridge::inFrame() || !Renderer::instance().isReady())
     {
         if (LLVkAsync::gEnabled) LLVkAsync::queryIdle(id, LLVkAsync::workerQueryGen(id));
         return;
@@ -13662,7 +13609,6 @@ void query_begin(unsigned kind, unsigned id)
 
 void query_end(unsigned kind)
 {
-    if (!queries_on()) return;
     auto act = sQueryActive.find(kind);
     if (act == sQueryActive.end() || !Renderer::instance().isReady())
     {

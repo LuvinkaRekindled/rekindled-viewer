@@ -1121,75 +1121,9 @@ void LLWorld::updateVisibilities()
 
 static LLTrace::SampleStatHandle<> sNumActiveCachedObjects("numactivecachedobjects", "Number of objects loaded from cache");
 
-// <FS> LL_VK_NEIGHBOR_POKE=1 (an experiment, off by default): the neighbour region did not load in (fewer objects, no handshake). The Scroll Lock key logs every region with its host and the number of objects the viewer holds for it, sends
-// the circuit code to each neighbour again (what process_enable_simulator did when the simulator enabled it) and logs the counts every 5 s for a minute: does the simulator answer to it?
-static void fs_neighbor_poke()
-{
-    static const bool on = getenv("LL_VK_NEIGHBOR_POKE") != nullptr;
-    if (!on)
-    {
-        return;
-    }
-#if LL_WINDOWS
-    static bool was_down = false;
-    static double watch_until = 0.0, next_log = 0.0;
-    const bool down = (GetAsyncKeyState(VK_SCROLL) & 0x8000) != 0;
-    const double now = LLTimer::getElapsedSeconds();
-    auto log_regions = [&](const char* what)
-    {
-        std::map<LLViewerRegion*, S32> objects;
-        for (S32 i = 0; i < gObjectList.getNumObjects(); ++i)
-        {
-            if (LLViewerObject* obj = gObjectList.getObject(i))
-            {
-                if (LLViewerRegion* r = obj->getRegion()) { ++objects[r]; }
-            }
-        }
-        std::string text;
-        for (LLViewerRegion* r : LLWorld::getInstance()->getRegionList())
-        {
-            char b[260];
-            snprintf(b, sizeof(b), " | %s %s id %s caps %s objects %d%s", r->getName().c_str(), r->getHost().getString().c_str(), r->getRegionID().asString().c_str(), r->capabilitiesReceived() ? "received" : "not received",
-                (int)objects[r], r == gAgent.getRegion() ? " (current)" : "");
-            text += b;
-        }
-        LL_INFOS("NeighborPoke") << what << ":" << text << LL_ENDL;
-    };
-    if (down && !was_down)
-    {
-        log_regions("before the poke");
-        LLMessageSystem* msg = gMessageSystem;
-        for (LLViewerRegion* r : LLWorld::getInstance()->getRegionList())
-        {
-            if (r == gAgent.getRegion())
-            {
-                continue;
-            }
-            LL_INFOS("NeighborPoke") << "sending the circuit code again to " << r->getHost() << " (" << r->getName() << ")" << LL_ENDL;
-            msg->newMessageFast(_PREHASH_UseCircuitCode);
-            msg->nextBlockFast(_PREHASH_CircuitCode);
-            msg->addU32Fast(_PREHASH_Code, msg->getOurCircuitCode());
-            msg->addUUIDFast(_PREHASH_SessionID, gAgent.getSessionID());
-            msg->addUUIDFast(_PREHASH_ID, gAgent.getID());
-            msg->sendReliable(r->getHost());
-        }
-        watch_until = now + 60.0;
-        next_log = now + 5.0;
-    }
-    was_down = down;
-    if (watch_until > 0.0 && now >= next_log)
-    {
-        log_regions("after the poke");
-        next_log = now + 5.0;
-        if (now > watch_until) { watch_until = 0.0; }
-    }
-#endif
-}
-
 void LLWorld::updateRegions(F32 max_update_time)
 {
     LL_PROFILE_ZONE_SCOPED;
-    fs_neighbor_poke();
     LLTimer update_timer;
     mNumOfActiveCachedObjects = 0;
 

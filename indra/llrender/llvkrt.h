@@ -115,7 +115,7 @@ bool active();
 bool init(VkDescriptorSetLayout set_layout);
 void shutdown();
 
-// A handle on the group a caster was filed under (S2, resident casters): kept by the caller, so that the next frames' notes of an unchanged caster skip the lookups (noteAgain).
+// A handle on the group a caster was filed under (S2, resident casters): kept by the caller.
 // It names the group by its address and row; the key is kept to catch an address that was reused by another group.
 struct CasterRef
 {
@@ -126,11 +126,6 @@ struct CasterRef
 
 // One caster draw of a shadow pass (shadow packets). Several passes of a frame name the same casters: the repeats are dropped. ref: filled with the handle of the group.
 void noteCaster(const Caster& c, CasterRef* ref = nullptr);
-// The note of a caster the group already knows (same buffers as at the last full note, same model matrix: the caller checks): sets the pass stamp and the first-of-the-frame bookkeeping.
-// False when the handle does not name the group any more (it expired and was erased): the caller notes the caster in full.
-bool noteAgain(const CasterRef& ref, U32 pass);
-// a pass rendered this frame (the pass stamps of the groups are read against it) even though all its casters were named by an earlier pass of the frame
-void passRendered(U32 pass);
 // S2 stage 2: a group a resident caster belongs to is HELD while the caster is in range (delta +1 when it enters, -1 when it leaves or is released): the expiry sweep keeps a held group whatever its
 // pass stamps say, so nothing has to name it every frame. A handle that does not name the group any more is ignored.
 void holdGroup(const CasterRef& ref, int delta);
