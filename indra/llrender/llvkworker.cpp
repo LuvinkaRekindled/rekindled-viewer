@@ -11348,10 +11348,8 @@ struct CullShadowState
 {
     std::vector<LLVkBridge::CullRow> mTable;        // C1c: the worker's copy of the table, kept up to date by the delta rows of the records
     std::vector<LLVkBridge::CullMapRow> mMap;       // stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the map rows, one per slot, in the same records
-    std::vector<U64> mRowStamp;                     // the record (mRecords) that last changed each slot
     std::vector<U64> mHandleStamp;                  // the record that last changed the slot's fragment handle (stage 5: a handle that just changed is the viewer's to name, the row's may be a frame behind the group's fragments)
-    std::vector<U32> mSlotOfHandle;                 // the slot of the group that has this scene fragment handle (~0u = none)
-    U64 mRecords = 0, mRows = 0, mDeltaRows = 0, mResets = 0, mBadSlots = 0, mNoPipeline = 0, mLast = 0;
+    U64 mRecords = 0;
 };
 CullShadowState sCullShadow;
 
@@ -11841,7 +11839,7 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
     }
 }
 
-void derive_publish_dispatch(DerivePub&& job, const CullShadowState& inline_table);
+void derive_publish_dispatch(DerivePub&& job);
 
 // VkFlash (LL_VK_DIAG=1 only), on the worker where the drawn list is made: a view whose derived set changes by far more than a camera move changes it, while the scene is the same (geometry missing or doubled for a view or two).
 // The test is the number of groups the derive lists against the view before: a sweep to a sparse direction moves it a few percent a view, a flash by a fifth or more (LL_VK_FLASH_TEST=1: 3 percent, to make events to read). A change
@@ -12009,7 +12007,7 @@ bool cull_derive_main_view(const LLVkBridge::ShadowPacketsHeader& h, const U8* v
             memcpy(&root, marked_slots + (size_t)i * 4, 4);
             job.mMarked.push_back(root);
         }
-        derive_publish_dispatch(std::move(job), s);
+        derive_publish_dispatch(std::move(job));
     }
     d.mMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
     if (d.mViews % 600 == 0)
@@ -12166,40 +12164,24 @@ DeriveThread& derive_thread()
     return *t;
 }
 
-bool derive_thread_on()
+void derive_publish_dispatch(DerivePub&& job)
 {
-    static const bool on = true;
-    return on;
-}
-
-void derive_publish_dispatch(DerivePub&& job, const CullShadowState& inline_table)
-{
-    if (derive_thread_on())
-    {
-        DeriveThread::Job j;
-        j.mPublish = true;
-        j.mPub = std::move(job);
-        derive_thread().push(std::move(j));
-        return;
-    }
-    derive_publish(inline_table, job);
+    DeriveThread::Job j;
+    j.mPublish = true;
+    j.mPub = std::move(job);
+    derive_thread().push(std::move(j));
 }
 
 void on_view_request(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     LLVkBridge::CullParams params;
     memcpy(&params, blob, sizeof(params));
-    if (derive_thread_on())
-    {
-        DeriveThread::Job job;
-        job.mRequest = true;
-        job.mId = h.mFragment;
-        job.mFrame = h.mPass;
-        job.mParams = params;
-        derive_thread().push(std::move(job));
-        return;
-    }
-    view_request_run(sCullShadow, h.mFragment, h.mPass, params);
+    DeriveThread::Job job;
+    job.mRequest = true;
+    job.mId = h.mFragment;
+    job.mFrame = h.mPass;
+    job.mParams = params;
+    derive_thread().push(std::move(job));
 }
 
 // kind 35: delta rows for the worker's copy of the table (blob: CullParams, slots[mEntries] padded to 16 bytes, rows[mEntries]); mMatrices = rows of the whole table, mPaletteFloats 1 = start the copy afresh
@@ -12222,16 +12204,12 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
         {
             s.mTable.assign(table, dead);
             s.mMap.assign(table, no_map);
-            s.mRowStamp.assign(table, 0);
             s.mHandleStamp.assign(table, 0);
-            s.mSlotOfHandle.clear();
-            ++s.mResets;
         }
         else
         {
             s.mTable.resize(table, dead);
             s.mMap.resize(table, no_map);
-            s.mRowStamp.resize(table, 0);
             s.mHandleStamp.resize(table, 0);
         }
         const U8* p = blob + sizeof(LLVkBridge::CullParams);
@@ -12245,7 +12223,6 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             memcpy(&slot, slots + i, 4);
             if (slot >= table)
             {
-                ++s.mBadSlots;
                 continue;
             }
             memcpy(&s.mTable[slot], rows + (size_t)i * sizeof(LLVkBridge::CullRow), sizeof(LLVkBridge::CullRow));
@@ -12253,27 +12230,13 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 LLVkBridge::CullMapRow incoming;
                 memcpy(&incoming, map_rows + (size_t)i * sizeof(LLVkBridge::CullMapRow), sizeof(LLVkBridge::CullMapRow));
                 const U32 old_handle = s.mMap[slot].mHandle;
-                if (old_handle && old_handle < s.mSlotOfHandle.size() && s.mSlotOfHandle[old_handle] == slot)
-                {
-                    s.mSlotOfHandle[old_handle] = ~0u;
-                }
                 if (incoming.mHandle != old_handle)
                 {
                     s.mHandleStamp[slot] = s.mRecords;
                 }
                 s.mMap[slot] = incoming;
-                if (incoming.mHandle && incoming.mHandle < (1u << 20))
-                {
-                    if (s.mSlotOfHandle.size() <= incoming.mHandle)
-                    {
-                        s.mSlotOfHandle.resize((size_t)incoming.mHandle + 1, ~0u);
-                    }
-                    s.mSlotOfHandle[incoming.mHandle] = slot;
-                }
-                s.mRowStamp[slot] = s.mRecords;
             }
         }
-        if (derive_thread_on())
         {
             // the derive thread's copy of the table gets the same delta, in the same order as the requests (see DeriveThread)
             DeriveThread::Job job;
@@ -12290,8 +12253,6 @@ void on_cull_rows(const LLVkBridge::ShadowPacketsHeader& h, const U8* blob)
             }
             derive_thread().push(std::move(job));
         }
-        s.mDeltaRows += h.mEntries;
-        s.mRows += table;
     }
 }
 
