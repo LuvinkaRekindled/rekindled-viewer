@@ -68,7 +68,6 @@ namespace LLVkAsync
 void uiCacheBufferTouched(U32 name);       // (UI record cache, below)
 
 bool gEnabled = false;
-bool gTexOneCopy = true;    // C4: on by default since 2026-10-29 (the texture plan 6.2: with the alpha passes off the main thread the copy was what was left, 0.19 -> 0.11 ms per MB); LL_VK_TEXONECOPY=0 turns it off
 static int gMode = 1;
 
 namespace
@@ -1197,7 +1196,7 @@ unsigned long long backlogBytes()
 
 void setPixelHold(const PixelHold* hold)
 {
-    if (hold && gEnabled && gTexOneCopy && isMainThread())
+    if (hold && gEnabled && isMainThread())
     {
         tlsHoldData = *hold;
         tlsHoldSet = true;
@@ -1236,9 +1235,9 @@ std::string texUploadReport(size_t frames)
                              copied = gTexCopiedBytes.exchange(0), waits = gHoldWaits.exchange(0), wait_ticks = gHoldWaitTicks.exchange(0);
     const unsigned long long wcalls = gTexWorkerCalls.exchange(0), wconv = gTexWorkerConvertUs.exchange(0), wfill = gTexWorkerFillUs.exchange(0), wtotal = gTexWorkerTotalUs.exchange(0);
     char buf[600];
-    snprintf(buf, sizeof(buf), "one-copy path %s | main thread: %.1f upload calls/frame take %.3f ms/frame; %.1f/frame handed over without a copy (%.0f KB/frame), %.0f KB/frame copied into the queue; "
+    snprintf(buf, sizeof(buf), "main thread: %.1f upload calls/frame take %.3f ms/frame; %.1f/frame handed over without a copy (%.0f KB/frame), %.0f KB/frame copied into the queue; "
              "%llu waits for held pixels (%.2f ms in total) | worker: %.1f uploads/frame: convert into a vector %.3f ms/frame, fill staging %.3f ms/frame, the whole upload call %.3f ms/frame",
-             gTexOneCopy ? "on" : "off", (double)calls / f, (double)ticks * ms_per_tick / f, (double)handed / f, (double)handed_bytes / f / 1024.0, (double)copied / f / 1024.0,
+             (double)calls / f, (double)ticks * ms_per_tick / f, (double)handed / f, (double)handed_bytes / f / 1024.0, (double)copied / f / 1024.0,
              waits, (double)wait_ticks * ms_per_tick, (double)wcalls / f, (double)wconv / 1000.0 / f, (double)wfill / 1000.0 / f, (double)wtotal / 1000.0 / f);
     return buf;
 }
@@ -1702,7 +1701,7 @@ void push_tex(unsigned short op, TexArgs& a, const void* pixels, size_t bytes)
         a.mMode = 0;
         push(op, &a, sizeof(a));
     }
-    else if (gTexOneCopy && tlsHoldSet && bytes && isMainThread() && (const U8*)pixels >= (const U8*)tlsHoldData.mBase
+    else if (tlsHoldSet && bytes && isMainThread() && (const U8*)pixels >= (const U8*)tlsHoldData.mBase
              && (const U8*)pixels + bytes <= (const U8*)tlsHoldData.mBase + tlsHoldData.mSize)
     {
         // the caller keeps these pixels alive and unchanged: queue a reference, the worker reads them where they are
@@ -3175,7 +3174,6 @@ bool start()
         return true;
     }
     gMainTid = __readgsdword(0x48);
-    { const char* t1 = getenv("LL_VK_TEXONECOPY"); gTexOneCopy = !(t1 && t1[0] == '0'); }
     if (!gRing)
     {
         gRing = (U8*)VirtualAlloc(nullptr, RING_BYTES, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);

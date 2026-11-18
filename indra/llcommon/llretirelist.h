@@ -8,7 +8,7 @@
  * every frame) destroys it once it is old enough (with a time budget: a teleport can release thousands at once). What must not wait for the list is done when the object is parked (onRetire()). A parked
  * object whose reference count rose again is left alone. Only on the main thread: another thread's last unref deletes at once, as before.
  *
- * LL_VK_RETIRE=0 (or the older LL_VK_TEX_RETIRE=0) deletes at once as before; LL_VK_RETIRE_FRAMES (or LL_VK_TEX_RETIRE_FRAMES; default 4) is the age at which a parked object is destroyed.
+ * LL_VK_RETIRE_FRAMES (or LL_VK_TEX_RETIRE_FRAMES; default 4) is the age at which a parked object is destroyed.
  * Header only; the state lives in function-local statics. Independent of the viewer classes: an object is an LLThreadSafeRefCount with the hooks in llrefcount.h (onRetire, retireKind, mParked).
  */
 
@@ -35,7 +35,7 @@ public:
     {
         State& s = state();
         const U32 kind = obj->retireKind() < kKinds ? obj->retireKind() : 0;
-        if (!s.mEnabled || s.mStopped.load(std::memory_order_acquire) || s.mKindStopped[kind].load(std::memory_order_acquire) || !on_main_thread())
+        if (s.mStopped.load(std::memory_order_acquire) || s.mKindStopped[kind].load(std::memory_order_acquire) || !on_main_thread())
         {
             return false;
         }
@@ -58,7 +58,7 @@ public:
     {
         State& s = state();
         const U32 kind = obj->retireKind() < kKinds ? obj->retireKind() : 0;
-        if (!s.mEnabled || s.mStopped.load(std::memory_order_acquire) || s.mKindStopped[kind].load(std::memory_order_acquire) || !on_main_thread())
+        if (s.mStopped.load(std::memory_order_acquire) || s.mKindStopped[kind].load(std::memory_order_acquire) || !on_main_thread())
         {
             return false;
         }
@@ -169,13 +169,9 @@ private:
         std::atomic<U64> mParkedTotal[kKinds] = {}, mDestroyedTotal[kKinds] = {}, mRevivedTotal[kKinds] = {};
         U32 mPeak = 0;
         U64 mLastLog = 0;
-        bool mEnabled = true;
         U64 mFrames = 4;
         State()
         {
-            const char* e = getenv("LL_VK_RETIRE");
-            if (!e) e = getenv("LL_VK_TEX_RETIRE");
-            mEnabled = !(e && e[0] == '0');
             const char* f = getenv("LL_VK_RETIRE_FRAMES");
             if (!f) f = getenv("LL_VK_TEX_RETIRE_FRAMES");
             const int v = f ? atoi(f) : 4;

@@ -1172,7 +1172,7 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         {
             LLCullShadow::touch(this);      // <FS> S7 C1b
         }
-        if (mSpatialPartition && LLTexRecs::sMode && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        if (mSpatialPartition && (state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
         {
             LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6: the texture records of its faces are filled again
         }
@@ -1204,7 +1204,7 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         {
             LLCullShadow::touch(this);      // <FS> S7 C1b
         }
-        if (mSpatialPartition && LLTexRecs::sMode && (state & OCCLUDED) && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        if (mSpatialPartition && (state & OCCLUDED) && !(row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
         {
             LLTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6
         }

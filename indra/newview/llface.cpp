@@ -2689,7 +2689,7 @@ F32 LLFace::getTextureVirtualSize()
     return face_area;
 }
 
-// <FS> LL_VK_TEX_PRE: the texture priority jobs run calcPixelArea of rigged faces on pool threads, which is safe only while every joint they read is clean (getWorldMatrix recomputes and writes a dirty one):
+// <FS> the texture priority jobs run calcPixelArea of rigged faces on pool threads, which is safe only while every joint they read is clean (getWorldMatrix recomputes and writes a dirty one):
 // the jobs count the dirty joints they meet (the expectation is 0; plan 8.26)
 thread_local bool gFSTexPreJob = false;
 std::atomic<U32> gFSTexPreDirtyReads{0};

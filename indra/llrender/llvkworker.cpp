@@ -902,7 +902,7 @@ bool grow_levels(Tex& t)
 // (LLImageTex::scaleDown) instead of drawing it small into a target and copying that. False (nothing changed) when the texture does not hold all of its levels.
 // <FS> why drop_levels said no, counted (the "texture will be downscaled immediately after loading" warning fires about 5000 times a lap and 4800 of the drops were refused, 2026-11-03): 1 no levels
 // asked or no image, 2 not a plain 2D texture, 3 depth format, 4 compressed format, 5 the mip chain is not complete or not all levels hold data, 6 fewer levels than the drop, 7 no new image, 8 the copy failed
-static U64 sDropWhy[9] = {};
+static U64 sDropWhy[8] = {};
 bool drop_levels(Tex& t, U32 k)
 {
     using namespace LLVkFormat;
@@ -921,12 +921,6 @@ bool drop_levels(Tex& t, U32 k)
         ++sDropWhy[3];
         return false;
     }
-    static const bool drop_compressed = getenv("LL_VK_DROP_COMPRESSED") == nullptr || atoi(getenv("LL_VK_DROP_COMPRESSED")) != 0;       // 0: compressed textures are refused again (a same-session A/B)
-    if (t.mFormat.mCompressed && !drop_compressed)
-    {
-        ++sDropWhy[4];
-        return false;
-    }
     // (a compressed texture drops its top levels the same way: whole levels are copied, so the block alignment of the copy holds at every level. It used to be refused here, and the viewer
     // then shrank it by drawing it small into a target and copying that: about 5000 times a lap, 4893 of them compressed, 2026-11-03)
     // <FS> a chain that holds only its first levels (the rest still to arrive, or never sent for a compressed texture: 3 of 8 filled is common) used to be refused whole, which was 3000 to 5000 refusals a
@@ -934,12 +928,12 @@ bool drop_levels(Tex& t, U32 k)
     // valid for as many levels as the old one had left.
     if (t.mValidLevels <= k)
     {
-        ++sDropWhy[5];
+        ++sDropWhy[4];
         return false;
     }
     if (t.mLevels <= k)
     {
-        ++sDropWhy[6];
+        ++sDropWhy[5];
         return false;
     }
     TextureDesc td;
@@ -958,12 +952,12 @@ bool drop_levels(Tex& t, U32 k)
     Image fresh;
     if (!Renderer::instance().createTexture(td, fresh))
     {
-        ++sDropWhy[7];
+        ++sDropWhy[6];
         return false;
     }
     if (!Renderer::instance().copyMipLevels(t.mImage, k, fresh))
     {
-        ++sDropWhy[8];
+        ++sDropWhy[7];
         Context::instance().destroyImage(fresh);
         return false;
     }
@@ -1006,7 +1000,7 @@ void upload_level(Tex& t, LLVkFormat::Target tg, S32 level, S32 x, S32 y, S32 z,
     {
         return;     // nothing to upload (allocation only)
     }
-    if (LLVkAsync::gTexOneCopy && LLVkAsync::gEnabled && d == 1 && t.mDim != DIM_2D_ARRAY && t.mDim != DIM_CUBE_ARRAY && t.mDim != DIM_3D
+    if (LLVkAsync::gEnabled && d == 1 && t.mDim != DIM_2D_ARRAY && t.mDim != DIM_CUBE_ARRAY && t.mDim != DIM_3D
         && is_rgba8_fast(t.mFormat, tr) && w && h)
     {
         // C4: the common upload (8-bit RGB or RGBA into an RGBA8 texture) is read from where the viewer left it and written straight into the staging buffer: one copy
@@ -13135,8 +13129,8 @@ void after_frame()
                         os << (k ? (k == 1 || k == 5 || k == 8 || k == 11 ? "; " : ", ") : "") << names[k] << " " << now_v[k] << " (+" << now_v[k] - last[k] << ")";
                     }
                     LL_DIAG("VkTexCopy") << os.str() << LL_ENDL;
-                    LL_DIAG("VkTexCopy") << "level drops refused by reason: no image " << sDropWhy[1] << ", not 2D " << sDropWhy[2] << ", depth " << sDropWhy[3] << ", compressed " << sDropWhy[4] << ", levels incomplete " << sDropWhy[5]
-                                          << ", fewer levels than the drop " << sDropWhy[6] << ", no new image " << sDropWhy[7] << ", copy failed " << sDropWhy[8] << LL_ENDL;
+                    LL_DIAG("VkTexCopy") << "level drops refused by reason: no image " << sDropWhy[1] << ", not 2D " << sDropWhy[2] << ", depth " << sDropWhy[3] << ", levels incomplete " << sDropWhy[4]
+                                          << ", fewer levels than the drop " << sDropWhy[5] << ", no new image " << sDropWhy[6] << ", copy failed " << sDropWhy[7] << LL_ENDL;
                     memcpy(last, now_v, sizeof(last));
                 }
             }

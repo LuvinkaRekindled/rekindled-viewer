@@ -101,7 +101,7 @@ using LLTexHandles = LLHandleTable<LLViewerTexture>;       // <FS> C2: the handl
 // <FS> C2.2 (doc/vulkan/PLAN-clean-core.md section 7): the retire list. A texture whose last counted reference goes is not deleted at once: it is parked here and destroyed a few frames later,
 // so that anything that still READS it through a handle (the render map, the packet builders, the render worker, a few frames behind the main thread) finds it intact. What must not wait
 // for the list (the fetch request, the texture lists) is done when the texture is parked (onRetire). A parked texture whose reference count rose again in the meantime is left alone.
-// LL_VK_TEX_RETIRE=0 deletes at once as before; LL_VK_TEX_RETIRE_FRAMES (default 4) is the age at which a parked texture is destroyed. Only on the main thread: another thread's last unref deletes at once.
+// LL_VK_TEX_RETIRE_FRAMES (default 4) is the age at which a parked texture is destroyed. Only on the main thread: another thread's last unref deletes at once.
 // <FS> C2.4: the list itself is generic now (llcommon/llretirelist.h, LLRetireList, shared with the glTF materials); this is what is texture specific: the pump and the shutdown call it, the counter and the log line are ours
 class LLTexRetire
 {
@@ -229,7 +229,7 @@ protected:
     LLFrameTimer mLastReferencedTimer;
 
 public:
-    // <FS> native-vk (LL_VK_TEXSTAMP): what the face loop of LLViewerTextureList::updateImageDecodePriority found, kept while nothing it reads has changed. mFaceStamp goes up whenever a face of this
+    // <FS> native-vk: what the face loop of LLViewerTextureList::updateImageDecodePriority found, kept while nothing it reads has changed. mFaceStamp goes up whenever a face of this
     // texture is added, removed, moved or re-sized (the hooks are in LLFace and the places that write a face's extents).
     struct FaceLoopCache
     {
@@ -241,8 +241,6 @@ public:
         U32 mFaceCount = 0;
         F32 mVSize = 0.f;
         F32 mTime = 0.f;
-        U64 mTeHash = 0;        // verify mode only: what the loop read, to tell what changed when a kept result differs: the texture entry scales of the faces,
-        U64 mGeomHash = 0;      // and the positions and extents of the faces
         bool mAllOccluded = false;  // every face (and there is at least one) is in a group Hi-Z calls occluded
     };
     FaceLoopCache mFaceCache;
@@ -252,7 +250,6 @@ public:
     U8 mListState = 0;
     bool mWakeQueued = false;
     S32 mListIndex = -1;
-    U32 mDormantAtFrame = 0;
     U32 mLastWakeFrame = 0;
     U32 mRecSlot = 0;       // <FS> its slot in LLTexRecs (generation << 24 | index; 0: none)
     // <FS> C2 (doc/vulkan/PLAN-clean-core.md): a stable handle that render-side data (faces, draw infos, rows) can hold instead of a counted pointer; made on the first ask, given back in the destructor.

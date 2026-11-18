@@ -89,24 +89,19 @@ struct IdxStats
 {
     U64 mToDormant = 0, mToActive = 0, mWakes = 0, mWakeGroup = 0, mWakeGroupTextures = 0;
     U64 mVisitsActive = 0, mVisitsDormant = 0, mVisitsWake = 0;
-    U64 mMisses = 0, mMissAge[3] = {};          // verify: a dormant texture found wanted with nothing having woken it, by how long it had been dormant (< 1 s, < 10 s, longer)
-    U64 mMissWhy[6] = {};                       // ... and why (several can hold): boost, callback, fetching, light projection, a face in view, woken in the last 5 s
     U64 mDescVisits = 0, mDescChanged = 0, mDescFiner = 0, mDescCoarser = 0, mDescAbs = 0;       // visits that ended in processTextureStats; of them the desired discard level changed (finer, coarser, levels in all)
 };
 IdxStats sIdx;
 
-// <FS> H6: the worker's result for a texture against the face loop's (LL_VK_TEXREC=1)
-struct RecVerify
+// <FS> H6: how many textures were sized from the worker's result and how many kept the face loop
+struct RecStats
 {
-    U64 mNone = 0, mStale = 0, mVolatile = 0, mBig = 0, mCountDiff = 0;       // not comparable: no result yet, one for other faces, volatile faces, more than 1024 faces, another number of faces
-    U64 mCompared = 0, mKept = 0;                                               // compared (of them the loop's answer was a kept one)
-    U64 mSizeDiff = 0, mWorkerBigger = 0, mKeptDiff = 0, mOccDiff = 0;         // the sizes differ by more than a quarter (of them the worker's was the larger; of them the loop's was a kept result); "all faces occluded" differs
-    U64 mUsed = 0, mFellBack = 0;               // LL_VK_TEXREC=2: textures sized from the worker's result / that kept the face loop (no result, stale, volatile faces, another number of faces)
-    // <FS> LL_VK_TEXREC_WHY=1 (diagnostic, 2026-11-15): why a visit kept the face loop in mode 2, and the visits split by whether the texture has an image of its own (idea 3, GPU texture need for loaded textures)
+    U64 mUsed = 0, mFellBack = 0;               // textures sized from the worker's result / that kept the face loop (no result, stale, volatile faces, another number of faces)
+    // <FS> LL_VK_TEXREC_WHY=1 (diagnostic, 2026-11-15): why a visit kept the face loop, and the visits split by whether the texture has an image of its own (idea 3, GPU texture need for loaded textures)
     U64 mFbNone = 0, mFbStale = 0, mFbVolatile = 0, mFbCount = 0, mFbBig = 0;
     U64 mVisLoaded = 0, mVisUnloaded = 0, mFacesLoaded = 0, mFacesUnloaded = 0, mUsedLoaded = 0, mUsedUnloaded = 0, mFbLoaded = 0, mFbUnloaded = 0;
 };
-RecVerify sRecV;
+RecStats sRecStats;
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -933,10 +928,6 @@ void LLViewerTextureList::idxMove(LLViewerFetchedTexture* tex, U8 state)
     tex->mListState = state;
     tex->mListIndex = (S32)v.size();
     v.push_back(tex);
-    if (state == 2)
-    {
-        tex->mDormantAtFrame = gFrameCount;
-    }
 }
 
 void LLViewerTextureList::idxClear()
@@ -981,7 +972,7 @@ void LLViewerTextureList::visitNext(LLViewerTexture* t)
 // a group of the world camera is not occluded any more: the textures of its faces are looked at again
 void LLViewerTextureList::wakeGroupTextures(LLSpatialGroup* group)
 {
-    if (!sIdxMode || !group)
+    if (!group)
     {
         return;
     }
@@ -1023,39 +1014,33 @@ void LLViewerTextureList::idxLog()
     static IdxStats prev;
     if (last_log > 0.f)
     {
-        LL_INFOS("VkTexIdx") << "mode " << sIdxMode << ": active " << mActive.size() << ", dormant " << mDormant.size() << " | in 10 s: visited active " << sIdx.mVisitsActive - prev.mVisitsActive << ", dormant "
+        LL_INFOS("VkTexIdx") << "active " << mActive.size() << ", dormant " << mDormant.size() << " | in 10 s: visited active " << sIdx.mVisitsActive - prev.mVisitsActive << ", dormant "
                              << sIdx.mVisitsDormant - prev.mVisitsDormant << ", woken " << sIdx.mVisitsWake - prev.mVisitsWake << " | moved to dormant " << sIdx.mToDormant - prev.mToDormant << ", to active "
                              << sIdx.mToActive - prev.mToActive << " | wakes " << sIdx.mWakes - prev.mWakes << " (groups unoccluded " << sIdx.mWakeGroup - prev.mWakeGroup << " naming "
-                             << sIdx.mWakeGroupTextures - prev.mWakeGroupTextures << " dormant textures) | verify misses " << sIdx.mMisses - prev.mMisses << " (dormant < 1 s "
-                             << sIdx.mMissAge[0] - prev.mMissAge[0] << ", < 10 s " << sIdx.mMissAge[1] - prev.mMissAge[1] << ", longer " << sIdx.mMissAge[2] - prev.mMissAge[2] << "); why (boost, callback, fetching, light, face in view, woken lately) " << sIdx.mMissWhy[0] - prev.mMissWhy[0] << " " << sIdx.mMissWhy[1] - prev.mMissWhy[1]
-                             << " " << sIdx.mMissWhy[2] - prev.mMissWhy[2] << " " << sIdx.mMissWhy[3] - prev.mMissWhy[3] << " " << sIdx.mMissWhy[4] - prev.mMissWhy[4] << " " << sIdx.mMissWhy[5] - prev.mMissWhy[5]
+                             << sIdx.mWakeGroupTextures - prev.mWakeGroupTextures << " dormant textures)"
                              << " | desired level: visits " << sIdx.mDescVisits - prev.mDescVisits << ", changed " << sIdx.mDescChanged - prev.mDescChanged << " (finer " << sIdx.mDescFiner - prev.mDescFiner
                              << ", coarser " << sIdx.mDescCoarser - prev.mDescCoarser << ", " << sIdx.mDescAbs - prev.mDescAbs << " levels)" << LL_ENDL;
     }
     prev = sIdx;
-    if (LLTexRecs::sMode)
     {
-        static RecVerify pv;
+        static RecStats pv;
         const LLTexRecs::Stats st = LLTexRecs::stats();
         static LLTexRecs::Stats ps;
-        LL_INFOS("VkTexRec") << "mode " << LLTexRecs::sMode << ": " << st.mRecords << " face records in " << st.mSlots << " texture slots; in 10 s: " << st.mDeltas - ps.mDeltas << " records sent in "
-                             << st.mBatches - ps.mBatches << " batches, " << st.mPasses - ps.mPasses << " worker passes (the last " << st.mPassMs << " ms over " << st.mPassRecords << " records) | the face loop against the worker: compared "
-                             << sRecV.mCompared - pv.mCompared << " (loop's answer a kept one " << sRecV.mKept - pv.mKept << "), sizes differ by more than a quarter " << sRecV.mSizeDiff - pv.mSizeDiff << " (worker larger "
-                             << sRecV.mWorkerBigger - pv.mWorkerBigger << ", loop's a kept one " << sRecV.mKeptDiff - pv.mKeptDiff << "), all-occluded differs " << sRecV.mOccDiff - pv.mOccDiff << " | not comparable: no result "
-                             << sRecV.mNone - pv.mNone << ", stale " << sRecV.mStale - pv.mStale << ", volatile " << sRecV.mVolatile - pv.mVolatile << ", over 1024 faces " << sRecV.mBig - pv.mBig << ", other face count "
-                             << sRecV.mCountDiff - pv.mCountDiff << " | main thread: frame() " << (F64)(st.mFrameNs - ps.mFrameNs) / 1.0e6 / llmax<U64>(st.mFrames - ps.mFrames, 1) << " ms a frame, group events "
+        LL_INFOS("VkTexRec") << st.mRecords << " face records in " << st.mSlots << " texture slots; in 10 s: " << st.mDeltas - ps.mDeltas << " records sent in "
+                             << st.mBatches - ps.mBatches << " batches, " << st.mPasses - ps.mPasses << " worker passes (the last " << st.mPassMs << " ms over " << st.mPassRecords << " records)"
+                             << " | main thread: frame() " << (F64)(st.mFrameNs - ps.mFrameNs) / 1.0e6 / llmax<U64>(st.mFrames - ps.mFrames, 1) << " ms a frame, group events "
                              << (F64)(st.mGroupNs - ps.mGroupNs) / 1.0e6 / llmax<U64>(st.mFrames - ps.mFrames, 1) << " ms a frame (" << st.mGroupEvents - ps.mGroupEvents << " events), faceChanged calls "
                              << st.mFaceChangedCalls - ps.mFaceChangedCalls << ", records not sent " << st.mSkipped - ps.mSkipped
-                             << " | sized from the worker's result " << sRecV.mUsed - pv.mUsed << ", kept the face loop " << sRecV.mFellBack - pv.mFellBack << LL_ENDL;
+                             << " | sized from the worker's result " << sRecStats.mUsed - pv.mUsed << ", kept the face loop " << sRecStats.mFellBack - pv.mFellBack << LL_ENDL;
         if (getenv("LL_VK_TEXREC_WHY"))
         {
-            LL_INFOS("VkTexRecWhy") << "in 10 s, kept the face loop because: no result " << sRecV.mFbNone - pv.mFbNone << ", stale (another face set) " << sRecV.mFbStale - pv.mFbStale << ", volatile faces " << sRecV.mFbVolatile - pv.mFbVolatile
-                                    << ", another number of faces " << sRecV.mFbCount - pv.mFbCount << ", over the face limit " << sRecV.mFbBig - pv.mFbBig
-                                    << " | by whether the texture has an image of its own: LOADED visits " << sRecV.mVisLoaded - pv.mVisLoaded << " (faces in them " << sRecV.mFacesLoaded - pv.mFacesLoaded << ", from the worker "
-                                    << sRecV.mUsedLoaded - pv.mUsedLoaded << ", kept the loop " << sRecV.mFbLoaded - pv.mFbLoaded << "), UNLOADED visits " << sRecV.mVisUnloaded - pv.mVisUnloaded << " (faces in them "
-                                    << sRecV.mFacesUnloaded - pv.mFacesUnloaded << ", from the worker " << sRecV.mUsedUnloaded - pv.mUsedUnloaded << ", kept the loop " << sRecV.mFbUnloaded - pv.mFbUnloaded << ")" << LL_ENDL;
+            LL_INFOS("VkTexRecWhy") << "in 10 s, kept the face loop because: no result " << sRecStats.mFbNone - pv.mFbNone << ", stale (another face set) " << sRecStats.mFbStale - pv.mFbStale << ", volatile faces " << sRecStats.mFbVolatile - pv.mFbVolatile
+                                    << ", another number of faces " << sRecStats.mFbCount - pv.mFbCount << ", over the face limit " << sRecStats.mFbBig - pv.mFbBig
+                                    << " | by whether the texture has an image of its own: LOADED visits " << sRecStats.mVisLoaded - pv.mVisLoaded << " (faces in them " << sRecStats.mFacesLoaded - pv.mFacesLoaded << ", from the worker "
+                                    << sRecStats.mUsedLoaded - pv.mUsedLoaded << ", kept the loop " << sRecStats.mFbLoaded - pv.mFbLoaded << "), UNLOADED visits " << sRecStats.mVisUnloaded - pv.mVisUnloaded << " (faces in them "
+                                    << sRecStats.mFacesUnloaded - pv.mFacesUnloaded << ", from the worker " << sRecStats.mUsedUnloaded - pv.mUsedUnloaded << ", kept the loop " << sRecStats.mFbUnloaded - pv.mFbUnloaded << ")" << LL_ENDL;
         }
-        pv = sRecV;
+        pv = sRecStats;
         ps = st;
     }
     last_log = gFrameTimeSeconds;
@@ -1387,21 +1372,18 @@ extern bool gCubeSnapshot;
 
 namespace
 {
-// <FS> native-vk: LL_VK_TEXSTAMP (default 1; 0 is off) keeps the result of the face loop of updateImageDecodePriority for textures whose faces are all static and unchanged while the camera stays in one cell of a coarse
-// grid (and the bias in one bucket), for LL_VK_TEXSTAMP_AGE seconds (default 8); =2 runs the loop anyway and counts the cases where it finds something other than the kept result.
-const S32 sStampMode = []{ const char* e = getenv("LL_VK_TEXSTAMP"); return e ? atoi(e) : 1; }();
+// <FS> native-vk: the result of the face loop of updateImageDecodePriority is kept for textures whose faces are all static and unchanged while the camera stays in one cell of a coarse
+// grid (and the bias in one bucket), for LL_VK_TEXSTAMP_AGE seconds (default 8).
 const F32 sStampAge = []{ const char* e = getenv("LL_VK_TEXSTAMP_AGE"); return e ? (F32)atof(e) : 8.f; }();
 struct StampStats
 {
-    U64 mHit = 0, mMissNew = 0, mMissFaces = 0, mMissCamera = 0, mMissBias = 0, mMissAge = 0, mVolatile = 0, mVerified = 0, mMismatch = 0, mMismatchFresh = 0, mMismatchOld = 0, mMismatchFaceCount = 0, mOffScreen = 0;
-    U64 mWhyTe = 0, mWhyGeom = 0, mWhyNeither = 0;
-    U64 mWhyGeomKind[5] = {};       // a face that moved without telling the texture, by kind of object: attachment, avatar, tree or grass, prim, other
+    U64 mHit = 0, mMissNew = 0, mMissFaces = 0, mMissCamera = 0, mMissBias = 0, mMissAge = 0, mVolatile = 0, mOffScreen = 0;
 };
 StampStats sStamp;
 F32 sStampEpochTime = 0.f;      // gFrameTimeSeconds when the camera epoch last changed: a result is only kept once the camera has stood still for a moment (the face areas it read were then made under that pose, not up to 0.1 s earlier)
 }
 
-// <FS> LL_VK_TEX_PRE (default 0 = off; 1 = on; the face loops otherwise stay on this thread, 2 = the loops run here as before and are compared with the precomputed ones): the face loops of the textures of a slice that the worker's record
+// <FS> the face loops of the textures of a slice that the worker's record
 // and the kept result cannot answer run as pool jobs before the slice's per-texture pass; updateImageDecodePriority then takes the precomputed values where it would have run the loop. A texture with a face that
 // is due a pixel area refresh (calcPixelArea writes the face, which two textures can share) is left to this thread.
 struct FaceLoopPre
@@ -1416,8 +1398,7 @@ struct FaceLoopPre
 extern thread_local bool gFSTexPreJob;          // llface.cpp: set while a texture priority job runs
 extern std::atomic<U32> gFSTexPreDirtyReads;    // llface.cpp: dirty joints a job met in calcPixelArea of a rigged face
 static const FaceLoopPre* sCurrentPre = nullptr;     // main thread: the precomputed loop of the texture being looked at
-static const int sPreMode = []{ const char* e = getenv("LL_VK_TEX_PRE"); return e ? atoi(e) : 1; }();       // on by default since 2026-11-01 (plan 8.26: the rigged faces are in the jobs, their joints cleaned first); 0 = the loops on this thread, 2 = verify
-static U64 sPreCandidates = 0, sPreComputed = 0, sPreUsed = 0, sPreCompared = 0, sPreDiffer = 0, sPreFrames = 0, sPreEntries = 0;
+static U64 sPreCandidates = 0, sPreComputed = 0, sPreUsed = 0, sPreFrames = 0, sPreEntries = 0;
 
 void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imagep, bool flush_images)
 {
@@ -1442,26 +1423,18 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         U32 faces_seen = 0, faces_occluded = 0;     // <FS> H6: the faces the loop looked at, and how many of them are in an occluded group
         bool all_occluded = false;
 
-        // <FS> native-vk (LL_VK_TEXSTAMP): the face loop is skipped while what it read is unchanged (see sStampMode above)
-        bool stamp_use = false, stamp_verify = false, stamp_volatile = false;
-        U64 why_te = 1469598103934665603ull, why_geom = 1469598103934665603ull;
-        S32 why_kind = 4;
-        const LLTextureEntry* why_te_entry = nullptr;
+        // <FS> native-vk: the face loop is skipped while what it read is unchanged (see sStampAge above)
+        bool stamp_use = false, stamp_volatile = false;
         const S32 stamp_bias = (S32)(LLViewerTexture::sDesiredDiscardBias * 20.f);
         LLViewerTexture::FaceLoopCache& stamp = imagep->mFaceCache;
-        if (sStampMode)
-        {
-            if (!stamp.mValid) ++sStamp.mMissNew;
-            else if (stamp.mFaceStamp != imagep->mFaceStamp) ++sStamp.mMissFaces;
-            else if (stamp.mCamEpoch != sCameraEpoch) ++sStamp.mMissCamera;
-            else if (stamp.mBias != stamp_bias) ++sStamp.mMissBias;
-            else if (gFrameTimeSeconds - stamp.mTime >= sStampAge) ++sStamp.mMissAge;
-            else if (sStampMode == 1) { stamp_use = true; ++sStamp.mHit; }
-            else { stamp_verify = true; ++sStamp.mHit; }
-        }
+        if (!stamp.mValid) ++sStamp.mMissNew;
+        else if (stamp.mFaceStamp != imagep->mFaceStamp) ++sStamp.mMissFaces;
+        else if (stamp.mCamEpoch != sCameraEpoch) ++sStamp.mMissCamera;
+        else if (stamp.mBias != stamp_bias) ++sStamp.mMissBias;
+        else if (gFrameTimeSeconds - stamp.mTime >= sStampAge) ++sStamp.mMissAge;
+        else { stamp_use = true; ++sStamp.mHit; }
 
-        const FaceLoopPre* pre = (sCurrentPre && sCurrentPre->mValid) ? sCurrentPre : nullptr;       // <FS> LL_VK_TEX_PRE
-        bool loop_ran = false;
+        const FaceLoopPre* pre = (sCurrentPre && sCurrentPre->mValid) ? sCurrentPre : nullptr;       // the face loops on the pool
 
         // get adjusted bias based on image resolution
         LLImageTex* img = imagep->getImageTexture();
@@ -1471,11 +1444,11 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         // convert bias into a vsize scaler
         bias = (F32) llroundf(powf(4, bias - 1.f));
 
-        // <FS> H6 (LL_VK_TEXREC=2): the worker's result for this texture replaces the face loop when it was made for the faces the texture has now (the stamp), none of them is volatile and the
+        // <FS> H6: the worker's result for this texture replaces the face loop when it was made for the faces the texture has now (the stamp), none of them is volatile and the
         // number of faces is what the worker counted
         bool rec_use = false;
         LLTexRecs::Result rec_res;
-        const bool rec_have = LLTexRecs::sMode == 2 && LLTexRecs::result(imagep, rec_res);
+        const bool rec_have = LLTexRecs::result(imagep, rec_res);
         if (rec_have && rec_res.mStamp == imagep->mFaceStamp && !rec_res.mVolatile)
         {
             U32 fc = 0;
@@ -1490,12 +1463,12 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                 max_vsize = llmin(llmax(rec_res.mMaxPlain, rec_res.mMaxBiased / bias), LLViewerFetchedTexture::sMaxVirtualSize);
                 on_screen = fc > 0;                 // (every plain face counts as on screen: see calcPixelArea)
                 all_occluded = fc > 0 && rec_res.mOccluded == fc;
-                ++sRecV.mUsed;
+                ++sRecStats.mUsed;
             }
         }
-        if (LLTexRecs::sMode == 2 && !rec_use) ++sRecV.mFellBack;
+        if (!rec_use) ++sRecStats.mFellBack;
         static const bool rec_why = getenv("LL_VK_TEXREC_WHY") != nullptr;
-        if (rec_why && LLTexRecs::sMode == 2)
+        if (rec_why)
         {
             const bool loaded = img && img->getTexName() != 0;        // (no image of its own yet: the records name the shared default image)
             U32 fcnt = 0;
@@ -1503,20 +1476,20 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             {
                 fcnt += imagep->getNumFaces(i);
             }
-            ++(loaded ? sRecV.mVisLoaded : sRecV.mVisUnloaded);
-            (loaded ? sRecV.mFacesLoaded : sRecV.mFacesUnloaded) += fcnt;
+            ++(loaded ? sRecStats.mVisLoaded : sRecStats.mVisUnloaded);
+            (loaded ? sRecStats.mFacesLoaded : sRecStats.mFacesUnloaded) += fcnt;
             if (rec_use)
             {
-                ++(loaded ? sRecV.mUsedLoaded : sRecV.mUsedUnloaded);
+                ++(loaded ? sRecStats.mUsedLoaded : sRecStats.mUsedUnloaded);
             }
             else
             {
-                ++(loaded ? sRecV.mFbLoaded : sRecV.mFbUnloaded);
-                if (!rec_have) ++sRecV.mFbNone;
-                else if (rec_res.mStamp != imagep->mFaceStamp) ++sRecV.mFbStale;
-                else if (rec_res.mVolatile) ++sRecV.mFbVolatile;
-                else if (fcnt != rec_res.mFaces) ++sRecV.mFbCount;
-                else ++sRecV.mFbBig;
+                ++(loaded ? sRecStats.mFbLoaded : sRecStats.mFbUnloaded);
+                if (!rec_have) ++sRecStats.mFbNone;
+                else if (rec_res.mStamp != imagep->mFaceStamp) ++sRecStats.mFbStale;
+                else if (rec_res.mVolatile) ++sRecStats.mFbVolatile;
+                else if (fcnt != rec_res.mFaces) ++sRecStats.mFbCount;
+                else ++sRecStats.mFbBig;
             }
         }
 
@@ -1531,7 +1504,7 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             on_screen = stamp.mOnScreen;
             face_count = stamp.mFaceCount;
         }
-        else if (pre && sPreMode == 1)
+        else if (pre)
         {
             // <FS> the loop ran as a pool job
             face_count = pre->mFaceCount;
@@ -1544,7 +1517,6 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         }
         else
         { LL_CPU_ZONE("textures: decode priority: face loop");
-        loop_ran = true;
         for (U32 i = 0; i < LLRender::NUM_TEXTURE_CHANNELS; ++i)
         {
             face_count += imagep->getNumFaces(i);
@@ -1565,8 +1537,8 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                     F32 radius;
                     F32 cos_angle_to_view_dir;
 
-                    if (sStampMode && (face->isState(LLFace::RIGGED) || face->hasMedia() || !face->getDrawable() || face->getDrawable()->isActive()
-                                       || face->getViewerObject()->getPartitionType() == LLViewerRegion::PARTITION_PARTICLE))
+                    if (face->isState(LLFace::RIGGED) || face->hasMedia() || !face->getDrawable() || face->getDrawable()->isActive()
+                        || face->getViewerObject()->getPartitionType() == LLViewerRegion::PARTITION_PARTICLE)
                     {
                         stamp_volatile = true;        // its position comes from something that moves without telling the texture
                     }
@@ -1594,21 +1566,6 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                     S32 te_offset = face->getTEOffset();  // offset is -1 if not inited
                     LLViewerObject* objp = face->getViewerObject();
                     const LLTextureEntry* te = (te_offset < 0 || te_offset >= objp->getNumTEs()) ? nullptr : objp->getTE(te_offset);
-                    if (sStampMode == 2)
-                    {
-                        if (te)
-                        {
-                            const F32 sc[2] = { te->getScaleS(), te->getScaleT() };
-                            for (F32 f : sc) { U32 bits; memcpy(&bits, &f, 4); why_te = (why_te ^ bits) * 1099511628211ull; }
-                        }
-                        const LLVector3 c = face->getPositionAgent();
-                        const F32 gv[9] = { c.mV[0], c.mV[1], c.mV[2], face->row().extents[0].getF32ptr()[0], face->row().extents[0].getF32ptr()[1], face->row().extents[0].getF32ptr()[2],
-                                            face->row().extents[1].getF32ptr()[0], face->row().extents[1].getF32ptr()[1], face->row().extents[1].getF32ptr()[2] };
-                        for (F32 f : gv) { U32 bits; memcpy(&bits, &f, 4); why_geom = (why_geom ^ bits) * 1099511628211ull; }
-                        const LLViewerObject* wo = face->getViewerObject();
-                        why_kind = wo->isAttachment() ? 0 : (wo->isAvatar() ? 1 : ((wo->getPCode() == LL_PCODE_LEGACY_TREE || wo->getPCode() == LL_PCODE_LEGACY_GRASS) ? 2 : (wo->getPCode() == LL_PCODE_VOLUME ? 3 : 4)));
-                        why_te_entry = te;
-                    }
                     F32 min_scale = te ? llmin(fabsf(te->getScaleS()), fabsf(te->getScaleT())) : 1.f;
                     min_scale = llclamp(min_scale * min_scale, texture_scale_min(), texture_scale_max());
                     vsize /= min_scale;
@@ -1645,55 +1602,9 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             }
         }
         } // (face loop zone)
-        if (loop_ran && pre && sPreMode == 2)
-        {
-            // <FS> LL_VK_TEX_PRE=2: the loop above ran here; the pool's answer for the same texture has to be the same
-            ++sPreCompared;
-            U32 pre_bits, loop_bits;
-            memcpy(&pre_bits, &pre->mMaxVsize, 4);
-            memcpy(&loop_bits, &max_vsize, 4);
-            // (the pool's threads keep denormals, this thread flushes them to zero: a size of 1e-42 and one of 0 are the same size)
-            const bool same_size = pre_bits == loop_bits || (fabsf(pre->mMaxVsize) < 1.0e-30f && fabsf(max_vsize) < 1.0e-30f);
-            const bool same = pre->mFaceCount == face_count && same_size && pre->mOnScreen == on_screen && pre->mFacesSeen == faces_seen
-                && pre->mFacesOccluded == faces_occluded && (!sStampMode || pre->mVolatile == stamp_volatile);
-            if (!same)
-            {
-                ++sPreDiffer;
-                static U32 said = 0;
-                if (said++ < 40)
-                {
-                    LL_INFOS("TexPre") << "precomputed loop differs for " << imagep->getID() << ": faces " << pre->mFaceCount << "/" << face_count << ", size " << pre->mMaxVsize << "/" << max_vsize << ", on screen "
-                                       << pre->mOnScreen << "/" << on_screen << ", seen " << pre->mFacesSeen << "/" << faces_seen << ", occluded " << pre->mFacesOccluded << "/" << faces_occluded
-                                       << ", volatile " << pre->mVolatile << "/" << stamp_volatile << LL_ENDL;
-                }
-            }
-        }
-
         if (!stamp_use && !rec_use)
         {
             all_occluded = face_count > 0 && face_count <= max_faces_to_check && faces_seen == face_count && faces_occluded == faces_seen;
-        }
-        if (sStampMode && !stamp_use && !rec_use)
-        {
-            // (a difference only counts when it matters: one side is a size the priority treats as seen, and the two are not within a quarter of each other or the screen flag changed)
-            const F32 big = llmax(max_vsize, stamp.mVSize);
-            if (stamp_verify && stamp.mValid && big >= 64.f && (on_screen != stamp.mOnScreen || fabsf(max_vsize - stamp.mVSize) > 0.25f * big))
-            {
-                ++sStamp.mMismatch;
-                if (why_te != stamp.mTeHash) ++sStamp.mWhyTe;
-                else if (why_geom != stamp.mGeomHash) { ++sStamp.mWhyGeom; ++sStamp.mWhyGeomKind[why_kind]; }
-                else ++sStamp.mWhyNeither;
-                if (face_count != stamp.mFaceCount) ++sStamp.mMismatchFaceCount;
-                else if (gFrameTimeSeconds - stamp.mTime < 0.5f) ++sStamp.mMismatchFresh;
-                else ++sStamp.mMismatchOld;
-                static U32 said = 0;
-                if (said++ < 60 && face_count == stamp.mFaceCount && gFrameTimeSeconds - stamp.mTime >= 0.5f)
-                {
-                    LL_INFOS("VkTexStamp") << "kept result differs for " << imagep->getID() << ": size " << stamp.mVSize << " -> " << max_vsize << ", on screen " << stamp.mOnScreen << " -> " << on_screen
-                                           << ", faces " << stamp.mFaceCount << " -> " << face_count << ", age " << gFrameTimeSeconds - stamp.mTime << " s" << LL_ENDL;
-                }
-            }
-            if (stamp_verify) ++sStamp.mVerified;
             // (a texture with faces whose loop found none on screen is not kept: for a static face that flag is true after a real evaluation, so a false one is a stale first reading)
             const bool unsettled = face_count > 0 && !on_screen && !stamp_volatile;
             if (unsettled) ++sStamp.mOffScreen;
@@ -1707,35 +1618,6 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             stamp.mOnScreen = on_screen;
             stamp.mFaceCount = face_count;
             stamp.mAllOccluded = all_occluded;
-            stamp.mTeHash = why_te;
-            stamp.mGeomHash = why_geom;
-        }
-
-        if (LLTexRecs::sMode == 1)
-        {
-            // <FS> H6: what the worker found for this texture (from the records of its faces) against what the face loop (or the kept result of it) found
-            LLTexRecs::Result rr;
-            if (!LLTexRecs::result(imagep, rr)) ++sRecV.mNone;
-            else if (rr.mStamp != imagep->mFaceStamp) ++sRecV.mStale;
-            else if (rr.mVolatile) ++sRecV.mVolatile;
-            else if (face_count > max_faces_to_check) ++sRecV.mBig;
-            else if (rr.mFaces != face_count) ++sRecV.mCountDiff;
-            else
-            {
-                const F32 expect = llmin(llmax(rr.mMaxPlain, rr.mMaxBiased / bias), LLViewerFetchedTexture::sMaxVirtualSize);
-                const F32 got = llmin(max_vsize, LLViewerFetchedTexture::sMaxVirtualSize);
-                const bool occ_rec = rr.mFaces > 0 && rr.mOccluded == rr.mFaces;
-                const F32 hi = llmax(expect, got), lo = llmin(expect, got);
-                ++sRecV.mCompared;
-                sRecV.mKept += stamp_use;
-                if (occ_rec != all_occluded) ++sRecV.mOccDiff;
-                if (hi >= 64.f && lo < 0.75f * hi)
-                {
-                    ++sRecV.mSizeDiff;
-                    sRecV.mWorkerBigger += expect > got;
-                    sRecV.mKeptDiff += stamp_use;
-                }
-            }
         }
 
         if (face_count > max_faces_to_check)
@@ -1760,19 +1642,14 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
 
         // <FS> H6: a texture nobody is looking at and nothing is asking for goes on the dormant list: no face on screen (none at all, or every face in an occluded group), no boost, no callback, not being
         // fetched, no light projection, and not woken in the last 5 s (a texture that something keeps calling addTextureStats on would go back and forth every frame)
-        if (sIdxMode)
         {
             const bool why[6] = { imagep->getBoostLevel() != LLViewerTexture::BOOST_NONE, imagep->hasCallbacks(), imagep->isFetching(), imagep->getNumVolumes(LLRender::LIGHT_TEX) != 0,
                                   !(face_count == 0 || all_occluded), gFrameCount - imagep->mLastWakeFrame <= 300 };
             idx_dormant = !(why[0] || why[1] || why[2] || why[3] || why[4] || why[5]);
-            if (imagep->mListState == 2 && !idx_dormant)
-            {
-                for (int k = 0; k < 6; ++k) sIdx.mMissWhy[k] += why[k];       // (for the verify count below: what made the texture wanted)
-            }
         }
     }
 
-    if (sIdxMode && imagep->mListState != 0)
+    if (imagep->mListState != 0)
     {
         if (idx_dormant && imagep->mListState == 1)
         {
@@ -1781,13 +1658,6 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         }
         else if (!idx_dormant && imagep->mListState == 2)
         {
-            if (sIdxMode == 2)
-            {
-                // verify: this texture was on the slow list, and nothing woke it: the walk of mode 1 would have found it late
-                ++sIdx.mMisses;
-                const U32 age = gFrameCount - imagep->mDormantAtFrame;
-                ++sIdx.mMissAge[age < 60 ? 0 : (age < 600 ? 1 : 2)];
-            }
             idxMove(imagep, 1);
             ++sIdx.mToActive;
         }
@@ -2047,17 +1917,12 @@ void LLViewerTextureList::forceImmediateUpdate(LLViewerFetchedTexture* imagep)
 }
 
 bool LLViewerTextureList::sViewSteady = false;
-S32 LLViewerTextureList::sIdxMode = []{ const char* e = getenv("LL_VK_TEXIDX"); return e ? atoi(e) : 1; }();
 bool LLViewerTextureList::sInListUpdate = false;
 U32 LLViewerTextureList::sCameraEpoch = 0;
 
 
 void LLViewerTextureList::updateCameraEpoch()
 {
-    if (!sStampMode)
-    {
-        return;
-    }
     LLViewerCamera* cam = LLViewerCamera::getInstance();
     const LLVector3 o = cam->getOrigin(), a = cam->getAtAxis(), u = cam->getUpAxis();
     const S32 v[] = { (S32)floorf(o.mV[0] * 10.f), (S32)floorf(o.mV[1] * 10.f), (S32)floorf(o.mV[2] * 10.f),
@@ -2084,13 +1949,10 @@ void LLViewerTextureList::updateCameraEpoch()
         const StampStats& n = sStamp;
         if (last_log > 0.f)
         {
-            LL_INFOS("VkTexStamp") << "mode " << sStampMode << ": face loops kept " << n.mHit - prev.mHit << ", run because new " << n.mMissNew - prev.mMissNew << ", faces changed "
+            LL_INFOS("VkTexStamp") << "face loops kept " << n.mHit - prev.mHit << ", run because new " << n.mMissNew - prev.mMissNew << ", faces changed "
                                    << n.mMissFaces - prev.mMissFaces << ", camera moved " << n.mMissCamera - prev.mMissCamera << ", bias changed " << n.mMissBias - prev.mMissBias << ", too old "
                                    << n.mMissAge - prev.mMissAge << "; textures not kept (moving, rigged, particle or media faces) " << n.mVolatile - prev.mVolatile
-                                   << ", with faces but none on screen " << n.mOffScreen - prev.mOffScreen << "; verified " << n.mVerified - prev.mVerified << ", differed " << n.mMismatch - prev.mMismatch << " (faces changed in count " << n.mMismatchFaceCount - prev.mMismatchFaceCount
-                                   << ", same faces within 0.5 s " << n.mMismatchFresh - prev.mMismatchFresh << ", same faces older " << n.mMismatchOld - prev.mMismatchOld << "); what differed: texture entry scale " << n.mWhyTe - prev.mWhyTe << ", face position or extents " << n.mWhyGeom - prev.mWhyGeom
-                                   << " (attachment " << n.mWhyGeomKind[0] - prev.mWhyGeomKind[0] << ", avatar " << n.mWhyGeomKind[1] - prev.mWhyGeomKind[1] << ", tree or grass " << n.mWhyGeomKind[2] - prev.mWhyGeomKind[2]
-                                   << ", prim " << n.mWhyGeomKind[3] - prev.mWhyGeomKind[3] << ", other " << n.mWhyGeomKind[4] - prev.mWhyGeomKind[4] << "), neither " << n.mWhyNeither - prev.mWhyNeither
+                                   << ", with faces but none on screen " << n.mOffScreen - prev.mOffScreen
                                    << ", camera epoch " << sCameraEpoch << LL_ENDL;
         }
         prev = n;
@@ -2168,10 +2030,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         }
         update_count = llmax((U32) MIN_UPDATE_COUNT, (U32) mUUIDMap.size() / llmax(divisor, 1u));
     }
-    if (sIdxMode)
-    {
-        idxLog();
-    }
+    idxLog();
     // </FS>
     if (LLViewerTexture::sDesiredDiscardBias > 1.f
         && LLViewerTexture::sBiasTexturesUpdated < (U32)mUUIDMap.size())
@@ -2187,8 +2046,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     }
     update_count = llmin(update_count, (U32) mUUIDMap.size());
 
-    if (sIdxMode)
-    { // <FS> H6: the textures that were woken first, then a slice of the active list and a slice of the dormant one (mode 2 walks the dormant ones as often as the old walk did, to find what wakes missed)
+    { // <FS> H6: the textures that were woken first, then a slice of the active list and a slice of the dormant one
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vtluift - copy lists");
         const size_t n_active = mActive.size(), n_dormant = mDormant.size(), total = n_active + n_dormant;
         entries.reserve(update_count + mWake.size());
@@ -2207,14 +2065,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         {
             const size_t active_take = llmin(n_active, (size_t)((U64)update_count * n_active / total) + 1);
             size_t dormant_take = (size_t)((U64)update_count * n_dormant / total);
-            if (sIdxMode == 1)
-            {
-                dormant_take = llmin(n_dormant, dormant_take / 8 + 1);      // the slow list: an eighth of the rate
-            }
-            else
-            {
-                dormant_take = llmin(n_dormant, dormant_take + 1);
-            }
+            dormant_take = llmin(n_dormant, dormant_take / 8 + 1);      // the slow list: an eighth of the rate
             for (size_t k = 0; k < active_take && !mActive.empty(); ++k)
             {
                 LLViewerFetchedTexture* tex = mActive[(mActiveCursor + k) % mActive.size()];
@@ -2237,34 +2088,13 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
             if (!mDormant.empty()) mDormantCursor = (mDormantCursor + dormant_take) % mDormant.size();
         }
     }
-    else
-    { // copy entries out of UUID map to avoid iterator invalidation from deletion inside updateImageDecodeProiroty or updateFetch below
-        LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vtluift - copy");
-
-        // copy entries out of UUID map for updating
-        entries.reserve(update_count);
-        uuid_map_t::iterator iter = mUUIDMap.upper_bound(mLastUpdateKey);
-        while (update_count-- > 0)
-        {
-            if (iter == mUUIDMap.end())
-            {
-                iter = mUUIDMap.begin();
-            }
-
-            if (iter->second->getImageTexture())
-            {
-                entries.push_back(iter->second);
-            }
-            ++iter;
-        }
-    }
 
     LLTimer timer;
 
-    // <FS> LL_VK_TEX_PRE: the face loops of the slice on the pool (see FaceLoopPre)
+    // <FS> the face loops of the slice on the pool (see FaceLoopPre)
     static std::vector<FaceLoopPre> pres;
     pres.clear();
-    LLForkJoinPool* pre_pool = (sPreMode != 0 && sStampMode != 2 && !gCubeSnapshot && entries.size() >= 96 && !LLGpuZoneTimer::isActive()) ? LLForkJoinPool::shared() : nullptr;
+    LLForkJoinPool* pre_pool = (!gCubeSnapshot && entries.size() >= 96 && !LLGpuZoneTimer::isActive()) ? LLForkJoinPool::shared() : nullptr;
     if (pre_pool)
     {
         LL_CPU_ZONE("textures: decode priority: face loops on the pool");
@@ -2276,9 +2106,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         const U32 max_faces_to_check = 1024;
         std::atomic<U64> candidates{ 0 }, computed{ 0 };
         // a job that meets a due rigged face makes the avatar's joints clean first (once a frame per avatar, the first job to ask does it and the others wait: LLVOAvatar::cleanJointMatricesOnce), so
-        // LLJoint::getWorldMatrix only reads. LL_VK_TEX_PRE_RIGGED=0 leaves the rigged faces to this thread, as in 8.19.
-        static const bool rigged_in_jobs = !getenv("LL_VK_TEX_PRE_RIGGED") || atoi(getenv("LL_VK_TEX_PRE_RIGGED")) != 0;
-        const bool skeletons_clean = rigged_in_jobs;
+        // LLJoint::getWorldMatrix only reads.
         // the loop of updateImageDecodePriority for one texture, without its writes (the faces are not touched); false when the texture needs none or has a face that is due a pixel area refresh
         const auto precompute = [&](LLViewerFetchedTexture* imagep, FaceLoopPre& out) -> bool
         {
@@ -2286,7 +2114,6 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
             {
                 return false;
             }
-            if (sStampMode == 1)
             {
                 const LLViewerTexture::FaceLoopCache& stamp = imagep->mFaceCache;
                 if (stamp.mValid && stamp.mFaceStamp == imagep->mFaceStamp && stamp.mCamEpoch == sCameraEpoch && stamp.mBias == pre_stamp_bias && gFrameTimeSeconds - stamp.mTime < sStampAge)
@@ -2294,7 +2121,6 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
                     return false;       // the kept result answers
                 }
             }
-            if (LLTexRecs::sMode == 2)
             {
                 LLTexRecs::Result rec_res;
                 if (LLTexRecs::result(imagep, rec_res) && rec_res.mStamp == imagep->mFaceStamp && !rec_res.mVolatile)
@@ -2335,8 +2161,8 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
                             LLSpatialGroup* grp = drw ? drw->getSpatialGroup() : nullptr;
                             if (grp && grp->isOcclusionState(LLOcclusionCullingGroup::OCCLUDED)) ++faces_occluded;
                         }
-                        if (sStampMode && (face->isState(LLFace::RIGGED) || face->hasMedia() || !face->getDrawable() || face->getDrawable()->isActive()
-                                           || face->getViewerObject()->getPartitionType() == LLViewerRegion::PARTITION_PARTICLE))
+                        if (face->isState(LLFace::RIGGED) || face->hasMedia() || !face->getDrawable() || face->getDrawable()->isActive()
+                            || face->getViewerObject()->getPartitionType() == LLViewerRegion::PARTITION_PARTICLE)
                         {
                             is_volatile = true;
                         }
@@ -2359,7 +2185,7 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
                                     // are only read; a face whose rig table needs an update stays with the main thread.
                                     LLViewerObject* rigged_obj = face->getViewerObject();
                                     LLVolume* rigged_volume = rigged_obj ? rigged_obj->getVolume() : nullptr;
-                                    if (!skeletons_clean || !rigged_volume || !rigged_obj->getAvatar() || face->getTEOffset() < 0 || face->getTEOffset() >= rigged_volume->getNumVolumeFaces()
+                                    if (!rigged_volume || !rigged_obj->getAvatar() || face->getTEOffset() < 0 || face->getTEOffset() >= rigged_volume->getNumVolumeFaces()
                                         || rigged_volume->getVolumeFace(face->getTEOffset()).mJointRiggingInfoTab.needsUpdate())
                                     {
                                         return false;
@@ -2438,15 +2264,13 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         if (++sPreFrames % 3000 == 0)
         {
             LL_INFOS("TexPre") << "texture face loops on the pool, per frame over " << sPreFrames << " frames: " << (double)sPreEntries / sPreFrames << " textures in the slice, " << (double)sPreCandidates / sPreFrames
-                               << " needed a loop, " << (double)sPreComputed / sPreFrames << " computed by jobs, " << (double)sPreUsed / sPreFrames << " used, dirty joints met by the jobs " << gFSTexPreDirtyReads.load() << (sPreMode == 2 ? "; compared " : "")
-                               << (sPreMode == 2 ? std::to_string(sPreCompared) + ", differed " + std::to_string(sPreDiffer) : std::string()) << LL_ENDL;
+                               << " needed a loop, " << (double)sPreComputed / sPreFrames << " computed by jobs, " << (double)sPreUsed / sPreFrames << " used, dirty joints met by the jobs " << gFSTexPreDirtyReads.load() << LL_ENDL;
         }
     }
 
     for (size_t entry_index = 0; entry_index < entries.size(); ++entry_index)
     {
         auto& imagep = entries[entry_index];
-        mLastUpdateKey = LLTextureKey(imagep->getID(), (ETexListType)imagep->getTextureListType());
 
         if (imagep->getNumRefs() > 1) // make sure this image hasn't been deleted before attempting to update (may happen as a side effect of some other image updating)
         {

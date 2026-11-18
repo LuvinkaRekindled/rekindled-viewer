@@ -23,9 +23,6 @@ class LLSpatialGroup;
 class LLTexRecs
 {
 public:
-    // LL_VK_TEXREC: 0 off, 1 the records are kept and worked on and the result is compared with what the face loop found (verify; nothing uses it), 2 (the default) the result replaces the face loop for the textures it is valid for
-    static S32 sMode;
-
     // what the worker found for one texture (a slot of the registry)
     struct Result
     {

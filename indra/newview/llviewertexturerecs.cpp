@@ -23,8 +23,6 @@
 #include "llviewerregion.h"
 #include "llviewertexture.h"
 
-S32 LLTexRecs::sMode = []{ const char* e = getenv("LL_VK_TEXREC"); return e ? atoi(e) : 2; }();
-
 namespace
 {
 enum : U32 { F_USE = 1, F_VOLATILE = 2, F_OCCLUDED = 4 };
@@ -337,7 +335,7 @@ void worker_main()
 
 void LLTexRecs::init()
 {
-    if (!sMode || sThread)
+    if (sThread)
     {
         return;
     }
@@ -362,7 +360,7 @@ void LLTexRecs::stop()
 
 void LLTexRecs::faceAdded(LLViewerTexture* tex, U32 ch, LLFace* face)
 {
-    if (!sMode || !tex || !face || ch >= LLRender::NUM_TEXTURE_CHANNELS)
+    if (!tex || !face || ch >= LLRender::NUM_TEXTURE_CHANNELS)
     {
         return;
     }
@@ -394,7 +392,7 @@ void LLTexRecs::faceAdded(LLViewerTexture* tex, U32 ch, LLFace* face)
 
 void LLTexRecs::faceRemoved(LLViewerTexture* tex, U32 ch, LLFace* face)
 {
-    if (!sMode || !tex || !face || ch >= LLRender::NUM_TEXTURE_CHANNELS)
+    if (!tex || !face || ch >= LLRender::NUM_TEXTURE_CHANNELS)
     {
         return;
     }
@@ -413,7 +411,7 @@ void LLTexRecs::faceRemoved(LLViewerTexture* tex, U32 ch, LLFace* face)
 
 void LLTexRecs::faceChanged(LLFace* face)
 {
-    if (!sMode || !face)
+    if (!face)
     {
         return;
     }
@@ -429,7 +427,7 @@ void LLTexRecs::faceChanged(LLFace* face)
 
 void LLTexRecs::groupOcclusion(LLSpatialGroup* group, bool occluded)
 {
-    if (!sMode || !group)
+    if (!group)
     {
         return;
     }
@@ -484,7 +482,7 @@ void LLTexRecs::textureGone(LLViewerTexture* tex)
 
 void LLTexRecs::textureStamped(LLViewerTexture* tex)
 {
-    if (sMode && tex && tex->mRecSlot)
+    if (tex && tex->mRecSlot)
     {
         note_stamp(tex->mRecSlot);
     }
@@ -492,10 +490,6 @@ void LLTexRecs::textureStamped(LLViewerTexture* tex)
 
 void LLTexRecs::frame()
 {
-    if (!sMode)
-    {
-        return;
-    }
     const U64 t0 = now_ns();
     Batch b;
     b.mRecs.reserve(sDirty.size());

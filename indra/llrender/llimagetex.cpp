@@ -1927,17 +1927,16 @@ void LLImageTex::setIsMask(bool is_mask)
 }
 
 // <FS> the texture plan section 6.2: the decode pool computed what analyzeAlpha and updatePickMask would (LLImageRaw::analyzeForUpload); the texture takes it, with the same
-// rule as analyzeAlpha for which level's decision stands (a smaller level never overrides a bigger one's, LL_VK_ALPHA_KEEP), and the passes over the texels stand down for this upload.
+// rule as analyzeAlpha for which level's decision stands (a smaller level never overrides a bigger one's), and the passes over the texels stand down for this upload.
 void LLImageTex::adoptUploadAnalysis(const LLImageRaw* raw, U32 w, U32 h)
 {
     if (!raw || !raw->hasUploadAnalysis() || !mNeedsAlphaAndPickMask || sSkipAnalyzeAlpha)
     {
         return;
     }
-    static const bool alpha_keep = []{ const char* e = getenv("LL_VK_ALPHA_KEEP"); return !e || atoi(e) != 0; }();
     if (raw->getComponents() == 4 || raw->getComponents() == 2)
     {
-        if (!(alpha_keep && w * h < mAnalyzedPixels))
+        if (!(w * h < mAnalyzedPixels))
         {
             mIsMask = raw->getAlphaIsMask() == 1;
             mAnalyzedPixels = w * h;
@@ -2043,8 +2042,7 @@ void LLImageTex::analyzeAlpha(const void* data_in, U32 w, U32 h)
 
     // <FS> native-vk (blink after load): the mask or not decision made from a bigger level stands when a smaller one is uploaded (a reload after a downgrade climbs through the small levels, and
     // each of them could turn a cut-out into a blend and back, so the surface changed draw pass at every step). A same size or bigger upload decides again, as before.
-    static const bool alpha_keep = []{ const char* e = getenv("LL_VK_ALPHA_KEEP"); return !e || atoi(e) != 0; }();
-    if (alpha_keep && w * h < mAnalyzedPixels)
+    if (w * h < mAnalyzedPixels)
     {
         return;
     }
