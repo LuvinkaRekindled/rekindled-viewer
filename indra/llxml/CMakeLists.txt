@@ -16,6 +16,7 @@ set(llxml_HEADER_FILES
     CMakeLists.txt
 
     llcontrol.h
+    rksettingsrename.h
     llxmlnode.h
     llxmlparser.h
     llxmltree.h

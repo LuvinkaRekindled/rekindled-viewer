@@ -1799,14 +1799,14 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
 
         if (create_timer.getElapsedTimeF32() > max_time)
         {
-            if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("createbreak", LLUUID::null, (S32)mCreateTextureList.size(), 0, 0, create_timer.getElapsedTimeF32() * 1000.f);
+            if (RKTextureArrivalTrace::enabled()) RKTextureArrivalTrace::note("createbreak", LLUUID::null, (S32)mCreateTextureList.size(), 0, 0, create_timer.getElapsedTimeF32() * 1000.f);
             break;
         }
     }
 
-    if (n_created && FSTextureArrivalTrace::enabled())
+    if (n_created && RKTextureArrivalTrace::enabled())
     {
-        FSTextureArrivalTrace::note("createloop", LLUUID::null, n_created, (S32)mCreateTextureList.size(), bytes_created, create_timer.getElapsedTimeF32() * 1000.f);
+        RKTextureArrivalTrace::note("createloop", LLUUID::null, n_created, (S32)mCreateTextureList.size(), bytes_created, create_timer.getElapsedTimeF32() * 1000.f);
     }
     // <FS> native-vk: the downscale draws into a render target and copies the result into the texture's new storage. A minimized or hidden window has no frame to
     // record that into (the draw and the copy are dropped), which left the texture replaced by an empty one: hair and other textures were black after a minimize
@@ -1977,10 +1977,10 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
     // Deletion rules check ref count, so be careful not to hold any LLPointer references to the textures here other than the one in entries.
 
     //update MIN_UPDATE_COUNT or 5% of other textures, whichever is greater
-    // <FS> the share of textures refreshed per frame is 1/FSTextureUpdateDivisor (the viewer default was 20 = 5%)
-    static LLCachedControl<U32> rk_update_divisor(gSavedSettings, "FSTextureUpdateDivisor", 20);
-    static LLCachedControl<U32> rk_burst_divisor(gSavedSettings, "FSTextureUpdateBurstDivisor", 20);
-    static LLCachedControl<F32> rk_burst_seconds(gSavedSettings, "FSTextureUpdateBurstSeconds", 3.f);
+    // <FS> the share of textures refreshed per frame is 1/RKTextureUpdateDivisor (the viewer default was 20 = 5%)
+    static LLCachedControl<U32> rk_update_divisor(gSavedSettings, "RKTextureUpdateDivisor", 20);
+    static LLCachedControl<U32> rk_burst_divisor(gSavedSettings, "RKTextureUpdateBurstDivisor", 20);
+    static LLCachedControl<F32> rk_burst_seconds(gSavedSettings, "RKTextureUpdateBurstSeconds", 3.f);
     // The slow rate saves CPU while the view is steady, but new textures then wait a long time for their first request. So the
     // fast (stock) rate is used for a few seconds whenever the view changes: a new region, or the camera has moved or turned
     // noticeably since the last time it was checked.
@@ -2015,8 +2015,8 @@ F32 LLViewerTextureList::updateImagesFetchTextures(F32 max_time)
         }
         // <FS> a view that has not changed for a while (no new region, camera still) refreshes the textures at a slower rate again: nothing it would find has changed, and the
         // fast rate comes back as soon as the camera moves or turns. LLViewerTextureList::sViewSteady is also read by the object texture priority pass.
-        static LLCachedControl<U32> rk_steady_factor(gSavedSettings, "FSTextureUpdateSteadyFactor", 2);
-        static LLCachedControl<F32> rk_steady_seconds(gSavedSettings, "FSTextureUpdateSteadySeconds", 10.f);
+        static LLCachedControl<U32> rk_steady_factor(gSavedSettings, "RKTextureUpdateSteadyFactor", 2);
+        static LLCachedControl<F32> rk_steady_seconds(gSavedSettings, "RKTextureUpdateSteadySeconds", 10.f);
         static F64 last_change_time = 0.0;
         if (changed || new_textures)
         {

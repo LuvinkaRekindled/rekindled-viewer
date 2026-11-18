@@ -882,7 +882,7 @@ void LLFace::printDebugInfo() const
 }
 
 // Transform the texture coordinates for this face.
-// <FS> a face's texture matrix slot holds the parameters of its animation when FSTexAnimOnGPU is on (rkvktexanim.h; the vertex shader makes the matrix): what is baked into texture
+// <FS> a face's texture matrix slot holds the parameters of its animation when RKTexAnimOnGPU is on (rkvktexanim.h; the vertex shader makes the matrix): what is baked into texture
 // coordinates (small faces, a rebuild before the face is in the animated state) is the matrix the parameters give at this moment
 static const LLMatrix4& bake_tex_matrix(const LLMatrix4* m, LLMatrix4& scratch)
 {

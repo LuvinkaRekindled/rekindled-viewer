@@ -167,7 +167,7 @@ public:
     void generateGlow(LLRenderTarget* src);
     void applyCAS(LLRenderTarget* src, LLRenderTarget* dst);
 
-    // DLSS proof of concept (FSVkDLSS): jitter the main scene's projection each frame, work out where every pixel was last frame, hand both to the upscaler
+    // DLSS proof of concept (RKVkDLSS): jitter the main scene's projection each frame, work out where every pixel was last frame, hand both to the upscaler
     void updateJitter();                                // call right before the main scene's setup3DRender
     void noteSceneMatrices();                           // call at the end of the main scene render
     void generateMotionVectors(LLRenderTarget* dst);    // camera motion from depth and the last two view-projection matrices, in render pixels
@@ -194,12 +194,12 @@ public:
     LLRenderTarget          mDnsrHit;       // the sun shadow denoiser's hit mask: RGBA8, one texel a tile of 8 x 4 pixels of the lightmap (dnsr_sunpack.frag)
     LLRenderTarget          mDnsrSunOut;    // its output: RGBA8 render size, r the filtered visibility
     bool                    amdDenoiserWanted();
-    bool                    amdSunDenoiserWanted();     // the AMD shadow denoiser on the traced sun shadow (setting FSVkAmdDenoiseShadows, RK_VK_AMD_DENOISE_SHADOWS=1)
+    bool                    amdSunDenoiserWanted();     // the AMD shadow denoiser on the traced sun shadow (setting RKVkAmdDenoiseShadows, RK_VK_AMD_DENOISE_SHADOWS=1)
     U32                     denoiseKinds();             // the denoisers in use this frame (1 reflections, 2 shadows): the denoiser's context is made for all of them
     bool                    prepareDenoiseInputs(U32 w, U32 h, bool& made);       // the world normal, roughness and raw depth for the denoisers, once a frame
     void                    denoiseSunShadow(LLRenderTarget* light);      // denoises the sun channel of the lightmap in place (before the penumbra filter)
     LLRenderTarget*         denoiseReflections(LLRenderTarget* refl);       // runs the passes and the denoiser; returns the target the lighting pass should read (refl itself when it did not run)
-    static F32 getDLSSScale();          // the render resolution as a fraction of the window: FSVkDLSSScale if set, else from FSVkDLSSQuality
+    static F32 getDLSSScale();          // the render resolution as a fraction of the window: RKVkDLSSScale if set, else from RKVkDLSSQuality
     void visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool show_flag);
     void visualizeRtMaterials(LLRenderTarget* dst);
     LLRenderTarget          mRtSunHard;                         // <FS> the centre ray's hard sun shadow alone, with a mip chain (R16F): the penumbra filter's taps read the level of their spacing
@@ -416,7 +416,7 @@ public:
         glm::mat4 mLastView;
         glm::mat4 mLastProj;
         const View* mJobView = nullptr;         // the view its jobs work for (view rework W3): set by generateSunShadow where the cascades are prepared, owned there
-        bool mCullActive = false;               // FSShadowCascadeAvatarCull for this cascade
+        bool mCullActive = false;               // RKShadowCascadeAvatarCull for this cascade
         LLVector3 mCullOrigin;
         LLVector3 mCullAt;
         F32 mCullSliceStart = 0.f;

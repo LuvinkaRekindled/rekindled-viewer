@@ -223,8 +223,8 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     // select shader
     // the planes go as one record of table entries (the pull programs: the planes' vertex buffers read by address); a session with ray queries draws the water seen from above with the ray traced sun shadow
     // and reflection (manifest: Water Pull RT Shader)
-    // the ray traced reflection of the water (rt-debug.txt waterrt, or the preference FSVkRTWater with the material table): decided here, the reflection is a program of its own
-    static LLCachedControl<bool> rt_water_setting(gSavedSettings, "FSVkRTWater", false);
+    // the ray traced reflection of the water (rt-debug.txt waterrt, or the preference RKVkRTWater with the material table): decided here, the reflection is a program of its own
+    static LLCachedControl<bool> rt_water_setting(gSavedSettings, "RKVkRTWater", false);
     S32 rt_water_mode = RKVkBridge::rtWaterReflections();
     if (rt_water_mode == 0 && rt_water_setting && RKVkBridge::rtMaterialsAvailable())
     {

@@ -142,7 +142,7 @@ public:
                 void    deleteFaces();
 
                 void    animateTextures();
-                void    animateTexturesGpu();           // <FS> FSTexAnimOnGPU: the faces' matrix slots hold the animation's parameters, written when they change (rkvktexanim.h)
+                void    animateTexturesGpu();           // <FS> RKTexAnimOnGPU: the faces' matrix slots hold the animation's parameters, written when they change (rkvktexanim.h)
                 void    compareTexAnimGpu();            // ... the compare mode: the matrices animateTextures just made against the shader's formula
                 void    resolveTexAnimMatrices();       // ... a parameter slot made a matrix again (the animation goes back to the main thread, or stops)
 

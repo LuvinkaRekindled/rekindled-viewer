@@ -318,11 +318,11 @@ struct DebugSwitches
     bool mTableVerify = false;      // after every table write compare the region with the kept rows (slow: reads video memory)
     S32 mGlossyRt = 0;              // live (glossyrt=N, 0 = off by default until it has been seen working; needs RK_VK_RT_MATERIALS=1): 1 ray traced reflections on glossy surfaces of the lighting pass (gloss 0.9 and up), 2 PBR path pixels magenta, 3 / 4 where it traced: hits green, misses red (4: every gloss), 5 gloss as grey, 6 which lighting path a pixel takes
     S32 mHitRays = -1;              // live (hitrays=N, -1 = not set): shadow rays per local light at a traced hit (1, 2 or 4)
-    S32 mHitQ = -1;                 // live (hitq=N, -1 = not set: the preference FSVkMirrorQuality decides): how a hit of the traced glossy mirror is lit, 0 flat diffuse, 1 the main pass lighting at the hit (normal map, roughness / metallic / specular map, probes at the hit)
+    S32 mHitQ = -1;                 // live (hitq=N, -1 = not set: the preference RKVkMirrorQuality decides): how a hit of the traced glossy mirror is lit, 0 flat diffuse, 1 the main pass lighting at the hit (normal map, roughness / metallic / specular map, probes at the hit)
     S32 mSnapTest = 0;              // live (snaptest=N): every change of N to a value above 0 takes a snapshot as the exit does (LLAppViewer::doFrame), a repeatable look at what the snapshot costs
     S32 mVelIdx = 1;                // live (velidx=0/1, default 1): the avatar velocity record drawn indexed (the hardware reads the indices: one vertex shader run per vertex, not per triangle corner); 0 = the draw over the index list, the A/B and the fallback until a week of use, then gone
     S32 mSunSamples = 0;            // live (sunsamples=N, default 0: RenderRTShadowSamples decides): the rays per pixel of the sun lightmap pass, a same-lap cost A/B
-    S32 mTexAnim = -1;              // live (texanim=0/1/2, default -1: the setting FSTexAnimOnGPU decides): 0 = texture animations by the CPU, 1 = by the vertex shader, 2 = CPU, with the shader's twin compared against it
+    S32 mTexAnim = -1;              // live (texanim=0/1/2, default -1: the setting RKTexAnimOnGPU decides): 0 = texture animations by the CPU, 1 = by the vertex shader, 2 = CPU, with the shader's twin compared against it
     S32 mSunNoise = 1;              // live (sunnoise=0/1/2, default 1): how the noise of the sun rays moves: 1 every frame (the upscaler averages it), 2 every 4th frame, 0 never (a fixed pattern)
     S32 mRtEarly = -1;              // live (rtearly=0/1/3, default -1: RK_VK_RT_EARLY decides): where the ray scene is built, 0 at the lighting, 1 before the G-buffer on the graphics queue, 3 before it on the compute queue (E2: needs RK_VK_RT_EARLY=3 at start-up, which sets the queue up); a same-session A/B
     S32 mSunFilter = 1;             // live (sunfilter=0/1, default 1): with the centre ray, the penumbra filter sized by the blocker distance (rtShadowFilterF.glsl) runs on the sun channel; 0 = the hard shadow as traced
@@ -331,7 +331,7 @@ struct DebugSwitches
     S32 mSunStrength = 65;          // live (sunstrength=N percent, default 65, the user's choice by eye 2026-11-05): with the centre ray, the most light an avatar's own close surfaces block on that avatar (the translucency floor); 100 = block fully
     S32 mPenRays = 0;               // live (penrays=N, default 0 = the shader's 8): the rays a pixel traces once its first ray met a close skinned surface (hair on the face, a hand on the shoulder), alpha and sun passes (a same-lap cost A/B)
     S32 mSunSelf = 1;               // live (sunself=0/1, default 1): the avatar self shadow work of 2026-10-28 (translucency floor, receiver probe, start disc); 0 = an avatar blocks fully and no disc, for a same-lap cost A/B
-    S32 mWaterRt = 0;               // live (waterrt=N, 0 by default: the preference FSVkRTWater asks for 1; needs RK_VK_RT_MATERIALS=1): 0 off, 1 ray traced reflections on the water (rtReflection in shadowUtil.glsl), 2 water painted magenta where the code runs, 3 hits green / misses red / downward rays blue
+    S32 mWaterRt = 0;               // live (waterrt=N, 0 by default: the preference RKVkRTWater asks for 1; needs RK_VK_RT_MATERIALS=1): 0 off, 1 ray traced reflections on the water (rtReflection in shadowUtil.glsl), 2 water painted magenta where the code runs, 3 hits green / misses red / downward rays blue
     S32 mView = 0;                  // live (view=N): the ray scene material debug view mode (RenderRTMaterialDebug) the viewer shows, 0 = the setting decides
     bool mGate = true;              // live (gate=0/1): avatars still loading and masked casters without texture data are not named (the viewer asks through RKVkBridge::rtLoadingGates)
     bool mBodyName = true;          // live (bodyname=0/1): the viewer names the body meshes of the last frames again before the scene call (RKVkBridge::rtBodyRename)
@@ -601,7 +601,7 @@ struct SkinFlagMeta
 constexpr VkDeviceSize kSkinFlagBytes = 8ull * kMaxSkinJobs;        // two counters a job
 Buffer sSkinFlags[Context::FRAMES_IN_FLIGHT];                       // kCalls regions of kSkinFlagBytes
 std::vector<SkinFlagMeta> sSkinFlagMeta[Context::FRAMES_IN_FLIGHT][kCalls];
-// The casters of the shadow passes. Far cascades are rendered only every few frames (FSShadowFarCascadeInterval) and their shadow map is reused in between, so the casters a
+// The casters of the shadow passes. Far cascades are rendered only every few frames (RKShadowFarCascadeInterval) and their shadow map is reused in between, so the casters a
 // frame names are not all there is. A pass that rendered this frame contributes exactly the casters it named (a moving object must not leave copies of its earlier positions);
 // the casters of a pass that did not render stay, as its cached shadow map stays, until it renders again or for a few frames at most.
 std::unordered_map<Key, Group, KeyHash> sGroups;

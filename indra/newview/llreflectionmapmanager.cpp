@@ -333,7 +333,7 @@ void LLReflectionMapManager::update()
     LLReflectionMap* oldestOccluded = nullptr;
 
     // <FS> spread the probe face renders out: one face every N frames instead of every frame (frame time vs how fast lighting changes show up in reflections)
-    static LLCachedControl<U32> rk_probe_interval(gSavedSettings, "FSProbeUpdateInterval", 2);
+    static LLCachedControl<U32> rk_probe_interval(gSavedSettings, "RKProbeUpdateInterval", 2);
     const bool probe_frame_skipped = rk_probe_interval > 1 && (LLFrameTimer::getFrameCount() % rk_probe_interval) != 0;
     // </FS>
 

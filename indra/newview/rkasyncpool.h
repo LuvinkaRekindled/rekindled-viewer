@@ -114,7 +114,7 @@ public:
 
     typedef std::shared_ptr<Job> JobPtr;
 
-    // when set, jobs are not handed to the workers: each runs on the thread that waits for it (a live switch, see FSAsyncBuilders)
+    // when set, jobs are not handed to the workers: each runs on the thread that waits for it (a live switch, see RKAsyncBuilders)
     static inline std::atomic<bool> sRunInline{false};
 
     explicit RKAsyncPool(unsigned num_workers)

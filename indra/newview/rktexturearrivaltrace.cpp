@@ -15,7 +15,7 @@
 #include <mutex>
 #include <vector>
 
-namespace FSTextureArrivalTrace
+namespace RKTextureArrivalTrace
 {
     std::atomic<bool> sEnabled { false };
 
@@ -64,7 +64,7 @@ namespace FSTextureArrivalTrace
 
     void update()
     {
-        static LLCachedControl<bool> on(gSavedSettings, "FSTextureArrivalTrace", false);
+        static LLCachedControl<bool> on(gSavedSettings, "RKTextureArrivalTrace", false);
         if (on() && !sFile)
         {
             const std::string path = gDirUtilp->getExpandedFilename(LL_PATH_LOGS, "texture-arrival.csv");

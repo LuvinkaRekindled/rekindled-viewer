@@ -1161,10 +1161,10 @@ void LLViewerTexture::addTextureStats(F32 virtual_size, bool needs_gltexture) co
     {
         mMaxVirtualSize = virtual_size;
     }
-    if (!mTraceWanted && virtual_size > 0.f && FSTextureArrivalTrace::enabled())
+    if (!mTraceWanted && virtual_size > 0.f && RKTextureArrivalTrace::enabled())
     {
         mTraceWanted = true;
-        FSTextureArrivalTrace::note("wanted", mID, getDiscardLevel(), (S32)mBoostLevel, 0, virtual_size);
+        RKTextureArrivalTrace::note("wanted", mID, getDiscardLevel(), (S32)mBoostLevel, 0, virtual_size);
     }
 }
 
@@ -1963,7 +1963,7 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
         RK_DIAG("VkTex") << "bake image created: " << mID << ", discard " << mRawDiscardLevel << ", " << mRawImage->getWidth() << "x" << mRawImage->getHeight() << (mRawImage->isCompressed() ? " BC7" : " raw") << ", upload hash "
                           << std::hex << mImageTexp->getUploadHash() << std::dec << ", GL name " << mImageTexp->getTexName() << (res ? "" : " (create failed)") << LL_ENDL;
     }
-    if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);
+    if (RKTextureArrivalTrace::enabled()) RKTextureArrivalTrace::note("created", mID, mRawDiscardLevel, res ? 1 : 0, mRawImage.notNull() ? (S64)mRawImage->getDataSize() : 0, mMaxVirtualSize);
     if (rk_diag_on() && res && mRawImage.notNull())
     {
         // <FS> 2026-11-16 (RK_VK_DIAG=1; the user: images that already show flash white again for a frame on the first load): a texture created again with the discard level and the size of the one it was created with before. A new GPU image
@@ -2608,13 +2608,13 @@ bool LLViewerFetchedTexture::updateFetch()
         // <FS> the texture plan 6.5: the first request of a texture whose size is not known yet guesses its level from the screen size (a 1024-square assumption)
         S32 guess_discard = -1;
         {
-            static LLCachedControl<bool> guess_on(gSavedSettings, "FSTextureFetchGuessLevel", true);
-            static LLCachedControl<U32> guess_size(gSavedSettings, "FSTextureFetchGuessSize", 1024);        // the assumed full size (a finer assumption absorbs the screen size growing a frame after the request)
+            static LLCachedControl<bool> guess_on(gSavedSettings, "RKTextureFetchGuessLevel", true);
+            static LLCachedControl<U32> guess_size(gSavedSettings, "RKTextureFetchGuessSize", 1024);        // the assumed full size (a finer assumption absorbs the screen size growing a frame after the request)
             if (guess_on() && w == 0 && mMaxVirtualSize > 0.f && mUrl.empty() && mFTType == FTT_DEFAULT && !needsAux())
             {
                 const F32 px = sqrtf(mMaxVirtualSize);                                      // the texture's largest extent on screen, in pixels
                 guess_discard = llclamp((S32)llround(log2f((F32)llclamp((U32)guess_size(), 256u, 4096u) / llmax(px, 1.f))), 0, (S32)MAX_DISCARD_LEVEL);
-                if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("guess", mID, guess_discard, desired_discard, 0, mMaxVirtualSize);
+                if (RKTextureArrivalTrace::enabled()) RKTextureArrivalTrace::note("guess", mID, guess_discard, desired_discard, 0, mMaxVirtualSize);
             }
         }
         fetch_request_response = LLAppViewer::getTextureFetch()->createRequest(mFTType, mUrl, getID(), getTargetHost(), decode_priority,
@@ -2624,7 +2624,7 @@ bool LLViewerFetchedTexture::updateFetch()
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - request created");
             mHasFetcher = true;
-            if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("request", mID, desired_discard, getDiscardLevel(), 0, decode_priority);
+            if (RKTextureArrivalTrace::enabled()) RKTextureArrivalTrace::note("request", mID, desired_discard, getDiscardLevel(), 0, decode_priority);
             mIsFetching = true;
             mLastWorkerDiscardLevel = worker_discard;
             // in some cases createRequest can modify discard, as an example

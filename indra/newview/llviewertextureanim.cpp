@@ -115,10 +115,10 @@ void LLViewerTextureAnim::updateClass()
 {
     // <FS> an object that is not in view does not need its animated texture advanced this frame: the frame counter is a function of the timer (and the smooth
     // modes accumulate the time since their last call), so the next call that happens brings it to the right state. Seen again, it can be one frame late at most.
-    static LLCachedControl<bool> skip_hidden(gSavedSettings, "FSSkipHiddenTextureAnim", true);
-    static LLCachedControl<bool> on_gpu(gSavedSettings, "FSTexAnimOnGPU", true);
+    static LLCachedControl<bool> skip_hidden(gSavedSettings, "RKSkipHiddenTextureAnim", true);
+    static LLCachedControl<bool> on_gpu(gSavedSettings, "RKTexAnimOnGPU", true);
     const bool skip = skip_hidden;
-    // <FS> FSTexAnimOnGPU (rkvktexanim.h): 1 = the faces' matrix slots hold the animation's parameters and the vertex shader makes the matrices against this clock; 0 = the matrices
+    // <FS> RKTexAnimOnGPU (rkvktexanim.h): 1 = the faces' matrix slots hold the animation's parameters and the vertex shader makes the matrices against this clock; 0 = the matrices
     // are made here; 2 = as 0, with the shader's formula compared against them. rt-debug.txt texanim=N decides while it is set (a same-lap A/B), the setting otherwise.
     RKVkTexAnim::setClock(LLFrameTimer::getElapsedSeconds());
     const S32 live = RKVkBridge::rtTexAnim();

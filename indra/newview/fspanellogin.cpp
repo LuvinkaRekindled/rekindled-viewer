@@ -888,7 +888,7 @@ void FSPanelLogin::loadLoginPage()
     // gives the grid's own page back.
     if (gSavedSettings.getString("ForceLoginURL").empty())
     {
-        const std::string start_page = gSavedSettings.getString("FSRekindledStartPage");
+        const std::string start_page = gSavedSettings.getString("RKRekindledStartPage");
         if (!start_page.empty())
         {
             LLMediaCtrl* start_browser = sInstance->getChild<LLMediaCtrl>("login_html");

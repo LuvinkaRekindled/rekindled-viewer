@@ -2,7 +2,7 @@
  * @file rktexturearrivaltrace.h
  * @brief A per-texture arrival trace (the texture plan section 6, step one).
  *
- * With FSTextureArrivalTrace on, every step a texture takes on its way to the GPU is written as one row of <logs>/texture-arrival.csv:
+ * With RKTextureArrivalTrace on, every step a texture takes on its way to the GPU is written as one row of <logs>/texture-arrival.csv:
  * wanted (a face first asked for it), request (the fetch request was created), each fetch worker state change (the state's name, with the desired
  * and loaded discard and the bytes of the step), dechit (the decoded cache served it), created (the GPU image was made), createbreak (the create loop
  * stopped on its time budget with textures still queued), world (the world appeared). The file is read offline (a script), never by the viewer.
@@ -16,7 +16,7 @@
 #include "lluuid.h"
 #include <atomic>
 
-namespace FSTextureArrivalTrace
+namespace RKTextureArrivalTrace
 {
     extern std::atomic<bool> sEnabled;
     inline bool enabled() { return sEnabled.load(std::memory_order_relaxed); }

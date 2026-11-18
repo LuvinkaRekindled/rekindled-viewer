@@ -384,7 +384,7 @@ static bool handleAnisotropicChanged(const LLSD& newvalue)
     return true;
 }
 
-// <FS> Vulkan present mode: follows FSVkPresentMode, and the Vertical Sync preference while that is 0
+// <FS> Vulkan present mode: follows RKVkPresentMode, and the Vertical Sync preference while that is 0
 static bool handleVkPresentModeChanged(const LLSD& newvalue)
 {
     RKVkBridge::setPresentPreference((S32)newvalue.asInteger(), gSavedSettings.getBOOL("RenderVSyncEnable"));
@@ -394,7 +394,7 @@ static bool handleVkPresentModeChanged(const LLSD& newvalue)
 static bool handleVSyncChanged(const LLSD& newvalue)
 {
     LLPerfStats::tunables.vsyncEnabled = newvalue.asBoolean();
-    RKVkBridge::setPresentPreference((S32)gSavedSettings.getS32("FSVkPresentMode"), newvalue.asBoolean()); // <FS>
+    RKVkBridge::setPresentPreference((S32)gSavedSettings.getS32("RKVkPresentMode"), newvalue.asBoolean()); // <FS>
     if (gViewerWindow && gViewerWindow->getWindow())
     {
         gViewerWindow->getWindow()->toggleVSync(newvalue.asBoolean());
@@ -1369,7 +1369,7 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedSettings, "RenderMaxPartCount", handleMaxPartCountChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderDynamicLOD", handleRenderDynamicLODChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderVSyncEnable", handleVSyncChanged);
-    setting_setup_signal_listener(gSavedSettings, "FSVkPresentMode", handleVkPresentModeChanged); // <FS>
+    setting_setup_signal_listener(gSavedSettings, "RKVkPresentMode", handleVkPresentModeChanged); // <FS>
     setting_setup_signal_listener(gSavedSettings, "RenderDeferredNoise", handleReleaseGLBufferChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderDebugPipeline", handleRenderDebugPipelineChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderResolutionDivisor", handleRenderResolutionDivisorChanged);
@@ -1377,10 +1377,10 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedSettings, "RenderResolutionMultiplier", handleRenderResolutionDivisorChanged);
 // [/SL:KB]
     // <FS> DLSS: the render size follows the mode, so the screen buffers are made again when it changes
-    setting_setup_signal_listener(gSavedSettings, "FSVkDLSS", handleRenderResolutionDivisorChanged);
-    setting_setup_signal_listener(gSavedSettings, "FSVkDLSSQuality", handleRenderResolutionDivisorChanged);
-    setting_setup_signal_listener(gSavedSettings, "FSVkDLSSScale", handleRenderResolutionDivisorChanged);
-    setting_setup_signal_listener(gSavedSettings, "FSVkNeuralRenderMode", handleRenderResolutionDivisorChanged);     // <FS> DLSS-NR: its targets come and go with the mode
+    setting_setup_signal_listener(gSavedSettings, "RKVkDLSS", handleRenderResolutionDivisorChanged);
+    setting_setup_signal_listener(gSavedSettings, "RKVkDLSSQuality", handleRenderResolutionDivisorChanged);
+    setting_setup_signal_listener(gSavedSettings, "RKVkDLSSScale", handleRenderResolutionDivisorChanged);
+    setting_setup_signal_listener(gSavedSettings, "RKVkNeuralRenderMode", handleRenderResolutionDivisorChanged);     // <FS> DLSS-NR: its targets come and go with the mode
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeLevel", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeDetail", handleReflectionProbeDetailChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReflectionProbeCount", handleReflectionProbeCountChanged);
@@ -1599,7 +1599,7 @@ void settings_setup_listeners()
 
     // <FS:Ansariel> Output device selection
     setting_setup_signal_listener(gSavedSettings, "FSOutputDeviceUUID", handleOutputDeviceChanged);
-    setting_setup_signal_listener(gSavedSettings, "FSAudioHRTF", handleAudioHRTFChanged);
+    setting_setup_signal_listener(gSavedSettings, "RKAudioHRTF", handleAudioHRTFChanged);
 
     // <FS:Ansariel> Optional small camera floater
     setting_setup_signal_listener(gSavedSettings, "FSUseSmallCameraFloater", handleSmallCameraFloaterChanged);

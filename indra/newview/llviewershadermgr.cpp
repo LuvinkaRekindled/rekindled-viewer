@@ -107,7 +107,7 @@ RKShaderProgram        gObjectAlphaMaskNoColorProgram;
 //environment shaders
 RKShaderProgram        gWaterPullProgram;          // <FS> the table form of the water planes (native only: water.vert / water.frag with WATER_PULL)
 RKShaderProgram        gUnderWaterPullProgram;
-RKShaderProgram        gWaterPullRtReflectionProgram;   // <FS> the same that also traces the reflection of the water (the setting FSVkRTWater; needs the material table)
+RKShaderProgram        gWaterPullRtReflectionProgram;   // <FS> the same that also traces the reflection of the water (the setting RKVkRTWater; needs the material table)
 RKShaderProgram        gWaterPullRtProgram;        // <FS> the same with the ray queries of the stock water (native only: manifest Water Pull RT Shader, RK_RT_QUERY), made in a session with ray queries
 static bool            sWaterRtReflectionMade = false;
 static bool            sWaterRtMade = false;       // the program above was made in this session
@@ -940,7 +940,7 @@ bool LLViewerShaderMgr::loadShadersWater()
         sWaterRtMade = success;
     }
 
-    // the variant with the traced reflection: only when the material table can be on (the reflection reads it); a program of its own, the water draws with it when the setting FSVkRTWater is on
+    // the variant with the traced reflection: only when the material table can be on (the reflection reads it); a program of its own, the water draws with it when the setting RKVkRTWater is on
     sWaterRtReflectionMade = false;
     if (success && sWaterRtMade && rt_reflections_possible())
     {

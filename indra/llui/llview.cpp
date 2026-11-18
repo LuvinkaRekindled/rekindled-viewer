@@ -1384,9 +1384,9 @@ const UiCacheCfg& ui_cache_cfg()
     static UiCacheCfg cfg;
     static bool read_env = false;
     static bool env_set = false;
-    // the settings (FSUIRecordCache: 0 off, 1 on; FSUIRecordCacheHz: the UI refresh rate to aim for); the variable below overrides them
-    static LLUICachedControl<S32> setting_on("FSUIRecordCache", 0);
-    static LLUICachedControl<F32> setting_hz("FSUIRecordCacheHz", 30.f);
+    // the settings (RKUIRecordCache: 0 off, 1 on; RKUIRecordCacheHz: the UI refresh rate to aim for); the variable below overrides them
+    static LLUICachedControl<S32> setting_on("RKUIRecordCache", 0);
+    static LLUICachedControl<F32> setting_hz("RKUIRecordCacheHz", 30.f);
     if (!env_set)
     {
         cfg.mMode = setting_on > 0 ? 2 : 0;

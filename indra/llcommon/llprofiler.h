@@ -234,7 +234,7 @@ namespace LLProfiler
 #endif // LL_PROFILER
 
 // <FS> Optional GPU zone timing in the viewer's own log: every GPU zone also reports its begin and
-// end to these hooks, which the viewer installs only while FSGpuZoneTimers is enabled.
+// end to these hooks, which the viewer installs only while RKGpuZoneTimers is enabled.
 struct RKGpuZoneHooks
 {
     inline static void (*sBegin)(const char* name) = nullptr;
@@ -267,7 +267,7 @@ private:
 #define RK_GPUZONE_CAT(a, b) RK_GPUZONE_CAT2(a, b)
 // </FS>
 
-// timer-only zone (not sent to Tracy), for finer breakdowns in the FSGpuZoneTimers log summary
+// timer-only zone (not sent to Tracy), for finer breakdowns in the RKGpuZoneTimers log summary
 #define RK_GPU_TIMER_ZONE(name)           RKGpuZoneScope RK_GPUZONE_CAT(rkgputimer_, __LINE__)(name);
 // <FS> native-vk: Tracy's GPU zones are an OpenGL feature (GL timestamp queries and a GL context) and the viewer has no GL context: a connected
 // Tracy client would have crashed the first GPU zone. The zones keep only the viewer's own timer hook (Vulkan GPU zones for Tracy: see doc/vulkan).

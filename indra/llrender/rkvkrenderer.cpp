@@ -2556,7 +2556,7 @@ void Renderer::noteBarrier(const Image& image, VkImageLayout from, VkImageLayout
         pi.mKind = image_kind(image);
     }
     {
-        // F3.5c': who needed this transition: the draw's program, the viewer's GPU zone (when FSGpuZoneTimers is on) and the target of the pass that is being set up
+        // F3.5c': who needed this transition: the draw's program, the viewer's GPU zone (when RKGpuZoneTimers is on) and the target of the pass that is being set up
         std::string who = image_kind(image) + " | " + layout_name(from) + ">" + layout_name(to) + " | " + mBarrierCause + " | " + (mProgram ? mProgram->mName : std::string("(no program)"));
         who += mZoneStack.empty() ? std::string(" | (no zone)") : " | " + Context::stampTagName(mZoneStack.back());
         who += " | into " + describeTarget();

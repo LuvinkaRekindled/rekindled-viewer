@@ -583,7 +583,7 @@ void LLRenderPass::applyModelMatrix(const LLMatrix4* model_matrix)
 RKShadowDrawStats gShadowDrawStats;
 RKGeometryPacketStats gGeometryPacketStats;
 
-// <FS> The geometry records of the deferred passes are the only way these passes draw (the hardware floor: PLAN-twin-removal.md, section 8): the setting FSDeferredPackets and the A/B switch RK_DEFERRED_PACKETS_AB
+// <FS> The geometry records of the deferred passes are the only way these passes draw (the hardware floor: PLAN-twin-removal.md, section 8): the setting RKDeferredPackets and the A/B switch RK_DEFERRED_PACKETS_AB
 // (twin era tools that turned the records off) are gone, and so are the checks that the pull programs exist (they are required: a program that cannot be made ends the shader load); what is left is the worker's packet path.
 // static
 bool LLRenderPass::deferredPacketsEnabled()

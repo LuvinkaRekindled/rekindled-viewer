@@ -2631,7 +2631,7 @@ void LLTextureFetchWorker::callbackDecoded(bool success, const std::string &erro
             RK_DIAG("BakeTex") << "server bake decoded: " << mID << ", discard " << mDecodedDiscard << ", formatted " << mFormattedImage->getDataSize() << " bytes hash " << std::hex
                                 << rk_sparse_hash(mFormattedImage->getData(), mFormattedImage->getDataSize()) << std::dec << ", raw " << raw->getWidth() << "x" << raw->getHeight() << " x" << (S32)raw->getComponents()
                                 << (raw->getCompressedFormat() ? " BC7" : " raw") << " " << raw->getDataSize() << " bytes hash " << std::hex << rk_sparse_hash(raw->getData(), raw->getDataSize()) << std::dec
-                                << ", served by the decoded cache: " << (FSDecodedTextureCache::instance().recentlyServed(mID) ? "YES" : "no") << ", url empty at the decode request: " << (mUrl.empty() ? "yes" : "no") << ", from the texture cache: " << (mInCache ? "yes" : "no") << LL_ENDL;
+                                << ", served by the decoded cache: " << (RKDecodedTextureCache::instance().recentlyServed(mID) ? "YES" : "no") << ", url empty at the decode request: " << (mUrl.empty() ? "yes" : "no") << ", from the texture cache: " << (mInCache ? "yes" : "no") << LL_ENDL;
         }
         if (mDecodedDiscard < mDesiredDiscard)
         {
@@ -2863,7 +2863,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         // <FS> the texture plan 6.5: the size is not known yet, but the screen size is, so the first request asks for the level that size implies under a
         // 1024-square assumption instead of 600 bytes of discovery; the JPEG 2000 header in those bytes tells the real size, the decode takes what the bytes
         // allow (the stream is progressive), and a second request happens only when the guess was too coarse. Cold, the discovery was a whole fetch cycle a texture.
-        static LLCachedControl<U32> guess_size(gSavedSettings, "FSTextureFetchGuessSize", 1024);
+        static LLCachedControl<U32> guess_size(gSavedSettings, "RKTextureFetchGuessSize", 1024);
         const S32 assumed = (S32)llclamp((U32)guess_size(), 256u, 4096u);
         desired_discard = llclamp(guess_discard, 0, MAX_DISCARD_LEVEL);
         desired_size = desired_discard == 0 ? MAX_IMAGE_DATA_SIZE : LLImageJ2C::calcDataSizeJ2C(assumed, assumed, 4, desired_discard);
@@ -3286,7 +3286,7 @@ void LLTextureFetch::commonUpdate()
     // up setting eventually, so the semaphore/request level can
     // fall outside the [0..HIGH_WATER] range.  Expect that.
     // <FS> the texture plan 6.3: the window of requests in flight is a setting while it is measured (0: the constants, 100/50 pipelined, 40/20 not)
-    static LLCachedControl<U32> high_water(gSavedSettings, "FSTextureFetchHighWater", 0);
+    static LLCachedControl<U32> high_water(gSavedSettings, "RKTextureFetchHighWater", 0);
     if (high_water() > 0)
     {
         mHttpHighWater = (S32)llclamp((U32)high_water(), 4u, 4096u);
@@ -3331,11 +3331,11 @@ void LLTextureFetch::noteCompleted(const LLUUID& id)
 //virtual
 size_t LLTextureFetch::update(F32 max_time_ms)
 {
-    FSDecodedTextureCache::instance().update();      // <FS> settings and the once-a-minute report of the decoded cache
-    FSTextureArrivalTrace::update();                 // <FS> the arrival trace's file
+    RKDecodedTextureCache::instance().update();      // <FS> settings and the once-a-minute report of the decoded cache
+    RKTextureArrivalTrace::update();                 // <FS> the arrival trace's file
     {
         // <FS> finished fetches: their textures are visited by the list's next pass instead of waiting for the slice to reach them (switch while it is measured; then one path)
-        static LLCachedControl<bool> wake(gSavedSettings, "FSTextureFetchWake", true);
+        static LLCachedControl<bool> wake(gSavedSettings, "RKTextureFetchWake", true);
         std::vector<LLUUID> done;
         {
             std::lock_guard<std::mutex> lock(mCompletedMutex);
@@ -3348,7 +3348,7 @@ size_t LLTextureFetch::update(F32 max_time_ms)
                 if (LLViewerFetchedTexture* tex = gTextureList.findImage(id, TEX_LIST_STANDARD))
                 {
                     gTextureList.visitNext(tex);
-                    if (FSTextureArrivalTrace::enabled()) FSTextureArrivalTrace::note("wake", id);
+                    if (RKTextureArrivalTrace::enabled()) RKTextureArrivalTrace::note("wake", id);
                 }
             }
         }
@@ -3719,12 +3719,12 @@ void LLTextureFetchWorker::setState(e_state new_state)
         mFetcher->noteCompleted(mID);       // <FS> the list visits the texture next pass
     }
     // <FS> arrival trace: the step, with what the worker wants, has, asked for (bytes) and decoded to
-    if (FSTextureArrivalTrace::enabled())
+    if (RKTextureArrivalTrace::enabled())
     {
         const S64 bytes = new_state == WAIT_HTTP_REQ ? (S64)mRequestedSize
                         : (new_state == DECODE_IMAGE && mFormattedImage.notNull()) ? (S64)mFormattedImage->getDataSize()
                         : (new_state == CACHE_POST ? (S64)mCachedSize : 0);
-        FSTextureArrivalTrace::note(e_state_name[new_state], mID, mDesiredDiscard, mLoadedDiscard, bytes, (F32)mDecodedDiscard);
+        RKTextureArrivalTrace::note(e_state_name[new_state], mID, mDesiredDiscard, mLoadedDiscard, bytes, (F32)mDecodedDiscard);
     }
     mState = new_state;
 }

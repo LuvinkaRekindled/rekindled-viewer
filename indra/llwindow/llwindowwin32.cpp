@@ -1531,7 +1531,7 @@ void LLWindowWin32::destroySharedContext(void* contextPtr)
 
 void LLWindowWin32::toggleVSync(bool enable_vsync)
 {
-    // <FS> the present mode is the swapchain's (FSVkPresentMode)
+    // <FS> the present mode is the swapchain's (RKVkPresentMode)
 }
 
 void LLWindowWin32::moveWindow( const LLCoordScreen& position, const LLCoordScreen& size )

@@ -479,7 +479,7 @@
 		</text>
 		<slider
 		 can_edit_text="true"
-		 control_name="FSDecodedTextureCacheSizeMB"
+		 control_name="RKDecodedTextureCacheSizeMB"
 		 decimal_digits="0"
 		 follows="left|top"
 		 height="15"

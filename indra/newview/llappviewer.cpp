@@ -2634,8 +2634,8 @@ bool LLAppViewer::cleanup()
     sTextureFetch->shutdown();
     sTextureCache->shutdown();
     sImageDecodeThread->shutdown();
-    FSDecodedTextureCache::instance().shutdown();       // <FS> after the decode pool: no reader runs any more
-    FSTextureArrivalTrace::shutdown();                  // <FS> the arrival trace's file
+    RKDecodedTextureCache::instance().shutdown();       // <FS> after the decode pool: no reader runs any more
+    RKTextureArrivalTrace::shutdown();                  // <FS> the arrival trace's file
     sPurgeDiskCacheThread->shutdown();
     if (mGeneralThreadPool)
     {
@@ -3990,23 +3990,23 @@ bool LLAppViewer::initWindow()
     {
         LL_INFOS("AppInit") << "translating the Vulkan renderer settings" << LL_ENDL;
         _putenv_s("RK_VK_MIRROR", "1");
-        if (gSavedSettings.getBOOL("FSVkDLSS") && !getenv("RK_VK_DLSS"))
+        if (gSavedSettings.getBOOL("RKVkDLSS") && !getenv("RK_VK_DLSS"))
         {
             _putenv_s("RK_VK_DLSS", "1");       // the upscaler switch (AMD FSR 3.1; the variable name is a left over from DLSS)
             _putenv_s("RK_VK_DLSS_SCALE", std::to_string(LLPipeline::getDLSSScale()).c_str());     // the render scale, for the texture LOD bias
-            // <FS> DLSS-NR (a local build option, doc/vulkan/PLAN-dlss-nr.md): FSVkNeuralRenderMode is read live by the pipeline; RK_VK_DLSS_NR stays the launchers' test override
+            // <FS> DLSS-NR (a local build option, doc/vulkan/PLAN-dlss-nr.md): RKVkNeuralRenderMode is read live by the pipeline; RK_VK_DLSS_NR stays the launchers' test override
         }
-        if (gSavedSettings.getBOOL("FSVkRayTracing") && !getenv("RK_VK_RT") && !getenv("RK_VK_RT_SHADOWS"))
+        if (gSavedSettings.getBOOL("RKVkRayTracing") && !getenv("RK_VK_RT") && !getenv("RK_VK_RT_SHADOWS"))
         {
             _putenv_s("RK_VK_RT", "1");             // the ray scene and ray traced sun shadows (experimental; any card with Vulkan ray queries)
             _putenv_s("RK_VK_RT_SHADOWS", "1");
-            if ((gSavedSettings.getS32("FSVkMirrorQuality") > 0 || gSavedSettings.getBOOL("FSVkRTWater")) && !getenv("RK_VK_RT_MATERIALS"))
+            if ((gSavedSettings.getS32("RKVkMirrorQuality") > 0 || gSavedSettings.getBOOL("RKVkRTWater")) && !getenv("RK_VK_RT_MATERIALS"))
             {
                 _putenv_s("RK_VK_RT_MATERIALS", "1");   // the material table the traced glossy mirror and the traced water reflections shade their hits from (costs frame time, so only with those options)
             }
         }
         {
-            // the scene tables (doc/vulkan/S2-handoff.md). <FS> K6: they are the only path now (the FSVkResidentScene setting is gone); what the environment sets explicitly (also 0) still wins for the ray scene parts.
+            // the scene tables (doc/vulkan/S2-handoff.md). <FS> K6: they are the only path now (the RKVkResidentScene setting is gone); what the environment sets explicitly (also 0) still wins for the ray scene parts.
             for (const char* name : { "RK_VK_SCENE_RAYRANGE", "RK_VK_RT_INSTDELTA" })
             {
                 if (!getenv(name))
@@ -5709,7 +5709,7 @@ bool LLAppViewer::initCache()
     // </FS:Ansariel>
 
     LLAppViewer::getTextureCache()->initCache(LL_PATH_CACHE, texture_cache_size, texture_cache_mismatch);
-    FSDecodedTextureCache::instance().init(LL_PATH_CACHE, texture_cache_mismatch);      // <FS> the decoded textures, next to the texture cache
+    RKDecodedTextureCache::instance().init(LL_PATH_CACHE, texture_cache_mismatch);      // <FS> the decoded textures, next to the texture cache
 
     const U32 CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS = 128;
     LLVOCache::getInstance()->initCache(LL_PATH_CACHE, CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS, getObjectCacheVersion());

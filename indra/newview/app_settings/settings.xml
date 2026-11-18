@@ -2348,7 +2348,7 @@
       <key>Value</key>
       <integer>2</integer>
     </map>
-    <key>FSParallelShadowPrep</key>
+    <key>RKParallelShadowPrep</key>
     <map>
       <key>Comment</key>
       <string>Prepare the sun shadow cascades (cull and render map) on worker threads, one cascade per thread, instead of one after the other on the main thread. Takes effect at once. The log (channel ShadowPrep) shows the main thread time per frame for both modes every 300 frames, so the two can be compared.</string>
@@ -2359,10 +2359,10 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSParallelShadowPrepAB</key>
+    <key>RKParallelShadowPrepAB</key>
     <map>
       <key>Comment</key>
-      <string>Test mode: ignore FSParallelShadowPrep and alternate between the serial and the parallel sun cascade preparation every 30 seconds, so the ShadowPrep log lines can be compared without touching settings.</string>
+      <string>Test mode: ignore RKParallelShadowPrep and alternate between the serial and the parallel sun cascade preparation every 30 seconds, so the ShadowPrep log lines can be compared without touching settings.</string>
       <key>Persist</key>
       <integer>0</integer>
       <key>Type</key>
@@ -2370,7 +2370,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSEarlySort</key>
+    <key>RKEarlySort</key>
     <map>
       <key>Comment</key>
       <string>Sort the main view before the shadow passes (the geometry builds then start earlier). Off: the sort runs after the shadows, as before. Live; for finding which change dropped an object.</string>
@@ -2381,7 +2381,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSAsyncBuilders</key>
+    <key>RKAsyncBuilders</key>
     <map>
       <key>Comment</key>
       <string>Build the draw packets on the async pool's threads. Off: every build runs on the main thread when it is needed. Live; for finding which change dropped an object.</string>
@@ -2392,10 +2392,10 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSParallelShadowPrepCheck</key>
+    <key>RKParallelShadowPrepCheck</key>
     <map>
       <key>Comment</key>
-      <string>With FSParallelShadowPrep on, also run the serial cull and sort of every cascade and log where its result differs from the parallel one. Slower than either mode; for testing.</string>
+      <string>With RKParallelShadowPrep on, also run the serial cull and sort of every cascade and log where its result differs from the parallel one. Slower than either mode; for testing.</string>
       <key>Persist</key>
       <integer>0</integer>
       <key>Type</key>
@@ -2403,7 +2403,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSShadowCascadeAvatarCull</key>
+    <key>RKShadowCascadeAvatarCull</key>
     <map>
       <key>Comment</key>
       <string>Do not draw a rigged avatar into a sun shadow cascade that lies entirely behind it (farther from the camera than the avatar plus a margin). Only active while the sun or moon is high enough for shadows to be short.</string>
@@ -2414,10 +2414,10 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSShadowCascadeCullMargin</key>
+    <key>RKShadowCascadeCullMargin</key>
     <map>
       <key>Comment</key>
-      <string>Safety margin in meters for FSShadowCascadeAvatarCull: an avatar must be this much nearer than a cascade's slice start to be skipped. Larger is safer and skips less.</string>
+      <string>Safety margin in meters for RKShadowCascadeAvatarCull: an avatar must be this much nearer than a cascade's slice start to be skipped. Larger is safer and skips less.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2425,10 +2425,10 @@
       <key>Value</key>
       <real>12.0</real>
     </map>
-    <key>FSShadowCascadeCullMinSunElevation</key>
+    <key>RKShadowCascadeCullMinSunElevation</key>
     <map>
       <key>Comment</key>
-      <string>Minimum sun or moon elevation in degrees for FSShadowCascadeAvatarCull. Below this, shadows can be long enough to cross cascade boundaries, so the cull is off.</string>
+      <string>Minimum sun or moon elevation in degrees for RKShadowCascadeAvatarCull. Below this, shadows can be long enough to cross cascade boundaries, so the cull is off.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2436,7 +2436,7 @@
       <key>Value</key>
       <real>25.0</real>
     </map>
-    <key>FSProbeUpdateInterval</key>
+    <key>RKProbeUpdateInterval</key>
     <map>
       <key>Comment</key>
       <string>Reflection probes render one cube face every Nth frame instead of every frame. Higher values cost less per frame but changes in lighting show up in reflections more slowly. 1 is the stock behaviour.</string>
@@ -2447,7 +2447,7 @@
       <key>Value</key>
       <integer>2</integer>
     </map>
-    <key>FSTextureUpdateDivisor</key>
+    <key>RKTextureUpdateDivisor</key>
     <map>
       <key>Comment</key>
       <string>Each frame 1/N of the loaded textures get their priority and fetch state refreshed (stock viewer: 20, i.e. 5%). Higher values cost less per frame but textures react to camera movement more slowly.</string>
@@ -2458,7 +2458,7 @@
       <key>Value</key>
       <integer>80</integer>
     </map>
-    <key>FSVkSnapVariant</key>
+    <key>RKVkSnapVariant</key>
     <map>
       <key>Comment</key>
       <string>Vulkan renderer snapshot experiment: 0 off, 1 flush before each snapshot render, 2 new off-screen frame before each (default; fixes a wrong second snapshot render), 3 like 2 and wait for the GPU, 4 render twice and keep the second</string>
@@ -2469,10 +2469,10 @@
       <key>Value</key>
       <integer>2</integer>
     </map>
-    <key>FSTextureUpdateBurstDivisor</key>
+    <key>RKTextureUpdateBurstDivisor</key>
     <map>
       <key>Comment</key>
-      <string>Texture refresh divisor (see FSTextureUpdateDivisor) used for FSTextureUpdateBurstSeconds after a teleport, region change, or a noticeable camera move or turn. 20 is the stock viewer value.</string>
+      <string>Texture refresh divisor (see RKTextureUpdateDivisor) used for RKTextureUpdateBurstSeconds after a teleport, region change, or a noticeable camera move or turn. 20 is the stock viewer value.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2480,7 +2480,7 @@
       <key>Value</key>
       <integer>20</integer>
     </map>
-    <key>FSTextureUpdateBurstSeconds</key>
+    <key>RKTextureUpdateBurstSeconds</key>
     <map>
       <key>Comment</key>
       <string>How long the fast texture refresh rate stays on after the view changes. 0 turns the fast rate off.</string>
@@ -2491,10 +2491,10 @@
       <key>Value</key>
       <real>3.0</real>
     </map>
-    <key>FSRtShadowFarCascadeInterval</key>
+    <key>RKRtShadowFarCascadeInterval</key>
     <map>
       <key>Comment</key>
-      <string>Ray traced sun shadows: the far sun cascades' passes only name the shadow casters to the ray scene (nothing is drawn), and the scene keeps casters for a few frames, so each far cascade (from FSShadowFarCascadeFirst) runs only every Nth frame (staggered), whatever the camera does. Saves CPU on the main thread and the render worker. 1 = every cascade every frame. A distant avatar's shadow pose updates at 1/N of the frame rate.</string>
+      <string>Ray traced sun shadows: the far sun cascades' passes only name the shadow casters to the ray scene (nothing is drawn), and the scene keeps casters for a few frames, so each far cascade (from RKShadowFarCascadeFirst) runs only every Nth frame (staggered), whatever the camera does. Saves CPU on the main thread and the render worker. 1 = every cascade every frame. A distant avatar's shadow pose updates at 1/N of the frame rate.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2502,7 +2502,7 @@
       <key>Value</key>
       <integer>4</integer>
     </map>
-    <key>FSShadowFarCascadeInterval</key>
+    <key>RKShadowFarCascadeInterval</key>
     <map>
       <key>Comment</key>
       <string>Far sun shadow cascades are re-rendered only every Nth frame (staggered) while the camera and the sun are nearly still; in between, the previous shadow map is reused with the current camera. 1 renders every cascade every frame.</string>
@@ -2513,10 +2513,10 @@
       <key>Value</key>
       <integer>4</integer>
     </map>
-    <key>FSShadowFarCascadeFirst</key>
+    <key>RKShadowFarCascadeFirst</key>
     <map>
       <key>Comment</key>
-      <string>Index (0-3) of the first sun shadow cascade that FSShadowFarCascadeInterval applies to. 2 (the default since 2026-11-01) means cascades 2 and 3, leaving the two nearest updated every frame: with 1 the mid-distance foliage's shadow edges popped each time cascade 1 was re-rendered (a clean launch at interval 4, first 1 flickered; first 2 and 3 did not). 1 reuses cascades 1 to 3.</string>
+      <string>Index (0-3) of the first sun shadow cascade that RKShadowFarCascadeInterval applies to. 2 (the default since 2026-11-01) means cascades 2 and 3, leaving the two nearest updated every frame: with 1 the mid-distance foliage's shadow edges popped each time cascade 1 was re-rendered (a clean launch at interval 4, first 1 flickered; first 2 and 3 did not). 1 reuses cascades 1 to 3.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2524,7 +2524,7 @@
       <key>Value</key>
       <integer>2</integer>
     </map>
-    <key>FSShadowFarCascadeMaxCameraMove</key>
+    <key>RKShadowFarCascadeMaxCameraMove</key>
     <map>
       <key>Comment</key>
       <string>A far cascade's previous shadow map is only reused if the camera moved less than this many meters since it was rendered. Raised from 0.03 to 0.3 after testing at 125+ fps with the Vulkan renderer: the one-frame lag is not visible there and the reuse stays active while walking. At low frame rates a smaller value avoids lagging, flickering shadows.</string>
@@ -2535,10 +2535,10 @@
       <key>Value</key>
       <real>0.05</real>
     </map>
-    <key>FSShadowFarCascadeMaxCameraTurn</key>
+    <key>RKShadowFarCascadeMaxCameraTurn</key>
     <map>
       <key>Comment</key>
-      <string>A far cascade's previous shadow map is only reused if the camera turned less than this many degrees since it was rendered. Raised from 1 to 3 together with FSShadowFarCascadeMaxCameraMove.</string>
+      <string>A far cascade's previous shadow map is only reused if the camera turned less than this many degrees since it was rendered. Raised from 1 to 3 together with RKShadowFarCascadeMaxCameraMove.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2546,7 +2546,7 @@
       <key>Value</key>
       <real>3.0</real>
     </map>
-    <key>FSGpuZoneTimers</key>
+    <key>RKGpuZoneTimers</key>
     <map>
       <key>Comment</key>
       <string>Diagnostic: measure GPU time per profiled render zone and write a summary to the log every 10 seconds. Adds some overhead while on.</string>
@@ -2557,7 +2557,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSVulkanAsync</key>
+    <key>RKVulkanAsync</key>
     <map>
       <key>Comment</key>
       <string>No longer used: the Vulkan work always runs on its own thread.</string>
@@ -2568,10 +2568,10 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSVkDLSS</key>
+    <key>RKVkDLSS</key>
     <map>
       <key>Comment</key>
-      <string>Experimental, needs an NVIDIA RTX card: render the world at FSVkDLSSScale of the window size and upscale it with DLSS. Takes effect after a restart.</string>
+      <string>Experimental, needs an NVIDIA RTX card: render the world at RKVkDLSSScale of the window size and upscale it with DLSS. Takes effect after a restart.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2579,7 +2579,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSVkRayTracing</key>
+    <key>RKVkRayTracing</key>
     <map>
       <key>Comment</key>
       <string>Experimental, needs an NVIDIA RTX card: ray traced sun shadows in the Vulkan renderer. Takes effect after a restart.</string>
@@ -2590,10 +2590,10 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSVkMirrorQuality</key>
+    <key>RKVkMirrorQuality</key>
     <map>
       <key>Comment</key>
-      <string>Needs FSVkRayTracing: glossy surfaces such as polished floors and metal reflect the scene by ray tracing instead of the reflection probes, and the level says what a traced hit shows. The glass of a planar mirror always shows the mirror view (RenderHeroProbeResolution and RenderHeroProbeUpdateRate are its quality). 0 Off, 1 Low = flat colours, 2 Medium = lit surfaces (materials, probes, sun shadow), 3 High = also the local lights, 4 Ultra = soft shadows of the local lights. Higher costs more frame time. Off and the levels take effect at once; from Off to a level takes effect at once only if this launch started with ray tracing and a level above Off or FSVkRTWater on (they build the material table), otherwise after a restart. (This setting replaced the check box FSVkGlossyMirror.)</string>
+      <string>Needs RKVkRayTracing: glossy surfaces such as polished floors and metal reflect the scene by ray tracing instead of the reflection probes, and the level says what a traced hit shows. The glass of a planar mirror always shows the mirror view (RenderHeroProbeResolution and RenderHeroProbeUpdateRate are its quality). 0 Off, 1 Low = flat colours, 2 Medium = lit surfaces (materials, probes, sun shadow), 3 High = also the local lights, 4 Ultra = soft shadows of the local lights. Higher costs more frame time. Off and the levels take effect at once; from Off to a level takes effect at once only if this launch started with ray tracing and a level above Off or RKVkRTWater on (they build the material table), otherwise after a restart. (This setting replaced the check box RKVkGlossyMirror.)</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2601,10 +2601,10 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSVkRTWater</key>
+    <key>RKVkRTWater</key>
     <map>
       <key>Comment</key>
-      <string>Needs FSVkRayTracing: the water reflects the scene by ray tracing (moving objects, avatars) instead of the reflection probes and screen space reflections. Costs frame rate. Takes effect after a restart.</string>
+      <string>Needs RKVkRayTracing: the water reflects the scene by ray tracing (moving objects, avatars) instead of the reflection probes and screen space reflections. Costs frame rate. Takes effect after a restart.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2612,7 +2612,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSVkPresentMode</key>
+    <key>RKVkPresentMode</key>
     <map>
       <key>Comment</key>
       <string>Vulkan renderer: how frames are shown. 0 follows the Vertical Sync preference (on: capped to the refresh rate, off: uncapped), 1 always vsync, 2 uncapped (can tear), 3 uncapped without tearing. Takes effect at once.</string>
@@ -2634,7 +2634,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSRtNameByDistance</key>
+    <key>RKRtNameByDistance</key>
     <map>
       <key>Comment</key>
       <string>Ray traced shadows: the main view names the rigged draws of an avatar to the ray scene only as often as the scene gives that avatar a new pose (every frame within 8 m and for your own avatar, every 2 to 4 frames farther away). False names every avatar every frame (about 0.5 ms more main thread in a crowd).</string>
@@ -2645,10 +2645,10 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSUIRecordCache</key>
+    <key>RKUIRecordCache</key>
     <map>
       <key>Comment</key>
-      <string>Cache the draw records of the larger parts of the interface (floaters, toolbars, bars) and play them again on most frames instead of drawing the widgets again; a part is drawn again while the mouse is over it or it has the keyboard focus, and every few frames otherwise (see FSUIRecordCacheHz). 0 = off, 1 = on.</string>
+      <string>Cache the draw records of the larger parts of the interface (floaters, toolbars, bars) and play them again on most frames instead of drawing the widgets again; a part is drawn again while the mouse is over it or it has the keyboard focus, and every few frames otherwise (see RKUIRecordCacheHz). 0 = off, 1 = on.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2656,10 +2656,10 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSUIRecordCacheHz</key>
+    <key>RKUIRecordCacheHz</key>
     <map>
       <key>Comment</key>
-      <string>FSUIRecordCache: how often a part of the interface that nothing is touching is drawn again, in times a second (at most every 4th frame whatever the frame rate: 90 fps at 30 gives every 3rd frame).</string>
+      <string>RKUIRecordCache: how often a part of the interface that nothing is touching is drawn again, in times a second (at most every 4th frame whatever the frame rate: 90 fps at 30 gives every 3rd frame).</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2667,7 +2667,7 @@
       <key>Value</key>
       <real>30</real>
     </map>
-    <key>FSAvatarFarUpdateDistance</key>
+    <key>RKAvatarFarUpdateDistance</key>
     <map>
       <key>Comment</key>
       <string>A fully rendered avatar farther than this many metres (not an impostor, not your own, not sitting, not moving fast) updates its pose, position and attachments every 2nd frame, beyond 1.6 times this distance every 3rd; the pose is held in between and the animation catches up at the next update. 0 = every frame (the default: the gain was about 0.15 ms and an avatar at 23 m looked like a slideshow in a test, 2026-10-27). The camera zoom is taken into account (a zoomed in view counts as nearer).</string>
@@ -2678,7 +2678,7 @@
       <key>Value</key>
       <real>0</real>
     </map>
-    <key>FSImpostorNearDistance</key>
+    <key>RKImpostorNearDistance</key>
     <map>
       <key>Comment</key>
       <string>Avatars within this many metres rank ahead of everyone else for the full avatar slots (RenderAvatarMaxNonImpostors), nearest first, instead of by screen size: none of them is an impostor unless more than the cap are that near, and then the farthest of them are. Beyond it the screen size orders the rest as before. 0 = screen size only. The camera zoom counts (a zoomed in view is nearer). 25 since 2026-11-05 (the user: a standing avatar at 18 m played as a slideshow behind dancers at 30 m in a crowd of 77).</string>
@@ -2689,7 +2689,7 @@
       <key>Value</key>
       <real>25</real>
     </map>
-    <key>FSImpostorMaxDistance</key>
+    <key>RKImpostorMaxDistance</key>
     <map>
       <key>Comment</key>
       <string>Avatars farther than this many metres are impostors whatever their visibility rank (RenderAvatarMaxNonImpostors only orders the nearer ones). 0 = only the rank decides. Default 45 (2026-10-27, doc/vulkan/MAINTHREAD-candidates.md: 2.2 ms of main thread in a crowd). An impostor skips the avatar's draw and most of its update.</string>
@@ -2714,7 +2714,7 @@
     <key>RenderFarAvatarDistance2</key>
     <map>
       <key>Comment</key>
-      <string>Far avatar tier: beyond this many metres the budget is RenderFarAvatarTriangles2 (an avatar beyond FSImpostorMaxDistance is an impostor anyway).</string>
+      <string>Far avatar tier: beyond this many metres the budget is RenderFarAvatarTriangles2 (an avatar beyond RKImpostorMaxDistance is an impostor anyway).</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2821,7 +2821,7 @@
       <key>Value</key>
       <real>0.33</real>
     </map>
-    <key>FSOverlayDepthMode</key>
+    <key>RKOverlayDepthMode</key>
     <map>
       <key>Comment</key>
       <string>Depth that overlays drawn after the DLSS upscale (selection outlines) are tested against while something is selected: 0 the scene depth as it is (jittered), 1 farthest of 3x3 render pixels plus margin, 2 the same with 5x5, 3 no depth test at all (overlays always on top), 4 depth at the unjittered position (bilinear of the four render pixels around, margin by their range). Applies at once.</string>
@@ -2832,10 +2832,10 @@
       <key>Value</key>
       <integer>4</integer>
     </map>
-    <key>FSVkDLSSQuality</key>
+    <key>RKVkDLSSQuality</key>
     <map>
       <key>Comment</key>
-      <string>With FSVkDLSS: 0 Performance (renders at 50% of the window size), 1 Balanced (58%), 2 Quality (67%), 3 DLAA (100%: the full window size, the network only anti-aliases). Applies at once while DLSS is running.</string>
+      <string>With RKVkDLSS: 0 Performance (renders at 50% of the window size), 1 Balanced (58%), 2 Quality (67%), 3 DLAA (100%: the full window size, the network only anti-aliases). Applies at once while DLSS is running.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2843,7 +2843,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSVkAmdDenoiseShadows</key>
+    <key>RKVkAmdDenoiseShadows</key>
     <map>
       <key>Comment</key>
       <string>Experimental: denoise the traced sun shadow with the AMD FidelityFX shadow denoiser (steadies the edges of small shadows such as leaves). On by default, and counts only with FSR as the upscaler (not DLSS) and the ray traced shadows on. RK_VK_AMD_DENOISE_SHADOWS=1 forces it on with any upscaler for a test. Takes effect at once.</string>
@@ -2854,7 +2854,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSVkAmdDenoise</key>
+    <key>RKVkAmdDenoise</key>
     <map>
       <key>Comment</key>
       <string>Experimental: denoise the traced glossy reflections with the AMD FidelityFX reflection denoiser (works on any graphics card). Needs the upscaler on and FSR as the upscaler (no ray reconstruction) and the traced mirror on. RK_VK_AMD_DENOISE=1 turns it on for a test. Takes effect at once.</string>
@@ -2865,10 +2865,10 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSVkDLSSScale</key>
+    <key>RKVkDLSSScale</key>
     <map>
       <key>Comment</key>
-      <string>Overrides FSVkDLSSQuality with an exact render resolution as a fraction of the window (0.33 to 1.0; 1.0 is DLAA, anti-aliasing only). 0 uses FSVkDLSSQuality. Takes effect after a restart.</string>
+      <string>Overrides RKVkDLSSQuality with an exact render resolution as a fraction of the window (0.33 to 1.0; 1.0 is DLAA, anti-aliasing only). 0 uses RKVkDLSSQuality. Takes effect after a restart.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2876,7 +2876,7 @@
       <key>Value</key>
       <real>0</real>
     </map>
-    <key>FSDecodedTextureCache</key>
+    <key>RKDecodedTextureCache</key>
     <map>
       <key>Comment</key>
       <string>Keep decoded textures on disk next to the texture cache, so a texture seen before is read instead of decoded again (faster loading of places revisited). Applies at once.</string>
@@ -2887,7 +2887,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSTextureFetchGuessLevel</key>
+    <key>RKTextureFetchGuessLevel</key>
     <map>
       <key>Comment</key>
       <string>The first fetch of a texture whose size is not known yet asks for the level its screen size implies (assuming 1024x1024) instead of a 600-byte discovery request followed by a second request. Off: the discovery. Measured 2026-10-29; the switch goes once one path is kept.</string>
@@ -2898,10 +2898,10 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSTextureFetchGuessSize</key>
+    <key>RKTextureFetchGuessSize</key>
     <map>
       <key>Comment</key>
-      <string>The full size (square) assumed when the first fetch of a texture guesses its level from the screen size (FSTextureFetchGuessLevel). Larger asks for more bytes at once and needs a second request less often.</string>
+      <string>The full size (square) assumed when the first fetch of a texture guesses its level from the screen size (RKTextureFetchGuessLevel). Larger asks for more bytes at once and needs a second request less often.</string>
       <key>Persist</key>
       <integer>0</integer>
       <key>Type</key>
@@ -2909,7 +2909,7 @@
       <key>Value</key>
       <integer>1024</integer>
     </map>
-    <key>FSTextureFetchHighWater</key>
+    <key>RKTextureFetchHighWater</key>
     <map>
       <key>Comment</key>
       <string>Texture fetch requests allowed in flight at once (the low water is half). 0: the built-in 100 when HTTP pipelining is on, 40 when off. 200 measured best with 16 connections on 2026-10-29 (the texture plan 6.4); 400 was worse.</string>
@@ -2920,7 +2920,7 @@
       <key>Value</key>
       <integer>200</integer>
     </map>
-    <key>FSTextureFetchWake</key>
+    <key>RKTextureFetchWake</key>
     <map>
       <key>Comment</key>
       <string>A texture whose fetch has finished is visited by the texture list's next pass, so its image is created at once instead of when the list's slice reaches it. Off: the slice. Measured 2026-10-29; the switch goes once one path is kept.</string>
@@ -2931,7 +2931,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSTextureArrivalTrace</key>
+    <key>RKTextureArrivalTrace</key>
     <map>
       <key>Comment</key>
       <string>Write every step of every texture's arrival (wanted, requested, fetched, decoded, created) to texture-arrival.csv in the logs directory, for reading offline. Debug only; costs a little while on. Not saved.</string>
@@ -2942,7 +2942,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSDecodedTextureCacheSizeMB</key>
+    <key>RKDecodedTextureCacheSizeMB</key>
     <map>
       <key>Comment</key>
       <string>Size cap of the decoded texture cache in MB (the textures read least recently are removed first). About 12,000 textures fit in 4 GB, three or four heavy places; 8 GB keeps a week of places on a disk that has it.</string>
@@ -2953,10 +2953,10 @@
       <key>Value</key>
       <integer>8192</integer>
     </map>
-    <key>FSVkNeuralRenderMode</key>
+    <key>RKVkNeuralRenderMode</key>
     <map>
       <key>Comment</key>
-      <string>With FSVkDLSS on an RTX 50 card and nvngx_dlssnr.dll next to the viewer: DLSS 5 neural rendering restyles the picture (lighting, shading, skin detail) before the upscale. 0 off, 1 on (about 7 ms a frame), 2 snapshots only (the live picture untouched, every snapshot through it). Applies at once while DLSS is running. Local testing only; the look controls live in D:/claude/nr-debug.txt.</string>
+      <string>With RKVkDLSS on an RTX 50 card and nvngx_dlssnr.dll next to the viewer: DLSS 5 neural rendering restyles the picture (lighting, shading, skin detail) before the upscale. 0 off, 1 on (about 7 ms a frame), 2 snapshots only (the live picture untouched, every snapshot through it). Applies at once while DLSS is running. Local testing only; the look controls live in D:/claude/nr-debug.txt.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -2964,7 +2964,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSSkipStaticRiggedAttachmentUpdates</key>
+    <key>RKSkipStaticRiggedAttachmentUpdates</key>
     <map>
       <key>Comment</key>
       <string>Avatars: while another avatar's bounding box and attachments have not changed for a couple of frames (dancing in place), update its rigged attachments (box override, drawable move, bridge move) only every 8th frame instead of every frame. They are culled with the avatar's own box and drawn with its joints, so nothing they would update has changed. Debug switch, applies at once.</string>
@@ -2975,7 +2975,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSSkipStaticRigidAttachmentUpdates</key>
+    <key>RKSkipStaticRigidAttachmentUpdates</key>
     <map>
       <key>Comment</key>
       <string>Avatars: a rigid attachment of another avatar (a prim or linkset that follows a joint, with no light, flexi, particles, sound or selection) is moved only when its attachment point's world matrix has changed by more than a quarter of a pixel on the screen (1 mm up close, up to 2 cm far away) since it was last moved, and in any case every 8th frame (staggered). Saves about 0.4 ms of the main thread in a standing crowd; false moves every attachment every frame.</string>
@@ -2986,7 +2986,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSStaggerFarRiggedAttachments</key>
+    <key>RKStaggerFarRiggedAttachments</key>
     <map>
       <key>Comment</key>
       <string>Avatars: the rigged attachments of a moving avatar farther than 16 m are updated (octree box, bridge) only every 2nd frame, beyond 32 m every 4th, while the avatar moves less than 10 cm a frame; they are still drawn with the avatar's joints every frame. False updates them every frame as long as the avatar moves.</string>
@@ -2997,7 +2997,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSReduceHiddenAvatarUpdates</key>
+    <key>RKReduceHiddenAvatarUpdates</key>
     <map>
       <key>Comment</key>
       <string>Avatars: another resident's avatar that is not in view gets its full update every second frame (every fourth when more than 50 m away) instead of every frame. Its motions, matrices and name tag are driven by elapsed time, and it is updated in full as soon as it is in view. Applies at once.</string>
@@ -3008,10 +3008,10 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSTextureUpdateSteadyFactor</key>
+    <key>RKTextureUpdateSteadyFactor</key>
     <map>
       <key>Comment</key>
-      <string>Textures: when the view has not changed for FSTextureUpdateSteadySeconds (no new region, camera still) the per-frame texture refresh runs this many times slower than FSTextureUpdateDivisor says (and the object texture priority pass every other frame). The normal rate is back as soon as the camera moves. 1 turns it off. Applies at once.</string>
+      <string>Textures: when the view has not changed for RKTextureUpdateSteadySeconds (no new region, camera still) the per-frame texture refresh runs this many times slower than RKTextureUpdateDivisor says (and the object texture priority pass every other frame). The normal rate is back as soon as the camera moves. 1 turns it off. Applies at once.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -3019,10 +3019,10 @@
       <key>Value</key>
       <integer>2</integer>
     </map>
-    <key>FSTextureUpdateSteadySeconds</key>
+    <key>RKTextureUpdateSteadySeconds</key>
     <map>
       <key>Comment</key>
-      <string>Textures: seconds without a change of view before FSTextureUpdateSteadyFactor applies.</string>
+      <string>Textures: seconds without a change of view before RKTextureUpdateSteadyFactor applies.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -3030,10 +3030,10 @@
       <key>Value</key>
       <real>10.0</real>
     </map>
-    <key>FSWaterTraceAdaptive</key>
+    <key>RKWaterTraceAdaptive</key>
     <map>
       <key>Comment</key>
-      <string>Water reflections: the screen-space reflection ray of the water takes fewer steps, spaced unevenly (fine near the surface, coarse far away). Cheaper on the GPU; far reflections are slightly coarser. Needs FSSSRWaterTrace. Applies at once.</string>
+      <string>Water reflections: the screen-space reflection ray of the water takes fewer steps, spaced unevenly (fine near the surface, coarse far away). Cheaper on the GPU; far reflections are slightly coarser. Needs RKSSRWaterTrace. Applies at once.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -3041,7 +3041,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSSnapshotWarmupFrames</key>
+    <key>RKSnapshotWarmupFrames</key>
     <map>
       <key>Comment</key>
       <string>Snapshots: how many extra renders of the view come before the picture that is kept (a small preview uses at most 3), so that water reflections (which read the previous frame) and the DLSS upscale (which accumulates frames) are complete. 0 turns it off.</string>
@@ -3052,7 +3052,7 @@
       <key>Value</key>
       <integer>18</integer>
     </map>
-    <key>FSCASWithUpscaler</key>
+    <key>RKCASWithUpscaler</key>
     <map>
       <key>Comment</key>
       <string>Run the contrast adaptive sharpening pass (RenderCASSharpness) also when DLSS is on. It runs before the upscale, at the render size, where the upscaler's own sharpening does the job: off (default) skips the pass and its full screen read and write. On = the old chain.</string>
@@ -3063,7 +3063,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSGBufferSlimNormal</key>
+    <key>RKGBufferSlimNormal</key>
     <map>
       <key>Comment</key>
       <string>G-buffer: the normal target (octahedral normal, environment intensity, flag) is RGB10A2 (4 bytes a pixel) instead of RGBA16 (8 bytes) in HDR mode too. The flag's four values fit the two alpha bits exactly. Read when the render targets are made: applies after a restart or a resolution change. Default on since 2026-11-09 (about 0.03 ms off the fill at the user's home); off = the old format.</string>
@@ -3074,7 +3074,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSTexAnimOnGPU</key>
+    <key>RKTexAnimOnGPU</key>
     <map>
       <key>Comment</key>
       <string>Animated textures: the vertex shader makes an animated face's texture matrix from the animation's parameters and the frame clock (the main thread writes the parameters when they change instead of a matrix every frame). Off: the main thread computes the matrices. Applies at once. rt-debug.txt texanim=0/1/2 overrides it (2 = the main thread's matrices, with the shader's formula compared against them).</string>
@@ -3085,7 +3085,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSSkipHiddenTextureAnim</key>
+    <key>RKSkipHiddenTextureAnim</key>
     <map>
       <key>Comment</key>
       <string>Animated textures: do not advance the texture animation of an object that is not in view this frame. The state catches up the next time it is processed, so a face coming into view can show its frame one frame late at most. Applies at once.</string>
@@ -3096,7 +3096,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSSkipUnchangedBBoxOverride</key>
+    <key>RKSkipUnchangedBBoxOverride</key>
     <map>
       <key>Comment</key>
       <string>Avatars: do not re-apply the avatar's bounding box to a rigged attachment (and move it in the octree) when the box has not changed by more than a centimetre. Debug switch, applies at once.</string>
@@ -3107,10 +3107,10 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSParallelShadowPointCloud</key>
+    <key>RKParallelShadowPointCloud</key>
     <map>
       <key>Comment</key>
-      <string>With FSParallelShadowPrep: the octree walks that find the visible extents of each sun shadow cascade (getVisiblePointCloud) run as one pool job a cascade instead of one after another on the main thread. Applies at once.</string>
+      <string>With RKParallelShadowPrep: the octree walks that find the visible extents of each sun shadow cascade (getVisiblePointCloud) run as one pool job a cascade instead of one after another on the main thread. Applies at once.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -3118,7 +3118,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSObjectExpiry</key>
+    <key>RKObjectExpiry</key>
     <map>
       <key>Comment</key>
       <string>Forget what the camera has not seen for a long time. Groups no camera accepted for 10 s skip their per-frame updates, groups unseen for 90 s drop their draw data, and objects unseen for 60 s (camera still for 3 s, farther than the scene load radius, not selected, no sound, particles, light or media) are removed and come back from the cache when you turn to them. Keeps the frame time from growing after a turn. Read at start: a change needs a restart. RK_VK_EXPIRY=0 in the environment turns it off.</string>
@@ -3129,7 +3129,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSFlexibleStayInGroup</key>
+    <key>RKFlexibleStayInGroup</key>
     <map>
       <key>Comment</key>
       <string>A flexible prim stays in its octree group while its centre is inside the group's node, instead of being taken out and put in another whenever its changing extents cross the "fits in this node" test. Each move between groups dirtied two groups for a full geometry rebuild: with avatars wearing flexi hair and skirts that was about 0.5 ms of rebuilds a frame. Group extents are recomputed from their contents, so culling does not depend on the node. Debug switch, applies at once.</string>
@@ -3140,7 +3140,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSSSRWaterTrace</key>
+    <key>RKSSRWaterTrace</key>
     <map>
       <key>Comment</key>
       <string>Screen space reflections on water use the improved trace (fixed screen-space steps with a binary search, smoothed trace normal, no hits on the water itself) instead of the original ray marcher. Fixes bands, grain and flicker on rippled water. Applies at once.</string>
@@ -3151,7 +3151,7 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>FSSSRSurfaceTrace</key>
+    <key>RKSSRSurfaceTrace</key>
     <map>
       <key>Comment</key>
       <string>Screen space reflections on other glossy surfaces (wet floors, shiny materials) use the improved trace instead of the original ray marcher (experimental, for comparison). Applies at once.</string>
@@ -3162,7 +3162,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSVulkanRenderer</key>
+    <key>RKVulkanRenderer</key>
     <map>
       <key>Comment</key>
       <string>No longer used: the viewer always draws with Vulkan.</string>
@@ -3173,7 +3173,7 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <key>FSParallelAvatarMotion</key>
+    <key>RKParallelAvatarMotion</key>
     <map>
       <key>Comment</key>
       <string>Update the animations of other avatars on worker threads. Takes effect immediately.</string>
@@ -6736,7 +6736,7 @@
       <key>Backup</key>
       <integer>0</integer>
     </map>
-    <key>FSRekindledStartPage</key>
+    <key>RKRekindledStartPage</key>
     <map>
       <key>Comment</key>
       <string>Start page shown in the login panel instead of the grid's login page content. Empty = use the grid's page. ForceLoginURL still overrides it.</string>
@@ -12069,7 +12069,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Backup</key>
     <integer>0</integer>
   </map>
-  <key>FSHeroProbeIgnoreOthersAttachments</key>
+  <key>RKHeroProbeIgnoreOthersAttachments</key>
   <map>
     <key>Comment</key>
     <string>Ignore mirrors (hero probes) worn as attachments by other avatars: one of them puts a full scene render and its shadows on every frame while it is in view.</string>
@@ -12080,7 +12080,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>1</integer>
   </map>
-  <key>FSHeroProbeMaxDistance</key>
+  <key>RKHeroProbeMaxDistance</key>
   <map>
     <key>Comment</key>
     <string>Mirrors (hero probes) farther than this many meters from the camera are not picked for the realtime probe. A mirror may be picked out to 6 times its longest side when that is more, so a very large mirror still works at a distance. 0 = no limit. A far mirror's probe renders the scene around it and makes the viewer create objects there that stay after the probe moves on.</string>
@@ -27618,7 +27618,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <string>00000000-0000-0000-0000-000000000000</string>
     </map>
-    <key>FSAudioHRTF</key>
+    <key>RKAudioHRTF</key>
     <map>
       <key>Comment</key>
       <string>Place world sounds in 3D around the head for headphones (HRTF); OpenAL audio only</string>

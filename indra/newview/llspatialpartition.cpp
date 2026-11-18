@@ -380,11 +380,11 @@ bool LLSpatialGroup::updateInGroup(LLDrawable *drawablep, bool immediate)
 
     OctreeNode* parent = mOctreeNode->getOctParent();
 
-    // <FS> FSFlexibleStayInGroup (default on; RK_VK_FLEXI_STAY=0 also turns it off, for A/B laps). A flexible prim's extents change every update, so its bin radius crosses the "fits in this node"
+    // <FS> RKFlexibleStayInGroup (default on; RK_VK_FLEXI_STAY=0 also turns it off, for A/B laps). A flexible prim's extents change every update, so its bin radius crosses the "fits in this node"
     // threshold back and forth and the prim was taken out of its group and put in another again and again (lap rqf: ~8 attachment moves a frame left their group, each one dirtying two groups for a
     // full rebuild: ~10 avatar groups a frame; with the change laps abA/abB: rebuildPriorityGroups 0.78 -> 0.28 ms, loop -0.9 ms). The group's extents are worked out from what is in it (unbound),
     // so culling does not depend on the node a prim sits in: a flexible prim stays while its centre is inside the node.
-    static LLCachedControl<bool> flexi_stay_setting(gSavedSettings, "FSFlexibleStayInGroup", true);
+    static LLCachedControl<bool> flexi_stay_setting(gSavedSettings, "RKFlexibleStayInGroup", true);
     static const bool flexi_stay_env = !getenv("RK_VK_FLEXI_STAY") || getenv("RK_VK_FLEXI_STAY")[0] != '0';
     bool stay_flexible = false;
     if (flexi_stay_setting && flexi_stay_env)

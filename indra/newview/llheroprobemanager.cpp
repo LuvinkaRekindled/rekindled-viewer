@@ -166,8 +166,8 @@ void LLHeroProbeManager::update()
         std::vector<std::pair<LLVOVolume*, LLVector3> > candidates;       // <FS> the mirrors that are in view and face the camera
         for (auto vo : mHeroVOList)
         {
-            // <FS> a mirror worn by another avatar (a sword, a handbag: a thin box flagged as a mirror) puts a whole scene render and its shadows on every frame; FSHeroProbeIgnoreOthersAttachments (default on) leaves those out
-            static LLCachedControl<bool> ignore_others(gSavedSettings, "FSHeroProbeIgnoreOthersAttachments", true);
+            // <FS> a mirror worn by another avatar (a sword, a handbag: a thin box flagged as a mirror) puts a whole scene render and its shadows on every frame; RKHeroProbeIgnoreOthersAttachments (default on) leaves those out
+            static LLCachedControl<bool> ignore_others(gSavedSettings, "RKHeroProbeIgnoreOthersAttachments", true);
             if (ignore_others && vo && vo->isAttachment() && vo->getAvatar() && !vo->getAvatar()->isSelf())
             {
                 continue;
@@ -180,8 +180,8 @@ void LLHeroProbeManager::update()
                 if (distance > LLViewerCamera::instance().getFar())
                     continue;
 
-                // <FS> FSHeroProbeMaxDistance: a mirror that is not very large is not visible far away, and its probe renders the scene around it (objects created there that stay after the probe moves on)
-                static LLCachedControl<F32> max_distance(gSavedSettings, "FSHeroProbeMaxDistance", 30.f);
+                // <FS> RKHeroProbeMaxDistance: a mirror that is not very large is not visible far away, and its probe renders the scene around it (objects created there that stay after the probe moves on)
+                static LLCachedControl<F32> max_distance(gSavedSettings, "RKHeroProbeMaxDistance", 30.f);
                 if (max_distance > 0.f)
                 {
                     const LLVector3& mirror_scale = vo->getScale();

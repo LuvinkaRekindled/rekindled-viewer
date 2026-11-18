@@ -31,6 +31,7 @@
 #include <algorithm>
 
 #include "llcontrol.h"
+#include "rksettingsrename.h"
 
 #include "llstl.h"
 
@@ -1133,8 +1134,24 @@ U32 LLControlGroup::loadFromFile(const std::string& filename, bool set_default_v
     {
         LLControlVariable::ePersist persist = LLControlVariable::PERSIST_NONDFT;
         bool can_backup = true;     // <FS:Zi> Backup Settings
-        std::string const & name = itr->first;
+        std::string name = itr->first;
         LLSD const & control_map = itr->second;
+
+        // <RK> A user file written before the FS -> RK rename (2026-11-18) still has the old key of a setting we
+        // added: read it as the new name, so the saved value carries over and the next save writes the new key only.
+        // The new name wins when the file has both. Default files (set_default_values) always use the new names.
+        if (!set_default_values)
+        {
+            if (const char* renamed = RKSettingsRename::newNameFor(name.c_str()))
+            {
+                if (settings.has(renamed))
+                {
+                    continue;
+                }
+                name = renamed;
+            }
+        }
+        // </RK>
 
         if(control_map.has("Persist"))
         {

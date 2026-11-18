@@ -290,26 +290,26 @@
           function="Pref.RenderOptionUpdate" />
         </check_box>
         <check_box
-         control_name="FSSSRWaterTrace"
+         control_name="RKSSRWaterTrace"
          enabled_control="RenderScreenSpaceReflections"
          height="16"
          initial_value="true"
          label="Better water reflections"
          layout="topleft"
          left_delta="18"
-         name="FSSSRWaterTrace"
+         name="RKSSRWaterTrace"
          tool_tip="Traces water reflections with a steadier method: no bands, grain or flicker on the waves. Applies at once. Turn it off to compare with the original."
          top_pad="1"
          width="238"/>
         <check_box
-         control_name="FSSSRSurfaceTrace"
+         control_name="RKSSRSurfaceTrace"
          enabled_control="RenderScreenSpaceReflections"
          height="16"
          initial_value="false"
          label="Better surface reflections"
          layout="topleft"
          left_delta="0"
-         name="FSSSRSurfaceTrace"
+         name="RKSSRSurfaceTrace"
          tool_tip="Uses the same steadier trace on wet floors and shiny materials (experimental, for comparing). Applies at once."
          top_pad="1"
          width="238"/>
@@ -1912,13 +1912,13 @@ If you do not understand the distinction then leave this control alone."
      label="Vulkan"
      name="Vulkan panel" >
       <check_box
-       control_name="FSVkDLSS"
+       control_name="RKVkDLSS"
        height="16"
        initial_value="false"
        label="Upscale with AMD FSR 3.1 (experimental)"
        layout="topleft"
        left="10"
-       name="FSVkDLSS"
+       name="RKVkDLSS"
        tool_tip="Draws the world with the AMD FSR 3.1 upscaler (any graphics card). Performance, Balanced and Quality draw at a lower resolution and upscale it: a lot faster, with little visible difference. Native AA / 100% draws at the full window size and only smooths edges: the sharpest picture, for photos. Takes effect after a restart."
        top_pad="25"
        width="400"/>
@@ -1929,18 +1929,18 @@ If you do not understand the distinction then leave this control alone."
        height="14"
        layout="topleft"
        left_delta="18"
-       name="FSVkDLSSQualityText"
+       name="RKVkDLSSQualityText"
        top_pad="8"
        width="200">
         Upscaling mode:
       </text>
       <combo_box
-       control_name="FSVkDLSSQuality"
-       enabled_control="FSVkDLSS"
+       control_name="RKVkDLSSQuality"
+       enabled_control="RKVkDLSS"
        height="23"
        layout="topleft"
        left_delta="0"
-       name="FSVkDLSSQuality"
+       name="RKVkDLSSQuality"
        tool_tip="Performance draws the fewest pixels (50% of the window size) and gains the most speed. Native AA draws every pixel and only anti-aliases (best for photos). Applies at once while the upscaler is running."
        top_pad="3"
        width="250">
@@ -1962,13 +1962,13 @@ If you do not understand the distinction then leave this control alone."
          value="3"/>
       </combo_box>
       <check_box
-       control_name="FSVkRayTracing"
+       control_name="RKVkRayTracing"
        height="16"
        initial_value="false"
        label="Use ray tracing (needs ray tracing hardware, experimental)"
        layout="topleft"
        left_delta="-18"
-       name="FSVkRayTracing"
+       name="RKVkRayTracing"
        tool_tip="Ray traced sun shadows. Needs a graphics card and driver with Vulkan ray tracing support (ray queries), from any maker; on a card without it the option does not take effect and the log says why. Takes effect after the viewer is restarted."
        top_pad="12"
        width="400"/>
@@ -1979,18 +1979,18 @@ If you do not understand the distinction then leave this control alone."
        height="14"
        layout="topleft"
        left_delta="18"
-       name="FSVkMirrorQualityText"
+       name="RKVkMirrorQualityText"
        top_pad="8"
        width="360">
         Ray traced glossy surfaces (costs frame rate):
       </text>
       <combo_box
-       control_name="FSVkMirrorQuality"
-       enabled_control="FSVkRayTracing"
+       control_name="RKVkMirrorQuality"
+       enabled_control="RKVkRayTracing"
        height="23"
        layout="topleft"
        left_delta="0"
-       name="FSVkMirrorQuality"
+       name="RKVkMirrorQuality"
        tool_tip="Glossy surfaces such as polished floors and metal show the scene by tracing rays instead of using the reflection probes: moving objects and avatars are reflected correctly. The glass of a mirror always shows the mirror view (its quality is the mirror resolution and update rate). Needs ray tracing, costs frame rate. Off: the reflection probes. Low: flat colours. Medium: lit surfaces with materials, reflection probes and the sun shadow. High: also the local lights (lamps and projectors). Ultra: soft shadows of the local lights. Each step costs more frame time. Switching to Off or between the levels takes effect at once; switching on takes effect at once if this launch started with ray tracing and ray traced glossy surfaces or the water option on, otherwise after a restart."
        top_pad="3"
        width="250">
@@ -2016,14 +2016,14 @@ If you do not understand the distinction then leave this control alone."
          value="4"/>
       </combo_box>
       <check_box
-       control_name="FSVkRTWater"
-       enabled_control="FSVkRayTracing"
+       control_name="RKVkRTWater"
+       enabled_control="RKVkRayTracing"
        height="16"
        initial_value="false"
        label="Ray traced water reflections (costs frame rate)"
        layout="topleft"
        left_delta="0"
-       name="FSVkRTWater"
+       name="RKVkRTWater"
        tool_tip="The water reflects the scene by tracing rays instead of using the reflection probes and screen space reflections. Needs ray tracing, costs frame rate. Switching it off takes effect at once. Switching it on takes effect at once if this launch started with ray tracing and ray traced glossy surfaces or the water option on, otherwise after a restart."
        top_pad="8"
        width="400"/>
@@ -2034,17 +2034,17 @@ If you do not understand the distinction then leave this control alone."
        height="14"
        layout="topleft"
        left_delta="-18"
-       name="FSVkPresentModeText"
+       name="RKVkPresentModeText"
        top_pad="12"
        width="300">
         Frame rate limit:
       </text>
       <combo_box
-       control_name="FSVkPresentMode"
+       control_name="RKVkPresentMode"
        height="23"
        layout="topleft"
        left_delta="0"
-       name="FSVkPresentMode"
+       name="RKVkPresentMode"
        tool_tip="How frames reach the screen. Uncapped lets the frame rate go above the monitor's refresh rate. Takes effect at once."
        top_pad="3"
        width="300">
@@ -2072,7 +2072,7 @@ If you do not understand the distinction then leave this control alone."
        height="48"
        layout="topleft"
        left_delta="0"
-       name="FSVulkanRendererNote"
+       name="RKVulkanRendererNote"
        top_pad="6"
        width="440"
        word_wrap="true">

@@ -3214,7 +3214,7 @@ struct AttStats
     U64 avatars = 0, skipFrames = 0, attachments = 0, rigged = 0, rigid = 0, noBridge = 0, skipped = 0, ovApplied = 0, ovSkipped = 0, riggedSelected = 0;
     U64 clearRigid = 0, clearRigged = 0, clearFaces = 0, noFaces = 0;      // census: attachments (root and children) whose faces all have a colour alpha of 0, and how many faces that is; attachments with no face at all
     U64 riggedByDist[5] = {}, riggedRanByDist[5] = {}, riggedNsByDist[5] = {}, riggedRanNsByDist[5] = {};      // census: rigged attachments by the avatar's distance (under 8, 8-16, 16-32, 32-64, over 64 m): visited, run in full (not skipped), their time, the time of the ones run in full
-    U64 rigidSkipped = 0;      // rigid attachments whose drawable and bridge move were left out (FSSkipStaticRigidAttachmentUpdates)
+    U64 rigidSkipped = 0;      // rigid attachments whose drawable and bridge move were left out (RKSkipStaticRigidAttachmentUpdates)
     U64 rigidFirst = 0, rigidSame = 0, rigidMovedTiny = 0, rigidMoved1mm = 0;      // rigid attachments: the attachment point's world matrix against the one when the loop last saw it (unchanged / more than 0.1 mm / more than 1 mm)
     U64 nsPre = 0, nsLoop = 0, nsRigged = 0, nsRigid = 0, nsExtents = 0, nsOverride = 0, nsMove = 0, nsBridge = 0, nsText = 0;
     U64 nsRows = 0, nsWalk = 0, rowEntries = 0;        // <FS> the rows loop and the walk after it, timed apart (2026-11-15: rows 0.24 ms for 311 rows, the walk 0.02 ms for 318 entries)
@@ -3829,9 +3829,9 @@ void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &
 }
 
 // <FS> debug switch (live): skip override_bbox() when the box has not changed
-static bool FSSkipUnchangedBBoxOverride()
+static bool RKSkipUnchangedBBoxOverride()
 {
-    static LLCachedControl<bool> skip(gSavedSettings, "FSSkipUnchangedBBoxOverride", true);
+    static LLCachedControl<bool> skip(gSavedSettings, "RKSkipUnchangedBBoxOverride", true);
     return skip;
 }
 
@@ -3843,7 +3843,7 @@ static void override_bbox(LLDrawable* drawable, LLVector4a* extents)
     // <FS> A rigged attachment keeps the box it was given (LLVOVolume::updateSpatialExtents does nothing), so giving it the same box again only makes
     // movePartition() run updateInGroup(): the bin radius is worked out again, the group is marked dirty, for nothing. Skip it when the box has not
     // moved (within a centimetre) and the drawable is still in its octree node.
-    if (drawable->getSpatialGroup() && FSSkipUnchangedBBoxOverride())
+    if (drawable->getSpatialGroup() && RKSkipUnchangedBBoxOverride())
     {
         const F32* cur = drawable->getSpatialExtents()[0].getF32ptr();
         const F32* cur_max = drawable->getSpatialExtents()[1].getF32ptr();
@@ -4024,11 +4024,11 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         // changed there is nothing for its per-frame update to change: the box it would get, its drawable move and its bridge move all come out the same.
         // When the avatar's box and its attachments have been the same for a couple of frames, the rigged attachments are only updated every 8th frame
         // (staggered per avatar); anything that moves the avatar, changes what it wears, or selects an attachment brings the full update back at once.
-        static LLCachedControl<bool> skip_static_rigged(gSavedSettings, "FSSkipStaticRiggedAttachmentUpdates", true);
+        static LLCachedControl<bool> skip_static_rigged(gSavedSettings, "RKSkipStaticRiggedAttachmentUpdates", true);
         // <FS> the same for the rigid ones, one by one: while the attachment point's world matrix is within 1 mm / 0.06 degrees of the one the attachment's last move was made with, its drawable move,
         // bridge move and everything downstream of them (moved list, partition moves) would come out the same. Not for the viewer's own avatar, a selected attachment, one that is not plain (light,
         // flexible, particles, sound, animesh, HUD, linksets with those) or one whose object changed (MOVED); every 8th frame (staggered per attachment) runs in full anyway.
-        static LLCachedControl<bool> skip_static_rigid(gSavedSettings, "FSSkipStaticRigidAttachmentUpdates", true);
+        static LLCachedControl<bool> skip_static_rigid(gSavedSettings, "RKSkipStaticRigidAttachmentUpdates", true);
         const U32 rigid_frame = (U32)LLFrameTimer::getFrameCount();
         // the tolerance is a quarter of a pixel on the screen at the avatar's distance (1 mm up close, up to 2 cm far away)
         F32 rigid_tolerance = 0.001f;
@@ -4074,7 +4074,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
             // <FS> the same for an avatar that moves, when it is far: its rigged attachments are drawn with the avatar's joints (the skinning does not need the attachment's move), so what
             // they would update here is the octree box and the bridge, a cull that lags by a frame or three at 16-64 m by less than the avatar's step. 2 frames beyond 16 m, 4 beyond 32 m;
             // an avatar that moves more than 10 cm a frame (a vehicle, a run) and one that is selected are updated in full.
-            static LLCachedControl<bool> stagger_far(gSavedSettings, "FSStaggerFarRiggedAttachments", true);
+            static LLCachedControl<bool> stagger_far(gSavedSettings, "RKStaggerFarRiggedAttachments", true);
             if (stagger_far && !skip_rigged_this_frame && box_move < 0.1f)
             {
                 const U32 period = att_distance >= 32.f ? 4 : (att_distance >= 16.f ? 2 : 1);
@@ -4153,7 +4153,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                     // <FS> stage C4: a rigged attachment of the avatar's rows, moved as the walk below moves one: its octree box is the avatar's box taken into its own space (not while the avatar's box has
                     // not changed: skip_rigged_this_frame), its drawable move, its bridge move, then the stamp of its group with its place in the draw order (written only when the group does not hold it), the text
                     // (not an animated object: its control avatar takes the attachment's place every frame, a skipped move leaves it behind the animation of its host: the user, 2026-11-11, another avatar's hair layer
-                    // that did not follow the animation until FSSkipStaticRiggedAttachmentUpdates was switched off)
+                    // that did not follow the animation until RKSkipStaticRiggedAttachmentUpdates was switched off)
                     const bool skip_update = skip_rigged_this_frame && !obj->isAnimatedObject();
                     // <FS> stage C4b: the attachment holds two boxes that
                     // contain what the old calculation gave, and they are fitted again only when that stops being true. The BRIDGE holds the avatar's world box with a margin (its octree entry in the region's avatar partition);
@@ -7303,7 +7303,7 @@ bool LLVOAvatar::reducedHiddenSkip()
     // <FS> An avatar nobody can see does not need the whole per-frame update: its motions, matrices, name tag and the rest are all driven by elapsed time (the impostor
     // path already runs them every 32-64 frames), and it is picked up in full the frame after it comes into view. Others' avatars only, and not when something is waiting
     // for the next full update (a first update, a special render mode): every second frame, every fourth when the avatar is far away, staggered by avatar id.
-    static LLCachedControl<bool> reduce_hidden(gSavedSettings, "FSReduceHiddenAvatarUpdates", true);
+    static LLCachedControl<bool> reduce_hidden(gSavedSettings, "RKReduceHiddenAvatarUpdates", true);
     if (reduce_hidden && !isSelf() && !mIsControlAvatar && !isUIAvatar() && mDrawable.notNull() && mSpecialRenderMode == 0
         && !mNeedsAnimUpdate && !isVisible())
     {
@@ -7552,12 +7552,12 @@ bool RKAvatarTable::nameTagOpen(const LLVOAvatar* av)
     return open;
 }
 
-// <FS> FSAvatarFarUpdateDistance: a visible avatar (not an impostor) beyond this distance updates its pose, root and attachments every 2nd frame, beyond 1.6 times that every 3rd; the pose is
+// <FS> RKAvatarFarUpdateDistance: a visible avatar (not an impostor) beyond this distance updates its pose, root and attachments every 2nd frame, beyond 1.6 times that every 3rd; the pose is
 // held in between (the animation time still runs: the next update catches up). Not the viewer's own avatar, a sitting one (it follows its seat), a fast one (over 3 m/s), an animated
 // object, a UI avatar.
 static F32 far_update_distance()
 {
-    static LLCachedControl<F32> setting(gSavedSettings, "FSAvatarFarUpdateDistance", 0.f);
+    static LLCachedControl<F32> setting(gSavedSettings, "RKAvatarFarUpdateDistance", 0.f);
     return setting;
 }
 
@@ -8279,9 +8279,9 @@ void LLVOAvatar::updateVisibility()
     mVisible = visible;
 
     // <FS> the visibility rank (RenderAvatarMaxNonImpostors picks the first of it as full avatars, the rest are impostors updating every 32 to 64 frames) is by screen size, so in a crowd a standing
-    // avatar at 18 m lost to dancers at 30 m and played as a slideshow until the camera zoomed in (the user, 2026-11-05). Within FSImpostorNearDistance the rank is by distance ahead of everyone else:
+    // avatar at 18 m lost to dancers at 30 m and played as a slideshow until the camera zoomed in (the user, 2026-11-05). Within RKImpostorNearDistance the rank is by distance ahead of everyone else:
     // nobody that near is an impostor unless more than the cap are that near, and then the farthest of them are. Beyond it the screen size decides as before.
-    static LLCachedControl<F32> near_distance(gSavedSettings, "FSImpostorNearDistance", 25.f);
+    static LLCachedControl<F32> near_distance(gSavedSettings, "RKImpostorNearDistance", 25.f);
     F32 preference = visible ? getPixelArea() : 0.f;
     if (visible && !isSelf() && near_distance > 0.f && mDrawable.notNull())
     {
@@ -15551,10 +15551,10 @@ bool LLVOAvatar::computeImpostorLive()
 // </FS:Beq>
 }
 
-// <FS> FSImpostorMaxDistance: an avatar farther than that is an impostor whatever its visibility rank (0 = only the rank decides, as before).
+// <FS> RKImpostorMaxDistance: an avatar farther than that is an impostor whatever its visibility rank (0 = only the rank decides, as before).
 static F32 impostor_max_distance()
 {
-    static LLCachedControl<F32> setting(gSavedSettings, "FSImpostorMaxDistance", 0.f);
+    static LLCachedControl<F32> setting(gSavedSettings, "RKImpostorMaxDistance", 0.f);
     return setting;
 }
 

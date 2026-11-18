@@ -139,7 +139,7 @@ namespace
 // static
 void RKGpuZoneTimer::onFrameEnd()
 {
-    static LLCachedControl<bool> enabled(gSavedSettings, "FSGpuZoneTimers", false);
+    static LLCachedControl<bool> enabled(gSavedSettings, "RKGpuZoneTimers", false);
 
     if (enabled && !sHooked)
     {

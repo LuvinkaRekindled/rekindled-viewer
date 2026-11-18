@@ -180,7 +180,7 @@ override | RT Shadow Penumbra Filter | fullscreen.vert | rt_shadow_filter.frag |
 # the water family: the water surface seen from above and from below; the planes' vertex buffers are read by address (WATER_PULL), and a session with ray queries has its own variant of the surface (RK_RT_QUERY)
 override | Water Pull Shader | water.vert | water.frag | water | define WATER_PULL=1 | default on
 # the same program with the ray queries of the stock water (RK_RT_QUERY: the loader adds the extension, the draw binds set 3), code from lib/rt.glsl (the stock text as it is): the sun shadow ray; and the variant that also traces the reflection of the water
-# (RK_RT_WATER_REFLECTION: a program of its own, much larger: the water draws with it when the setting FSVkRTWater is on). Made only in a session with ray queries (the reflection variant when the material table is on)
+# (RK_RT_WATER_REFLECTION: a program of its own, much larger: the water draws with it when the setting RKVkRTWater is on). Made only in a session with ray queries (the reflection variant when the material table is on)
 override | Water Pull RT Shader | water.vert | water.frag | water | define WATER_PULL=1 | define RK_RT_QUERY=1 | default on
 override | Water Pull RT Reflection Shader | water.vert | water.frag | water | define WATER_PULL=1 | define RK_RT_QUERY=1 | define RK_RT_WATER_REFLECTION=1 | default on
 override | Underwater Pull Shader | water.vert | underwater.frag | water | define UNDERWATER=1 | define WATER_PULL=1 | default on

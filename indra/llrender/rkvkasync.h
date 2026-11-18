@@ -143,7 +143,7 @@ namespace RKVkAsync
     // the pass being played (worker thread): what the last pass record said
     struct PassInfo { U32 mId = 0, mParent = 0, mFbo = 0; S32 mBuffers = 0; U32 mSite = 0, mKind = 0; };
     const PassInfo& currentPass();
-    // a named GPU zone (the viewer's LL_PROFILE_GPU_ZONE scopes, enabled with FSGpuZoneTimers + RK_VK_PHASES): the worker writes a GPU timestamp at this point of the frame
+    // a named GPU zone (the viewer's LL_PROFILE_GPU_ZONE scopes, enabled with RKGpuZoneTimers + RK_VK_PHASES): the worker writes a GPU timestamp at this point of the frame
     void gpuZone(const char* name, bool begin);
 
     // ---- F2.5 measure first: main-thread cost per front-end entry point (counted with RK_VK_OPSTATS, every 16th call timed; reported in the VkOps "worker operations" line) ----
@@ -234,7 +234,7 @@ namespace RKVkAsync
         CMD_SHADOW_PACKETS,                        // a pass of shadow casters in one record (RKVkBridge::shadowPackets)
         CMD_FBO_ATTACH, CMD_TARGET_STATE,          // render target commands (framebufferAttach, targetState)
         CMD_TEX_SLOTS,                             // texture ids that changed since the last draw, when something other than a draw comes first (a draw record carries them itself)
-        CMD_GPU_ZONE,                              // a named GPU timing zone begins or ends here in the command stream (FSGpuZoneTimers)
+        CMD_GPU_ZONE,                              // a named GPU timing zone begins or ends here in the command stream (RKGpuZoneTimers)
         CMD_UNIFORM_BATCH,                         // loose uniform writes that were pending when something other than a draw came first (a draw carries them inside its own record)
         CMD_BUFFER_RECYCLE,                        // a pooled buffer name changes hands (bufferRecycle)
         CMD_RT_SCENE,                              // the ray tracing scene of the frame is built from the casters named so far (RKVkBridge::rtScene)
