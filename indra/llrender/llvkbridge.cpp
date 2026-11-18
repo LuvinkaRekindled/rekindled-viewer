@@ -42,8 +42,8 @@ void LLVkBridge::hizDone(U32) {}
 void LLVkBridge::hizSetResults(const U32*, U32) {}
 void LLVkBridge::hizPublish(U32, U32) {}
 U32 LLVkBridge::cullSend(const CullParams&, const U32*, const CullRow*, const CullMapRow*, U32, U32, bool) { return 0; }
-void LLVkBridge::lodListPublish(U32, U32, const F32*, const U32*, const U32*) {}
-U32 LLVkBridge::lodListRead(U32, U32&, F32*, U32*, U32*, U32) { return 0; }
+void LLVkBridge::lodListPublish(U32, U32, const U32*) {}
+U32 LLVkBridge::lodListRead(U32, U32&, U32*, U32) { return 0; }
 void LLVkBridge::consumerListPublish(std::shared_ptr<const ConsumerList>) {}
 std::shared_ptr<const LLVkBridge::ConsumerList> LLVkBridge::consumerListRead() { return nullptr; }
 bool LLVkBridge::viewRequest(U32, U32, const CullParams&) { return false; }
@@ -1719,35 +1719,24 @@ U32 LLVkBridge::cullSend(const CullParams& params, const U32* slots, const CullR
 namespace
 {
 std::mutex gLodMutex;
-std::vector<F32> gLodDistance;
-std::vector<U32> gLodBits, gLodChange;
+std::vector<U32> gLodChange;
 U32 gLodFrame = 0, gLodTable = 0;
 }
 
-void LLVkBridge::lodListPublish(U32 frame, U32 table_size, const F32* distance, const U32* slop_bits, const U32* change_bits)
+void LLVkBridge::lodListPublish(U32 frame, U32 table_size, const U32* change_bits)
 {
     std::lock_guard<std::mutex> lock(gLodMutex);
-    gLodDistance.assign(distance, distance + table_size);
-    gLodBits.assign(slop_bits, slop_bits + (table_size + 31) / 32);
     gLodChange.assign(change_bits, change_bits + (table_size + 31) / 32);
     gLodFrame = frame;
     gLodTable = table_size;
 }
 
-U32 LLVkBridge::lodListRead(U32 newer_than, U32& frame, F32* distance, U32* slop_bits, U32* change_bits, U32 capacity_rows)
+U32 LLVkBridge::lodListRead(U32 newer_than, U32& frame, U32* change_bits, U32 capacity_rows)
 {
     std::lock_guard<std::mutex> lock(gLodMutex);
     if (!gLodTable || gLodFrame <= newer_than || gLodTable > capacity_rows)
     {
         return 0;
-    }
-    if (distance)       // (a reader that wants only some of the three passes null for the rest: the LOD candidates read the change bits alone)
-    {
-        memcpy(distance, gLodDistance.data(), (size_t)gLodTable * 4);
-    }
-    if (slop_bits)
-    {
-        memcpy(slop_bits, gLodBits.data(), gLodBits.size() * 4);
     }
     if (change_bits)
     {

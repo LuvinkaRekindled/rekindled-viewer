@@ -1695,10 +1695,6 @@ void LLParticlePartition::getGeometry(LLSpatialGroup* group)
     mFaceList.clear();
 }
 
-F32 LLParticlePartition::calcPixelArea(LLSpatialGroup* group, LLCamera& camera)
-{
-    return 1024.f;
-}
 
 U32 LLVOHUDPartGroup::getPartitionType() const
 {

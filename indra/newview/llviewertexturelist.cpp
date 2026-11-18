@@ -1276,7 +1276,7 @@ void LLViewerTextureList::updateImages(F32 max_time)
     }
     {
         static U32 calls = 0;
-        if (++calls >= 1800)
+        if (++calls >= 1800 && ll_diag_on())     // (the summary only prints through LL_DIAG: no scan of the image list when diagnostics are off)
         {
             calls = 0;
             logSummary();
