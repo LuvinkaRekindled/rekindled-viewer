@@ -646,6 +646,17 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
 
     memset(&last_joint_signature, 0, sizeof(U8) * LL_CHARACTER_MAX_ANIMATED_JOINTS);
 
+    // <FS> PLAN-avatars-100.md D1: the joints the motions added to the blend so far cover with a weight of 1, by priority, for position and rotation (see LLMotion::mSkipPos). Additive motions add to the
+    // result without taking weight from the others, so they neither use nor feed it.
+    const bool skip_on = anim_type == LLMotion::NORMAL_BLEND && rk_sample_skip_mode() != 0;
+    U8 skip_pos[LL_CHARACTER_MAX_ANIMATED_JOINTS];
+    U8 skip_rot[LL_CHARACTER_MAX_ANIMATED_JOINTS];
+    if (skip_on)
+    {
+        memset(skip_pos, 0, sizeof(skip_pos));
+        memset(skip_rot, 0, sizeof(skip_rot));
+    }
+
     // iterate through active motions in chronological order
     for (motion_list_t::iterator iter = mActiveMotions.begin();
          iter != mActiveMotions.end(); )
@@ -658,6 +669,23 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
         }
 
         bool update_motion = false;
+
+        // (the pointers are valid for the motion's update only: set and cleared around the call. Nothing may touch the motion after deactivateMotionInstance: for a deprecated motion that deletes it.)
+        auto update_skipping = [&](F32 update_time) -> bool
+        {
+            if (skip_on)
+            {
+                motionp->mSkipPos = skip_pos;
+                motionp->mSkipRot = skip_rot;
+            }
+            const bool result = timed_on_update(motionp, update_time, last_joint_signature);
+            if (skip_on)
+            {
+                motionp->mSkipPos = nullptr;
+                motionp->mSkipRot = nullptr;
+            }
+            return result;
+        };
 
         if (motionp->getPose()->getWeight() < 1.f)
         {
@@ -743,7 +771,7 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
                 // if not, let's stop it this time through and deactivate it the next
 
                 posep->setWeight(motionp->getFadeWeight());
-                timed_on_update(motionp, motionp->getStopTime() - motionp->mActivationTimestamp, last_joint_signature);
+                update_skipping(motionp->getStopTime() - motionp->mActivationTimestamp);
             }
             else
             {
@@ -775,7 +803,7 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
             }
 
             // perform motion update
-            update_result = timed_on_update(motionp, mAnimTime - motionp->mActivationTimestamp, last_joint_signature);
+            update_result = update_skipping(mAnimTime - motionp->mActivationTimestamp);
         }
 
         //**********************
@@ -799,7 +827,7 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
 
             // perform motion update
             {
-                update_result = timed_on_update(motionp, mAnimTime - motionp->mActivationTimestamp, last_joint_signature);
+                update_result = update_skipping(mAnimTime - motionp->mActivationTimestamp);
             }
         }
 
@@ -822,12 +850,12 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
                 posep->setWeight(motionp->getFadeWeight() * motionp->mResidualWeight + (1.f - motionp->mResidualWeight) * cubic_step((mAnimTime - motionp->mActivationTimestamp) / motionp->getEaseInDuration()));
             }
             // perform motion update
-            update_result = timed_on_update(motionp, mAnimTime - motionp->mActivationTimestamp, last_joint_signature);
+            update_result = update_skipping(mAnimTime - motionp->mActivationTimestamp);
         }
         else
         {
             posep->setWeight(0.f);
-            update_result = timed_on_update(motionp, 0.f, last_joint_signature);
+            update_result = update_skipping(0.f);
         }
 
         // allow motions to deactivate themselves
@@ -854,6 +882,22 @@ void LLMotionController::updateMotionsByType(LLMotion::LLMotionBlendType anim_ty
         else
         {
             mPoseBlender.addMotion(motionp);
+        }
+        if (skip_on && posep->getWeight() >= 1.f)
+        {
+            // this motion is in the blend with the whole weight: what it covers is covered for the motions after it
+            for (S32 i = 0; i < LL_CHARACTER_MAX_ANIMATED_JOINTS / 8; i++)
+            {
+                U64 cur, add;
+                memcpy(&cur, &skip_pos[i * 8], 8);
+                memcpy(&add, &motionp->mJointSignature[0][i * 8], 8);
+                cur |= add;
+                memcpy(&skip_pos[i * 8], &cur, 8);
+                memcpy(&cur, &skip_rot[i * 8], 8);
+                memcpy(&add, &motionp->mJointSignature[1][i * 8], 8);
+                cur |= add;
+                memcpy(&skip_rot[i * 8], &cur, 8);
+            }
         }
     }
 }

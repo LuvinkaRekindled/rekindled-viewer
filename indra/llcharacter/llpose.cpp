@@ -542,8 +542,17 @@ static bool flat_slot_add(LLPoseBlender::FlatBlend::Slot& s, const LLPointer<LLJ
     return false;
 }
 
+// <FS> PLAN-avatars-100.md D1: RK_VK_BLENDCUT: 1 (default) a non-additive state of a channel whose weight sum is already exactly 1 is not read (the lerp or nlerp with the factor sum / new_sum = 1 returns what
+// the blend already holds, up to the last bit of a float), 0 every state is read as before, 2 both are computed and compared (a difference beyond 1e-5 is counted). The cut is what lets the lazily sampled
+// states of keyframe motions (LLJointState lazy channels) skip the curves of the states that higher priority states have covered.
+static int blend_cut_mode()
+{
+    static const int mode = getenv("RK_VK_BLENDCUT") ? atoi(getenv("RK_VK_BLENDCUT")) : 1;
+    return mode;
+}
+
 // the math of LLJointStateBlender::blendJointStates(apply_now = true), line for line, on a slot; the result goes to out (the caller applies it)
-static bool flat_slot_blend(const LLPoseBlender::FlatBlend::Slot& s, LLJoint* target_joint, LLPoseBlender::FlatBlend::Result& out)
+static bool flat_slot_blend(const LLPoseBlender::FlatBlend::Slot& s, LLJoint* target_joint, LLPoseBlender::FlatBlend::Result& out, bool cut)
 {
     if (s.mState[0].isNull())
     {
@@ -603,9 +612,12 @@ static bool flat_slot_blend(const LLPoseBlender::FlatBlend::Slot& s, LLJoint* ta
             {
                 if (sum_usage & LLJointState::POS)
                 {
-                    F32 new_weight_sum = llmin(1.f, current_weight + sum_weights[POS_WEIGHT]);
-                    blended_pos = lerp(jsp->getPosition(), blended_pos, sum_weights[POS_WEIGHT] / new_weight_sum);
-                    sum_weights[POS_WEIGHT] = new_weight_sum;
+                    if (!(cut && sum_weights[POS_WEIGHT] == 1.f))
+                    {
+                        F32 new_weight_sum = llmin(1.f, current_weight + sum_weights[POS_WEIGHT]);
+                        blended_pos = lerp(jsp->getPosition(), blended_pos, sum_weights[POS_WEIGHT] / new_weight_sum);
+                        sum_weights[POS_WEIGHT] = new_weight_sum;
+                    }
                 }
                 else
                 {
@@ -617,9 +629,12 @@ static bool flat_slot_blend(const LLPoseBlender::FlatBlend::Slot& s, LLJoint* ta
             {
                 if (sum_usage & LLJointState::SCALE)
                 {
-                    F32 new_weight_sum = llmin(1.f, current_weight + sum_weights[SCALE_WEIGHT]);
-                    blended_scale = lerp(jsp->getScale(), blended_scale, sum_weights[SCALE_WEIGHT] / new_weight_sum);
-                    sum_weights[SCALE_WEIGHT] = new_weight_sum;
+                    if (!(cut && sum_weights[SCALE_WEIGHT] == 1.f))
+                    {
+                        F32 new_weight_sum = llmin(1.f, current_weight + sum_weights[SCALE_WEIGHT]);
+                        blended_scale = lerp(jsp->getScale(), blended_scale, sum_weights[SCALE_WEIGHT] / new_weight_sum);
+                        sum_weights[SCALE_WEIGHT] = new_weight_sum;
+                    }
                 }
                 else
                 {
@@ -631,9 +646,12 @@ static bool flat_slot_blend(const LLPoseBlender::FlatBlend::Slot& s, LLJoint* ta
             {
                 if (sum_usage & LLJointState::ROT)
                 {
-                    F32 new_weight_sum = llmin(1.f, current_weight + sum_weights[ROT_WEIGHT]);
-                    blended_rot = nlerp(sum_weights[ROT_WEIGHT] / new_weight_sum, jsp->getRotation(), blended_rot);
-                    sum_weights[ROT_WEIGHT] = new_weight_sum;
+                    if (!(cut && sum_weights[ROT_WEIGHT] == 1.f))
+                    {
+                        F32 new_weight_sum = llmin(1.f, current_weight + sum_weights[ROT_WEIGHT]);
+                        blended_rot = nlerp(sum_weights[ROT_WEIGHT] / new_weight_sum, jsp->getRotation(), blended_rot);
+                        sum_weights[ROT_WEIGHT] = new_weight_sum;
+                    }
                 }
                 else
                 {
@@ -746,8 +764,61 @@ void LLPoseBlender::blendAndApply()
             if (target)
             {
                 FlatBlend::Result result;
-                if (flat_slot_blend(slot, target, result))
+                const int cut_mode = blend_cut_mode();
+                if (flat_slot_blend(slot, target, result, cut_mode != 0))
                 {
+                    if (cut_mode == 2)
+                    {
+                        // the same slot with every state read (the joint still holds its pre-blend values): the results must agree to the last bits of a float
+                        FlatBlend::Result full;
+                        flat_slot_blend(slot, target, full, false);
+                        F32 diff = 0.f;
+                        for (S32 k = 0; k < 3; ++k)
+                        {
+                            diff = llmax(llmax(diff, fabsf(result.mPos.mV[k] - full.mPos.mV[k])), fabsf(result.mScale.mV[k] - full.mScale.mV[k]));
+                        }
+                        for (S32 k = 0; k < 4; ++k)
+                        {
+                            diff = llmax(diff, fabsf(result.mRot.mQ[k] - full.mRot.mQ[k]));
+                        }
+                        static std::atomic<U64> compared{ 0 }, different{ 0 }, bit_equal{ 0 };
+                        static std::atomic<U32> max_diff_bits{ 0 };
+                        ++compared;
+                        if (diff == 0.f) { ++bit_equal; }
+                        if (diff > 1e-5f) { ++different; }
+                        U32 bits;
+                        memcpy(&bits, &diff, sizeof(bits));
+                        U32 prev = max_diff_bits.load();
+                        while (bits > prev && !max_diff_bits.compare_exchange_weak(prev, bits)) {}
+                        if (compared % 2000000 == 0)
+                        {
+                            F32 max_diff;
+                            const U32 mb = max_diff_bits.load();
+                            memcpy(&max_diff, &mb, sizeof(max_diff));
+                            LL_INFOS("BlendCut") << "blend with the cut against every state read: " << compared.load() << " joints, bit equal " << bit_equal.load() << ", differing by more than 1e-5: " << different.load()
+                                                 << ", largest difference " << max_diff << LL_ENDL;
+                        }
+                    }
+                    if (rk_sample_skip_mode() == 2)
+                    {
+                        // RK_VK_SAMPLESKIP=2: a skipped channel holds NaN; reaching the result means the blend read it
+                        bool finite = true;
+                        for (S32 k = 0; k < 3; ++k) { finite = finite && std::isfinite(result.mPos.mV[k]) && std::isfinite(result.mScale.mV[k]); }
+                        for (S32 k = 0; k < 4; ++k) { finite = finite && std::isfinite(result.mRot.mQ[k]); }
+                        static std::atomic<U64> blended{ 0 }, poisoned{ 0 };
+                        ++blended;
+                        if (!finite)
+                        {
+                            ++poisoned;
+                            result.mPos = target->getPosition();        // (keep the joint as it was: the check must not wreck the picture)
+                            result.mScale = target->getScale();
+                            result.mRot = target->getRotation();
+                        }
+                        if (blended % 2000000 == 0 || (!finite && poisoned <= 5))
+                        {
+                            LL_INFOS("SampleSkip") << "blend check: " << blended.load() << " joints blended, a skipped channel was read by the blend in " << poisoned.load() << LL_ENDL;
+                        }
+                    }
                     target->setPosition(result.mPos);
                     target->setScale(result.mScale);
                     target->setRotation(result.mRot);

@@ -405,7 +405,7 @@ public:
         U32             mUsage;
         LLJoint::JointPriority  mPriority;
 
-        void update(LLJointState* joint_state, F32 time, F32 duration);
+        void update(LLJointState* joint_state, F32 time, F32 duration, U32 skip_channels = 0);        // <FS> D1: skip_channels (LLJointState::POS / ROT bits) are not sampled
     };
 
     //-------------------------------------------------------------------------
@@ -444,6 +444,10 @@ public:
 protected:
     JointMotionList*                mJointMotionList;
     std::vector<LLPointer<LLJointState> > mJointStates;
+    // <FS> PLAN-avatars-100.md D1: the joint states a constraint of this motion reads and writes (their values must be sampled whatever covers them); made at the first update
+    std::vector<U8> mNoSkip;
+    bool            mNoSkipReady = false;
+    void            buildNoSkip();
     LLJoint*                        mPelvisp;
     LLCharacter*                    mCharacter;
     typedef std::list<JointConstraint*> constraint_list_t;
