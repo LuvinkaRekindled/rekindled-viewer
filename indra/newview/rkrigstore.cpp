@@ -586,6 +586,7 @@ bool make_key(const LLFace* face, U32 mask, CKey& k)
         flags |= mat->getNormalID().isNull() ? 0u : 2u;
         flags |= mat->getSpecularID().isNull() ? 0u : 4u;
     }
+    flags |= face->isInAlphaPool() ? 8u : 0u;       // (the colour's alpha channel is baked by another rule in the alpha pool)
     k.mGlowAndFlags = glow | (flags << 8);
     F32 os = 0.f, ot = 0.f, ms = 1.f, mt = 1.f;
     te->getOffset(&os, &ot);
@@ -630,9 +631,13 @@ bool rk_rigcache_eligible(LLFace* face, bool distance_sort)
         return false;
     }
     const LLTextureEntry* te = face->getTextureEntry();
-    if (!te || te->getTexGen() != LLTextureEntry::TEX_GEN_DEFAULT || face->isInAlphaPool() || te->getGLTFRenderMaterial() != nullptr || te->getBumpmap() != 0 || te->getColor().mV[3] < 0.999f)
+    if (!te || te->getTexGen() != LLTextureEntry::TEX_GEN_DEFAULT || te->getGLTFRenderMaterial() != nullptr || te->getBumpmap() != 0)
     {
         return false;
+    }
+    if (!distance_sort && (face->isInAlphaPool() || te->getColor().mV[3] < 0.999f))
+    {
+        return false;       // (an opaque kind's face is not transparent; the alpha kind's faces are, and are cached too since stage 2)
     }
     if (face->isState(LLFace::TEXTURE_ANIM) || face->mTextureMatrix || face->hasSelectionBuffer())
     {
@@ -853,7 +858,7 @@ bool read_snap(LLFace* face, Snap& s)
 void rk_rigcache_verify(LLFace* face, U32 mask)
 {
     CKey key;
-    if (!rk_rigcache_eligible(face, false) || !make_key(face, mask, key))
+    if (!rk_rigcache_eligible(face, face->isInAlphaPool()) || !make_key(face, mask, key))
     {
         return;
     }
