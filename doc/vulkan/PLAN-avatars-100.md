@@ -438,3 +438,19 @@ Where it stands: about 0.87 ms of the 7.82 ms loop is the main thread's avatar w
 **The guard at login.** 2 hits in the lap (was 17 to 20 before stage 2), both `cache face 1, store task 1, prepared 1, task buffer 0`: a face attached at planning whose buffer was nulled before its register only task ran. Only `rebuildGeom` (llvovolume.cpp:6628) nulls a face buffer and leaves `mRigStore` set; the likely case is a second rebuild of the same group while its first tasks wait in the deferred batch (`RKRebuildBatch`). Which clearer fired was not logged (a login or teleport reset is not ruled out). The stale task skips the face and the newer rebuild registers it again. The old path had the same window; its tasks held their own buffer, so a stale task still wrote into it. Not changed. If it is wanted cleaner: store tasks hold their buffers, or the warning becomes a counter.
 
 **Not verified:** the picture of hair and transparent clothes with the cache on (Adam chose to move on without looking at it, 2026-11-19), the cost of the planning on the main thread, the arrival stall.
+
+### D4 stage 3: stage 2's alpha fix, glTF faces in the class, the cache on by default (2026-11-19, laps `rk3s3`, `rk3s3b`, `rk2s3`)
+
+**Correction to stage 2 (05bac27f1e).** `rk_rigcache_eligible` still began with `if (distance_sort || ...) return false`, so the faces of an alpha kind were never eligible: stage 2 planned the alpha kinds in order and cached nothing in them, and the key check and cache lap recorded under stage 2 measured the opaque class only. Found 2026-11-19 reading the function while turning the cache on. Fixed here: the clause is gone, so alpha kinds really use the cache now.
+
+**glTF faces** are in the class. From `getGeometryVolume`: a glTF face's colour is the material's base colour (no shiny in alpha), and no texture transform is baked (they are applied later in the shader), so texcoords 0, 1 and 2 are the base coordinates, whatever legacy material the entry also carries. The key uses the base colour, identity transforms, no legacy material, and a glTF flag bit (16). The transparency test for an opaque kind reads the glTF base colour's alpha.
+
+**Default on.** `RK_VK_RIGSTORE` defaults to 2; 0 turns it off, 1 and 3 are the diagnostics.
+
+**The first key check of the fixed build (rk3s3)** showed texcoord1 (about 10 percent) and texcoord2 (about 8 percent) differing. Cause, from the code: for a face with neither a legacy material nor a glTF material, `getGeometryVolume` never writes texcoords 1 and 2 (the cheap texcoord 0 path; `do_bump` stays false, bumps are outside the class), so they hold whatever the buffer held, in the old path too. The same for weights when the volume face has none. The check now skips those arrays and counts the faces (`rk3s3b`).
+
+**Key check, rk3s3b (12,000 faces, 4,596 keys):** 0 differing floats in every array: position 0/9.86M, normal 0/9.83M, texcoord0 0/6.55M, colour 0/13.1M, emissive 0/123k, tangent 0/9.27M, weight 0/13.09M, texcoord1 0/4.02M, texcoord2 0/3.95M, index 0/15.87M. Not compared (the fill does not write them): weights of 1,813 faces, texcoords 1 and 2 of 577 faces.
+
+**Cache lap, default settings (rk2s3, no RK_VK variable):** 16,179 faces attached (6.94M vertices not filled), 6,500 buffers made and filled (5.29M vertices), 0 writes blocked, 0 key mismatches, the no vertex buffer guard fired once (stage 2 lap: 2, first cache lap: 17). The known exit heap corruption (0xc0000374) is in the event log for each lap.
+
+**Not verified:** the picture (hair, transparent clothes, glTF clothes with the cache on; Adam saw the opaque class only), the planning cost on the main thread, arrival stall, glTF material edits live (a colour or transform change on a worn glTF mesh).
