@@ -662,6 +662,12 @@ static bool rig_merge_on()
     static const bool on = []() { const char* e = getenv("RK_VK_RIGMERGE"); return !(e && e[0] == '0'); }();
     return on;
 }
+// D5 step 4 (RK_VK_RIGROWS, default on, 0 = as before): the opaque rigged rows stay in the persistent table; see GeoState::mPalIdTable
+static bool rig_rows_env_on()
+{
+    static const bool on = []() { const char* e = getenv("RK_VK_RIGROWS"); return !(e && e[0] == '0'); }();
+    return on;
+}
 bool sDbgMatch = false;                 // the draw being prepared belongs to a program the debug filter selects
 bool sDbgNoDepth = false, sDbgNoDepthWrite = false, sDbgNoDepthTest = false, sDbgNoBlend = false, sDbgNoCull = false, sDbgNoScissor = false,
      sDbgFullMask = false, sDbgNoFeedback = false;      // debug draw state overrides from <work>\vk-debug.txt
@@ -8621,6 +8627,11 @@ static struct GeoState
     std::vector<RDraw> mRDraws[kGeoTypes];
     Renderer::ScratchAlloc mRCommands;
     Renderer::ScratchAlloc mRTable;         // the rows of the rigged items of this frame (copies of the table's rows with the frame's palette), the rigged commands index it
+    // D5 step 4 (RK_VK_RIGROWS, default on): the rigged rows stay in the persistent table (their palette is an id index and all ones in the high word) and the frame carries a table of palette addresses by id index
+    Renderer::ScratchAlloc mPalIdTable;     // this frame's: an address per id index (a palette this frame does not hold: the zero palette, so a stale row reads zeros, not freed memory)
+    Buffer mZeroPalette;                    // a palette of zeros (64 KB: more than any mesh's joints): what an unresolved id index points at
+    U64 mRowsMarked = 0, mRowsKept = 0;     // (rows whose palette marker was written, rows that already had it)
+    bool mRigRowsFrame = false;             // this frame's rigged commands use the persistent rows (the table above was made)
     U64 mRBindings = 0, mRDead = 0, mRCmdsFrame = 0, mRLodCmds = 0, mRLodTris = 0, mRLodTrisFull = 0;       // (item E, opaque rigged: commands that drew a simplified list, their triangles, the same commands' own triangles)
     std::vector<U32> mRLodNames;                                // the simplified lists the frame's rigged commands draw from (made current before the draws)
     // S4 C / J1 K6 S4: slots 1-255 region matrices, 256 and up the moving ones (the viewer sends the values of the slots the listed fragments use, every frame); the tables grow with the highest slot sent
@@ -8721,6 +8732,16 @@ bool geo_init()
     else
     {
         LL_WARNS("VkScene") << "scene geometry table: the PBR rows could not be created: PBR alpha draws are not served" << LL_ENDL;
+    }
+    // D5 step 4: the palette of zeros the unresolved ids of a frame's table point at
+    if (ctx.createBuffer((VkDeviceSize)65536, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, sGeo.mZeroPalette) && sGeo.mZeroPalette.mMapped && sGeo.mZeroPalette.mAddress)
+    {
+        memset(sGeo.mZeroPalette.mMapped, 0, 65536);
+    }
+    else
+    {
+        LL_WARNS("VkScene") << "scene geometry table: the zero palette could not be created: the rigged rows keep their copies (RK_VK_RIGROWS off)" << LL_ENDL;
+        sGeo.mZeroPalette = Buffer();
     }
     sGeo.mFailed = false;
     sGeo.mReady = true;
@@ -9696,6 +9717,31 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
         f->mRItemLodCount[b.mItem] = b.mLodCount;
     }
     const bool table_is_this_frame = !persist || (gFrameState.mPalFrame == h.mPass && gFrameState.mPalIdFrame == h.mPass);
+    // D5 step 4: persistent rigged rows. Only with palettes named by id (persist) and a table of this frame; the frame's table maps an id index to an address (the zero palette for an index this frame does not hold)
+    sGeo.mPalIdTable = Renderer::ScratchAlloc();
+    sGeo.mRigRowsFrame = false;
+    if (rig_rows_env_on() && persist && table_is_this_frame && sGeo.mZeroPalette.mAddress && !rigged_listed.empty())
+    {
+        const std::vector<PalIdSlot>& ids = gFrameState.mPalIds[gFrameState.mPalFrame & 1];
+        const size_t n = std::max<size_t>(ids.size(), 1);
+        Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(U64) * n);
+        if (table.mPtr && table.mAddress)
+        {
+            U64* out_ids = (U64*)table.mPtr;
+            const U64 zero = (U64)sGeo.mZeroPalette.mAddress;
+            for (size_t k = 0; k < n; ++k)
+            {
+                const bool held = k < ids.size() && ids[k].mFrame == gFrameState.mPalFrame && ids[k].mAddress;
+                out_ids[k] = held ? ids[k].mAddress : zero;
+            }
+            sGeo.mPalIdTable = table;
+            sGeo.mRigRowsFrame = true;
+        }
+        else
+        {
+            ++s.mScratchFail;
+        }
+    }
     for (GeoFrag* f : rigged_listed)
     {
         if (f->mRItems.empty())
@@ -9720,7 +9766,26 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 f->mPalAddr[item] = pal;
                 f->mPalJoints[item] = joints;
                 GeoGpuG& cpu_row = sGeo.mTCpu[f->mSlots[item]];
-                cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = joints;
+                if (sGeo.mRigRowsFrame)
+                {
+                    // D5 step 4: the row names the palette by its id index (all ones in the high word); written to the persistent table only when it differs (a rebind, a rewritten item)
+                    const U32 index = id & 0xFFFFFFu;
+                    if (cpu_row.mPalette[0] != index || cpu_row.mPalette[1] != 0xFFFFFFFFu || cpu_row.mJoints != joints)
+                    {
+                        cpu_row.mPalette[0] = index; cpu_row.mPalette[1] = 0xFFFFFFFFu; cpu_row.mJoints = joints;
+                        GeoGpuG& gpu_row = sGeo.mRowsG[f->mSlots[item]];
+                        gpu_row.mPalette[0] = index; gpu_row.mPalette[1] = 0xFFFFFFFFu; gpu_row.mJoints = joints;
+                        ++sGeo.mRowsMarked;
+                    }
+                    else
+                    {
+                        ++sGeo.mRowsKept;
+                    }
+                }
+                else
+                {
+                    cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = joints;
+                }
                 f->mRCmds[cmd].indexCount = f->mRCount0[cmd];
             }
             else
@@ -9814,12 +9879,18 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
             // The table is one buffer the GPU reads while the next frames are being prepared: a palette written into a row now would be read by the draws of the frames still in flight
             // (rigged items out of step with each other and with the camera). The rigged items draw from rows of their own, copied for this frame: the command's first instance is the copy.
             // The scratch is write combined memory: it is only written here (a read of it costs about a microsecond, 180 commands a frame were 160 us): each command is made in a local and stored once.
-            sGeo.mRTable = r.allocVertexScratch(sizeof(GeoGpuG) * (size_t)rtotal);
-            GeoGpuG* rows = (sGeo.mRTable.mPtr && sGeo.mRTable.mAddress) ? (GeoGpuG*)sGeo.mRTable.mPtr : nullptr;
-            if (!rows)
+            // D5 step 4: persistent rows (mRigRowsFrame): the commands name the item's row in the persistent table (their first instance as the fragment made it) and nothing is copied
+            const bool persistent_rows = sGeo.mRigRowsFrame;
+            GeoGpuG* rows = nullptr;
+            if (!persistent_rows)
             {
-                sGeo.mRTable = Renderer::ScratchAlloc();
-                ++s.mScratchFail;
+                sGeo.mRTable = r.allocVertexScratch(sizeof(GeoGpuG) * (size_t)rtotal);
+                rows = (sGeo.mRTable.mPtr && sGeo.mRTable.mAddress) ? (GeoGpuG*)sGeo.mRTable.mPtr : nullptr;
+                if (!rows)
+                {
+                    sGeo.mRTable = Renderer::ScratchAlloc();
+                    ++s.mScratchFail;
+                }
             }
             U32 cursor = 0;
             // D5 step 1: the runs in the order the commands are laid out. Merge on: by type, then single sided before double sided, then fragment, so the runs a draw issues (one type, one sidedness) are adjacent
@@ -9910,11 +9981,14 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
                             {
                                 cmd.firstIndex += (U32)(cmd_ib->mArena.mOffset >> 1);       // (the same test as make_rdraw's: the run is drawn from the block at offset 0)
                             }
-                            if (rows)
+                            if (!persistent_rows)
                             {
-                                rows[cursor + c] = sGeo.mTCpu[cmd.firstInstance];
+                                if (rows)
+                                {
+                                    rows[cursor + c] = sGeo.mTCpu[cmd.firstInstance];
+                                }
+                                cmd.firstInstance = cursor + c;
                             }
-                            cmd.firstInstance = cursor + c;
                             rout[cursor + c] = cmd;
                             if (c > 0 && lod != seg_lod)
                             {
@@ -9966,7 +10040,9 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
             << s.mScratchFail << " scratch failures, " << s.mNotInFrame << " prepares outside a frame, " << s.mDrawStale << " draws without this frame's prepare, " << s.mDrawNoProgram << " draws without the program" << LL_ENDL;
         RK_DIAG("VkScene") << "scene geometry table, opaque rigged commands a frame " << (double)sGeo.mRCmdsFrame / n << ", of them drawing a simplified list " << (double)sGeo.mRLodCmds / n << " (triangles " << (double)sGeo.mRLodTrisFull / n
             << " -> " << (double)sGeo.mRLodTris / n << " a frame); D5 step 1 (RK_VK_RIGMERGE " << (rig_merge_on() ? 1 : 0) << "): rigged runs listed a frame " << (double)sGeo.mRRunsListed / n << ", draws issued " << (double)sGeo.mRDrawsIssued / n
-            << ", runs skipped (buffer moved or gone since the prepare) " << sGeo.mRRunsStale << "; rigged alpha (step 3): commands " << (double)sGeo.mRAlphaCmds / n << " a frame in " << (double)sGeo.mRAlphaDraws / n << " indirect draws" << LL_ENDL;
+            << ", runs skipped (buffer moved or gone since the prepare) " << sGeo.mRRunsStale << "; rigged alpha (step 3): commands " << (double)sGeo.mRAlphaCmds / n << " a frame in " << (double)sGeo.mRAlphaDraws / n << " indirect draws; persistent rigged rows (step 4, RK_VK_RIGROWS " << (rig_rows_env_on() ? 1 : 0)
+            << "): palette marks written " << (double)sGeo.mRowsMarked / n << " a frame, rows already marked " << (double)sGeo.mRowsKept / n << LL_ENDL;
+        sGeo.mRowsMarked = sGeo.mRowsKept = 0;
         sGeo.mRCmdsFrame = sGeo.mRLodCmds = sGeo.mRLodTris = sGeo.mRLodTrisFull = 0;
         sGeo.mRRunsListed = sGeo.mRDrawsIssued = sGeo.mRRunsStale = sGeo.mRAlphaCmds = sGeo.mRAlphaDraws = 0;
         if (timed)
@@ -10173,16 +10249,23 @@ void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     vi.mBindings.clear();
     vi.mAttributes.clear();
     used_cache.clear();
-    const U64 table_address = rigged_draw ? (U64)sGeo.mRTable.mAddress : (U64)sGeo.mRowsGpu.mAddress, models_address = (U64)models.mAddress;
-    if (!table_address)
+    const bool persistent_rows = rigged_draw && sGeo.mRigRowsFrame;       // D5 step 4: the rigged commands name rows of the persistent table, the palettes come from the frame's id table
+    const U64 table_address = (rigged_draw && !persistent_rows) ? (U64)sGeo.mRTable.mAddress : (U64)sGeo.mRowsGpu.mAddress, models_address = (U64)models.mAddress;
+    if (!table_address || (persistent_rows && (pu.mPalIds == ~0u || !sGeo.mPalIdTable.mAddress)))
     {
-        ++s.mScratchFail;       // (no rows for this frame's draws: nothing reads the scene table itself, so there is nothing to fall back to)
+        ++s.mScratchFail;       // (no rows for this frame's draws: nothing reads the scene table itself, so there is nothing to fall back to; a rigged program without the id table would read a row's id as an address)
         return;
     }
     Context::instance().flight(Context::FL_GEO_DRAW, 100ull + type, table_address, 1ull, (unsigned long long)count);       // (a static or rigged type draw: its rows, copied for the frame)
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
+    if (persistent_rows)
+    {
+        const U64 palids_address = (U64)sGeo.mPalIdTable.mAddress;
+        const S32 palids_words[2] = { (S32)(U32)palids_address, (S32)(U32)(palids_address >> 32) };
+        program->setFloatsAt(pu.mPalIds, reinterpret_cast<const F32*>(palids_words), 2, 1);
+    }
     if (pu.mModels != ~0u)
     {
         program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);

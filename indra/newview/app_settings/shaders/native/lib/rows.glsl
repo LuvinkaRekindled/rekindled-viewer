@@ -197,9 +197,24 @@ vec3 skin_rig_anchor(uvec2 palette_address, uint joints)
     return SkinJoints(palette_address).j[joints].c0.xyz;
 }
 
+// D5 step 4: a row's palette. A persistent rigged row holds the palette's id index in palette.x and all ones in palette.y (no address has that): the address of this frame's palette is in the frame's table
+// (the worker writes it each frame: rk_packet_palids); any other row holds the address itself, as before.
+#ifdef RK_PALIDS
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer PaletteIdTable { uvec2 a[]; };
+uvec2 row_palette(Row row)
+{
+    return row.palette.y == 0xFFFFFFFFu ? PaletteIdTable(rk_packet_palids).a[row.palette.x] : row.palette;
+}
+#else
+uvec2 row_palette(Row row)
+{
+    return row.palette;
+}
+#endif
+
 vec3 row_rig_anchor(Row row)
 {
-    return skin_rig_anchor(row.palette, row.joints);
+    return skin_rig_anchor(row_palette(row), row.joints);
 }
 
 // the skin of one vertex out of a weights array and a palette named by address: a scene row (row_skin) and a shadow packet (shadow.vert) both come here
@@ -248,7 +263,7 @@ bool skin_palette_moving(uvec2 palette_address, uint joints)
 
 void row_skin(Row row, uint index, out mat3 rotation, out vec3 translation)
 {
-    skin_vertex(row.weights, row.palette, row.joints, index, rotation, translation);
+    skin_vertex(row.weights, row_palette(row), row.joints, index, rotation, translation);
 }
 #else
 // ---- a particle row (flags bit 4): one row a particle in the arrays (positions: the centre in agent space, w > 0.5: a ribbon piece; normals: the velocity of a follow-velocity particle or the
