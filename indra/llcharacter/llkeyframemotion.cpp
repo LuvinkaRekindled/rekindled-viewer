@@ -40,6 +40,9 @@
 #include "llkeyframemotion.h"
 #include <algorithm>
 #include <atomic>
+#include <limits>
+#include <typeinfo>
+#include "rkdiag.h"       // <FS> RK_DIAG: the sample skip counters
 #include "llquantize.h"
 #include "m3math.h"
 #include "message.h"
@@ -553,7 +556,7 @@ LLVector3 LLKeyframeMotion::PositionCurve::interp(F32 u, PositionKey& before, Po
 //-----------------------------------------------------------------------------
 // JointMotion::update()
 //-----------------------------------------------------------------------------
-void LLKeyframeMotion::JointMotion::update(LLJointState* joint_state, F32 time, F32 duration)
+void LLKeyframeMotion::JointMotion::update(LLJointState* joint_state, F32 time, F32 duration, U32 skip_channels)
 {
     // this value being 0 is the cause of https://jira.lindenlab.com/browse/SL-22678 but I haven't
     // managed to get a stack to see how it got here. Testing for 0 here will stop the crash.
@@ -575,7 +578,7 @@ void LLKeyframeMotion::JointMotion::update(LLJointState* joint_state, F32 time, 
     //-------------------------------------------------------------------------
     // update rotation component of joint state
     //-------------------------------------------------------------------------
-    if ((usage & LLJointState::ROT) && mRotationCurve.mNumKeys)
+    if ((usage & LLJointState::ROT) && mRotationCurve.mNumKeys && !(skip_channels & LLJointState::ROT))
     {
         joint_state->setRotation( mRotationCurve.getValue( time, duration ) );
     }
@@ -583,10 +586,39 @@ void LLKeyframeMotion::JointMotion::update(LLJointState* joint_state, F32 time, 
     //-------------------------------------------------------------------------
     // update position component of joint state
     //-------------------------------------------------------------------------
-    if ((usage & LLJointState::POS) && mPositionCurve.mNumKeys)
+    if ((usage & LLJointState::POS) && mPositionCurve.mNumKeys && !(skip_channels & LLJointState::POS))
     {
         joint_state->setPosition( mPositionCurve.getValue( time, duration ) );
     }
+
+    // <FS> D1 check (RK_VK_SAMPLESKIP=2): a skipped channel holds NaN; the blend must never read it
+    if (skip_channels && rk_sample_skip_mode() == 2)
+    {
+        const F32 nan = std::numeric_limits<F32>::quiet_NaN();
+        if ((skip_channels & LLJointState::ROT) && (usage & LLJointState::ROT)) { joint_state->setRotation(LLQuaternion(nan, nan, nan, nan)); }
+        if ((skip_channels & LLJointState::POS) && (usage & LLJointState::POS)) { joint_state->setPosition(LLVector3(nan, nan, nan)); }
+    }
+}
+
+// <FS> PLAN-avatars-100.md D1: the joint states that a constraint of this motion works on are never skipped
+void LLKeyframeMotion::buildNoSkip()
+{
+    mNoSkip.assign(mJointStates.size(), 0);
+    if (mJointMotionList)
+    {
+        for (JointConstraintSharedData* shared : mJointMotionList->mConstraints)
+        {
+            for (S32 k = 0; shared && shared->mJointStateIndices && k < shared->mChainLength; ++k)
+            {
+                const S32 index = shared->mJointStateIndices[k];
+                if (index >= 0 && (size_t)index < mNoSkip.size())
+                {
+                    mNoSkip[index] = 1;
+                }
+            }
+        }
+    }
+    mNoSkipReady = true;
 }
 
 
@@ -908,11 +940,55 @@ bool LLKeyframeMotion::onUpdate(F32 time, U8* joint_mask)
 void LLKeyframeMotion::applyKeyframes(F32 time)
 {
     llassert_always (mJointMotionList->getNumJointMotions() <= mJointStates.size());
+    // <FS> PLAN-avatars-100.md D1: a plain keyframe motion (the stand, walk and fall motions read their states) does not sample the position or rotation of a joint state that a state of at least its
+    // priority, already in the blend with the whole weight, covers (the blend never reads it). The constraint joints are always sampled.
+    const U8* skip_pos = mSkipPos;
+    const U8* skip_rot = mSkipRot;
+    const bool may_skip = (skip_pos || skip_rot) && typeid(*this) == typeid(LLKeyframeMotion);
+    if (may_skip && !mNoSkipReady)
+    {
+        buildNoSkip();
+    }
+    thread_local U32 seen = 0, skipped = 0;
+    static std::atomic<U64> total_seen{ 0 }, total_skipped{ 0 };
     for (U32 i=0; i<mJointMotionList->getNumJointMotions(); i++)
     {
+        U32 skip = 0;
+        if (may_skip && !mNoSkip[i])
+        {
+            LLJointState* state = mJointStates[i];
+            LLJoint* joint = state ? state->getJoint() : nullptr;
+            const S32 joint_num = joint ? joint->getJointNum() : -1;
+            if (joint_num >= 0 && joint_num < (S32)LL_CHARACTER_MAX_ANIMATED_JOINTS)
+            {
+                S32 priority = state->getPriority();
+                if (priority == LLJoint::USE_MOTION_PRIORITY)
+                {
+                    priority = getPriority();
+                }
+                const U8 pattern = (U8)(0xff >> (7 - priority));        // (the pattern addJointState puts in mJointSignature)
+                if (skip_pos && skip_pos[joint_num] >= pattern) { skip |= LLJointState::POS; }
+                if (skip_rot && skip_rot[joint_num] >= pattern) { skip |= LLJointState::ROT; }
+            }
+        }
+        // (proof it ran: counted per thread, added to the totals now and then; only logged with RK_VK_DIAG)
+        ++seen;
+        if (skip) { skipped += ((skip & LLJointState::POS) ? 1 : 0) + ((skip & LLJointState::ROT) ? 1 : 0); }
         mJointMotionList->getJointMotion(i)->update(mJointStates[i],
                                                       time,
-                                                      mJointMotionList->mDuration );
+                                                      mJointMotionList->mDuration,
+                                                      skip );
+    }
+    if (seen >= 65536)
+    {
+        const U64 before = total_seen.fetch_add(seen);
+        total_skipped += skipped;
+        if (rk_diag_on() && (before / 4000000) != ((before + seen) / 4000000))
+        {
+            LL_INFOS("SampleSkip") << "keyframe joint states updated " << (before + seen) << ", position and rotation channels not sampled because a state with the whole weight covers them: "
+                                   << total_skipped.load() << " (mode " << rk_sample_skip_mode() << ")" << LL_ENDL;
+        }
+        seen = skipped = 0;
     }
 
     LLJoint::JointPriority* pose_priority = (LLJoint::JointPriority* )mCharacter->getAnimationData("Hand Pose Priority");

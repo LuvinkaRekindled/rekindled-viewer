@@ -31,6 +31,7 @@
 // Header files
 //-----------------------------------------------------------------------------
 #include <string>
+#include <cstdlib>
 
 #include "llerror.h"
 #include "llpose.h"
@@ -41,6 +42,14 @@ class LLCharacter;
 //-----------------------------------------------------------------------------
 // class LLMotion
 //-----------------------------------------------------------------------------
+// <FS> PLAN-avatars-100.md D1: RK_VK_SAMPLESKIP: 1 (default) the keyframe sampling of a covered channel is skipped, 0 sampled as before, 2 skipped channels are overwritten with NaN (a check: the blend
+// must never read them; a joint that comes out of the blend not finite is counted and logged).
+inline int rk_sample_skip_mode()
+{
+    static const int mode = getenv("RK_VK_SAMPLESKIP") ? atoi(getenv("RK_VK_SAMPLESKIP")) : 1;
+    return mode;
+}
+
 class LLMotion
 {
     friend class LLMotionController;
@@ -158,6 +167,12 @@ public:
 
     // optional callback routine called when animation deactivated.
     void    setDeactivateCallback( void (*cb)(void *), void* userdata );
+
+    // <FS> PLAN-avatars-100.md D1: set by the motion controller around the onUpdate of a normal-blend motion (null otherwise): per joint, the highest priority (as the thermometer pattern
+    // 0xff >> (7 - priority) of mJointSignature) of the motions ALREADY ADDED TO THE BLEND with a weight of 1, for position and for rotation. A joint state whose own priority is not higher than that
+    // is behind a state that carries the whole weight: the blend never reads it, so a keyframe motion need not sample that channel.
+    const U8* mSkipPos = nullptr;
+    const U8* mSkipRot = nullptr;
 
 protected:
     // called when a motion is activated
