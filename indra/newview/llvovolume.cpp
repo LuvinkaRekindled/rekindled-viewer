@@ -7805,7 +7805,7 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
     U32 normal_count = face_count;
     std::vector<LLFace*> cache_fillers, cache_hits;
     std::vector<LLPointer<LLVertexBuffer> > cache_filler_buffers;
-    if (rigged && rk_rigstore_mode() == 2)
+    if (rigged && rk_rigstore_mode() == 2 && !distance_sort)
     {
         rk_rigcache_sweep();
         std::vector<LLFace*> normal;
@@ -7843,9 +7843,6 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
         for (LLFace* face : cache_fillers) { faces[at++] = face; }
         for (LLFace* face : cache_hits) { faces[at++] = face; }
     }
-    LLFace** face_iter = faces;
-    LLFace** end_faces = faces+normal_count;
-
     LLViewerTexture* last_tex = NULL;
 
     S32 texture_index_channels = RKShaderProgram::sIndexedTextureChannels;
@@ -7868,6 +7865,9 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
     // <FS> group rebuild R3a: the batches of the kind are planned first (which faces go in one vertex buffer), their buffers are allocated next, and the faces are filled and registered last: the
     // same work in the same order of batches as the single loop that did all three for one batch before it planned the next, in three passes, so that the allocation (which only the main thread may do)
     // and the fill (which can go to a pool thread) are apart.
+    // (D4 stage 2: the planning of a run of faces into batches is a function, called once for the whole kind, or for the runs between the cache faces of an alpha kind, whose order is the draw order)
+    auto plan_run = [&](LLFace** face_iter, LLFace** end_faces)
+    {
     while (face_iter != end_faces)
     {
         //pull off next face
@@ -8024,6 +8024,51 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
 
         batches.push_back({ face_iter, i, index_count, geom_count, bake_sunlight, nullptr });
         face_iter = i;
+    }
+    };
+    if (rigged && rk_rigstore_mode() == 2 && distance_sort)
+    {
+        // <FS> D4 stage 2: a rigged alpha kind is not sorted: its faces keep the order they were collected in, which is the order of the draw infos and of the draws. The faces that use the cache are planned
+        // where they stand: the runs of faces between them are batched as before, and each cache face is a batch of its own at its place.
+        rk_rigcache_sweep();
+        LLFace** run_begin = faces;
+        for (U32 f = 0; f < face_count; ++f)
+        {
+            LLFace* face = faces[f];
+            int how = 0;
+            LLPointer<LLVertexBuffer> vb;
+            if (rk_rigcache_eligible(face, true))
+            {
+                how = rk_rigcache_plan(face, mask, batch_textures, vb);
+            }
+            else
+            {
+                rk_rigcache_release(face);
+            }
+            if (how == 0)
+            {
+                continue;
+            }
+            plan_run(run_begin, faces + f);
+            LLFace** at = faces + f;
+            if (how == 2)
+            {
+                geometryBytes += vb->getSize() + vb->getIndicesSize();
+                batches.push_back({ at, at + 1, (U32)face->getIndicesCount(), (U32)face->getGeomCount(), LLPipeline::sBakeSunlight && face->getDrawable()->isStatic(), vb });
+                batches.back().mFiller = true;
+            }
+            else
+            {
+                batches.push_back({ at, at + 1, 0, 0, false, nullptr });
+                batches.back().mStore = true;
+            }
+            run_begin = faces + f + 1;
+        }
+        plan_run(run_begin, faces + face_count);
+    }
+    else
+    {
+        plan_run(faces, faces + normal_count);
     }
     // D4 1b-3: a batch of one face for each cache buffer to fill (its buffer exists), and register only batches (up to 8 faces) for the faces attached to a cache buffer
     for (size_t k = 0; k < cache_fillers.size(); ++k)
