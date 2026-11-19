@@ -721,6 +721,7 @@ set(viewer_SOURCE_FILES
     llsidetraypanelcontainer.cpp
     llskinningutil.cpp
     rkgpuzonetimer.cpp
+    rkrigstore.cpp
     llsky.cpp
     #llslurl.cpp #<FS:AW optional opensim support>
     llsnapshotlivepreview.cpp
@@ -1586,6 +1587,7 @@ set(viewer_HEADER_FILES
     llsidetraypanelcontainer.h
     llskinningutil.h
     rkgpuzonetimer.h
+    rkrigstore.h
     llsky.h
     llslurl.h
     llsnapshotlivepreview.h
