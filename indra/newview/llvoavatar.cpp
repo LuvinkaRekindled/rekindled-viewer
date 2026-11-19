@@ -7877,6 +7877,13 @@ bool LLVOAvatar::canDeferMotionUpdate() const
 // updateCharacterPostMotion() (which then finds the matrices clean). The counters of LLJoint are statistics only.
 thread_local LLVOAvatar* LLVOAvatar::sBlendJobAvatar = nullptr;
 
+// <FS> PLAN-avatars-100.md D2, step 1: who changes an avatar's pose AFTER its pose job. The palette job (after the completions) already finds out: it fills the flat skeleton again when it was not
+// filled by the job this frame, when its frame is not this one, or when a joint was dirtied since (skeletonDirty). Counted there by cause, plus the hover offset writes of the completion. RK_VK_DIAG only.
+namespace
+{
+std::atomic<U64> sLateRuns{0}, sLateNotFromJob{0}, sLateOtherFrame{0}, sLateDirty{0}, sLateDirtySelf{0}, sLateDirtyControl{0}, sLateDirtySit{0}, sLateDirtyNotSit{0}, sLateHoverWrites{0};
+}
+
 void LLVOAvatar::cleanJointMatricesOnce(U32 frame)
 {
     const U32 done = frame & 0x7FFFFFFFu;
@@ -8006,6 +8013,7 @@ void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool
         {
             LLVector3 pos = mRoot->getWorldPosition();
             pos.mV[VZ] += off_z;
+            if (rk_diag_on()) { ++sLateHoverWrites; }
             mRoot->touch();
             // SL-315
             mRoot->setWorldPosition(pos);
@@ -14208,6 +14216,29 @@ void LLVOAvatar::buildPalettesInJob()
     const bool timed = rk_paltime_on();
     const U32 target = gFrameCount + 1;     // (gFrameCount is advanced at the start of display(), after this idle: the request of the render finds mFrame == its own frame)
     std::unique_lock<std::shared_mutex> avatar_lock(mPaletteMutex);
+    if (mFlatSkel && rk_diag_on())
+    {
+        const bool not_from_job = !mFlatSkel->mFromJob;
+        const bool other_frame = mFlatSkel->mFrame != gFrameCount;
+        const bool dirty = skeletonDirty();
+        const bool sit = !getParent() && (isSitting() || mDeferredSitGroundConstrained);
+        if (not_from_job) { ++sLateNotFromJob; }
+        if (other_frame) { ++sLateOtherFrame; }
+        if (dirty)
+        {
+            ++sLateDirty;
+            if (isSelf()) { ++sLateDirtySelf; }
+            else if (isControlAvatar()) { ++sLateDirtyControl; }
+            (sit ? sLateDirtySit : sLateDirtyNotSit)++;
+        }
+        const U64 runs = ++sLateRuns;
+        if (runs % 6000 == 0)
+        {
+            LL_INFOS("AvLate") << "pose changed after the pose job, seen by the palette job: " << runs << " runs; array not filled by the job " << sLateNotFromJob.load() << ", of another frame " << sLateOtherFrame.load()
+                               << ", a joint dirty " << sLateDirty.load() << " (own avatar " << sLateDirtySelf.load() << ", animesh " << sLateDirtyControl.load() << ", sitting on the ground " << sLateDirtySit.load()
+                               << ", not sitting " << sLateDirtyNotSit.load() << "); hover offset writes in the completion " << sLateHoverWrites.load() << LL_ENDL;
+        }
+    }
     if (mFlatSkel)
     {
         // the array the pose job filled holds while no joint was touched after it (the completions: hover, ground sit, attachment overrides); else it is filled again from the final skeleton of this frame
