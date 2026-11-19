@@ -44,6 +44,8 @@
 #define LL_VIEWER_VERSION_BUILD @VIEWER_VERSION_REVISION@
 const std::string LL_VIEWER_VERSION_GITHASH {@VIEWER_VERSION_GITHASH@};
 const std::string LL_VIEWER_VERSION_LL{"@VIEWER_VERSION_LL@"};
+// <FS> Rekindled: the Firestorm version this viewer is based on (VIEWER_VERSION_FS.txt); LL_VIEWER_VERSION_MAJOR/MINOR/PATCH above are Rekindled's own (VIEWER_VERSION_REKINDLED.txt)
+const std::string LL_VIEWER_VERSION_FIRESTORM{"@VIEWER_VERSION_FS@"};
 #define LLBUILD_CONFIG "@CMAKE_BUILD_TYPE@"
 
 // </FS:TS>

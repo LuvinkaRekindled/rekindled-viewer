@@ -43,18 +43,12 @@ namespace tut
         versioninfo()
             : mResetChannel("Reset Channel")
         {
+            // <FS> Rekindled: the minor and the patch are written with two digits (0.99.01)
+            mShortVersion = llformat("%d.%02d.%02d", (int)LL_VIEWER_VERSION_MAJOR, (int)LL_VIEWER_VERSION_MINOR, (int)LL_VIEWER_VERSION_PATCH);
             std::ostringstream stream;
-            stream << LL_VIEWER_VERSION_MAJOR << "."
-                   << LL_VIEWER_VERSION_MINOR << "."
-                   << LL_VIEWER_VERSION_PATCH << "."
+            stream << mShortVersion << "."
                    << LL_VIEWER_VERSION_BUILD;
             mVersion = stream.str();
-            stream.str("");
-
-            stream << LL_VIEWER_VERSION_MAJOR << "."
-                   << LL_VIEWER_VERSION_MINOR << "."
-                   << LL_VIEWER_VERSION_PATCH;
-            mShortVersion = stream.str();
             stream.str("");
 
             stream << ll_viewer_channel

@@ -76,6 +76,12 @@ public:
 
     std::string getLLViewerVersion() const; // <FS:PP>
 
+    /// <FS> Rekindled: the Firestorm version this viewer is based on, like "7.2.5"
+    std::string getFirestormVersion() const;
+
+    /// <FS> Rekindled: the full version as it is shown to the user, like "0.99.01.1668 (Firestorm 7.2.5)"
+    std::string getVersionDisplay() const;
+
     /// return the viewer version and channel as a string
     /// like "Second Life Release 2.0.0.200030"
     std::string getChannelAndVersion();

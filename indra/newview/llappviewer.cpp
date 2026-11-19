@@ -3770,7 +3770,7 @@ bool LLAppViewer::initConfiguration()
     // Set the name of the window
     //
     // <FS> Rekindled: the window is titled with the viewer's name and its version; the channel string (what the grid is told at login, the settings folder) stays as it is
-    gWindowTitle = LLTrans::getString("APP_NAME") + " Viewer " + LLVersionInfo::getInstance()->getVersion();
+    gWindowTitle = LLTrans::getString("APP_NAME") + " Viewer " + LLVersionInfo::getInstance()->getVersionDisplay();     // <FS> Rekindled: "0.99.01.1668 (Firestorm 7.2.5)"
 #if LL_DEBUG
     gWindowTitle += std::string(" [DEBUG]");
 #endif
@@ -4217,6 +4217,8 @@ LLSD LLAppViewer::getViewerInfo() const
     info["VIEWER_VERSION"] = llsd::array(versionInfo.getMajor(), versionInfo.getMinor(),
                                          versionInfo.getPatch(), stringize(versionInfo.getBuild()));
     info["VIEWER_VERSION_STR"] = versionInfo.getVersion();
+    info["VIEWER_VERSION_SHORT"] = versionInfo.getShortVersion();       // <FS> Rekindled: "0.99.01" (the About header: the array above has the plain numbers)
+    info["VIEWER_VERSION_FS"] = versionInfo.getFirestormVersion();      // <FS> Rekindled: "7.2.5", the Firestorm version this viewer is based on
     info["VIEWER_VERSION_LL"] = versionInfo.getLLViewerVersion(); // <FS:PP>
     info["BUILD_DATE"] = __DATE__;
     info["BUILD_TIME"] = __TIME__;

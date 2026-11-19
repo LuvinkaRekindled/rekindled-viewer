@@ -49,9 +49,8 @@
 //
 
 LLVersionInfo::LLVersionInfo():
-    short_version(STRINGIZE(LL_VIEWER_VERSION_MAJOR << "."
-                            << LL_VIEWER_VERSION_MINOR << "."
-                            << LL_VIEWER_VERSION_PATCH)),
+    // <FS> Rekindled: the minor and the patch are written with two digits (0.99.01); the numbers themselves stay plain integers (getMinor(), getPatch())
+    short_version(llformat("%d.%02d.%02d", (int)LL_VIEWER_VERSION_MAJOR, (int)LL_VIEWER_VERSION_MINOR, (int)LL_VIEWER_VERSION_PATCH)),
     // LL_VIEWER_CHANNEL is a macro defined on the compiler command line. The
     // macro expands to the string name of the channel, but without quotes. We
     // need to turn it into a quoted string. LL_TO_STRING() does that.
@@ -137,6 +136,18 @@ std::string LLVersionInfo::getLLViewerVersion() const
     return LL_VIEWER_VERSION_LL;
 }
 // </FS:PP>
+
+// <FS> Rekindled: the Firestorm version this viewer is based on, and the full version as it is shown to the user: "0.99.01.1668 (Firestorm 7.2.5)"
+std::string LLVersionInfo::getFirestormVersion() const
+{
+    return LL_VIEWER_VERSION_FIRESTORM;
+}
+
+std::string LLVersionInfo::getVersionDisplay() const
+{
+    return stringize(getVersion(), " (Firestorm ", getFirestormVersion(), ")");
+}
+// </FS>
 
 std::string LLVersionInfo::getChannelAndVersion()
 {

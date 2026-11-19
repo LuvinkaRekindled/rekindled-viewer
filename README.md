@@ -22,6 +22,10 @@
 
 Measured numbers are in `doc/vulkan/GAINS.md`. They come from one machine, different scenes and different days, so they cannot be added up into one figure. The design notes and plans are the other files in `doc/vulkan/`; `doc/vulkan/PLAN-avatars-100.md` is the most recent.
 
+## Versions
+
+Rekindled has its own version, written like `0.99.01` (major.minor.patch, the minor and the patch with two digits), followed by a build number (the number of commits), and it shows the Firestorm version it is based on in parentheses: `0.99.01.1663 (Firestorm 7.2.5)`. The version is in `indra/newview/VIEWER_VERSION_REKINDLED.txt`; the Firestorm version it is based on stays in `indra/newview/VIEWER_VERSION_FS.txt`.
+
 ## Building
 
 Rekindled builds like Firestorm does, with a few extra pieces. Start with Firestorm's own instructions for your platform:

@@ -4,13 +4,26 @@
 if (NOT DEFINED VIEWER_SHORT_VERSION) # will be true in indra/, false in indra/newview/
     # <FS:Ansariel> Use own version file to avoid LL's year-as-major-version thing
     # set(VIEWER_VERSION_BASE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/newview/VIEWER_VERSION.txt")
-    set(VIEWER_VERSION_BASE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/newview/VIEWER_VERSION_FS.txt")
+    # <FS> Rekindled: the viewer's own version (major.minor.patch, the minor and the patch written with two digits, like 0.99.01) is in VIEWER_VERSION_REKINDLED.txt;
+    # the Firestorm version it is based on stays in VIEWER_VERSION_FS.txt (shown in parentheses, LL_VIEWER_VERSION_FIRESTORM)
+    set(VIEWER_VERSION_BASE_FILE "${CMAKE_CURRENT_SOURCE_DIR}/newview/VIEWER_VERSION_REKINDLED.txt")
+    set(VIEWER_VERSION_FS_FILE "${CMAKE_CURRENT_SOURCE_DIR}/newview/VIEWER_VERSION_FS.txt")
+    # a change of either file configures the build again (a version bump takes effect without regenerating by hand)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${VIEWER_VERSION_BASE_FILE}" "${VIEWER_VERSION_FS_FILE}")
 
     if ( EXISTS ${VIEWER_VERSION_BASE_FILE} )
         file(STRINGS ${VIEWER_VERSION_BASE_FILE} VIEWER_SHORT_VERSION REGEX "^[0-9]+\\.[0-9]+\\.[0-9]+")
         string(REGEX REPLACE "^([0-9]+)\\.[0-9]+\\.[0-9]+" "\\1" VIEWER_VERSION_MAJOR ${VIEWER_SHORT_VERSION})
         string(REGEX REPLACE "^[0-9]+\\.([0-9]+)\\.[0-9]+" "\\1" VIEWER_VERSION_MINOR ${VIEWER_SHORT_VERSION})
         string(REGEX REPLACE "^[0-9]+\\.[0-9]+\\.([0-9]+)" "\\1" VIEWER_VERSION_PATCH ${VIEWER_SHORT_VERSION})
+        # the numbers go into C++ macros and resource files: a leading zero would make "08" an invalid octal literal, so they are plain numbers here (the version string keeps its two digits)
+        string(REGEX REPLACE "^0+([0-9])" "\\1" VIEWER_VERSION_MINOR "${VIEWER_VERSION_MINOR}")
+        string(REGEX REPLACE "^0+([0-9])" "\\1" VIEWER_VERSION_PATCH "${VIEWER_VERSION_PATCH}")
+        if ( EXISTS ${VIEWER_VERSION_FS_FILE} )
+            file(STRINGS ${VIEWER_VERSION_FS_FILE} VIEWER_VERSION_FS REGEX "^[0-9]+\\.[0-9]+\\.[0-9]+")
+        else ()
+            set(VIEWER_VERSION_FS "unknown")
+        endif ()
         if (DEFINED ENV{revision})
            set(VIEWER_VERSION_REVISION $ENV{revision})
            message(STATUS "Revision (from environment): ${VIEWER_VERSION_REVISION}")
