@@ -237,3 +237,13 @@ Not yet established, to count before building: how often the completion finds a 
 5. **D2b:** the overlap (the pose is frozen from launch to join now, by construction).
 6. **D2d:** readers of the record.
 The sort delta and stamp streams stay as they are; each step is neutral or faster by the lap.
+
+### D2 step 1 result: the late writers counted (2026-11-18, lap `late-def1`)
+
+The counter (`AvLate`, `RK_VK_DIAG` only, in `buildPalettesInJob` and the hover block of `updateCharacterPostMotion`, `llvoavatar.cpp`) over 102,000 palette job runs (72 to 84 avatars, a short lap, mode def, exe 18:08:45):
+
+- **A joint dirty after the pose job: 97 times (0.1 percent), all in one burst** (between the 42,000th and 48,000th run, none after), none on the own avatar, none on an animesh, none on an avatar sitting on the ground. The rule "nothing writes an avatar's joints between the pose job and the palettes" already holds in steady state, apart from that one burst (cause not found: an outfit or animation change of a few avatars).
+- **Hover offset writes in the completion: 4,308 (4.2 percent of the runs, about 1.7 avatars a frame).** The only systematic late writer, as the plan assumed. They do not show as "a joint dirty" because `updateCharacterPostMotion` rewalks the children right after the write; the array the job filled is then marked stale instead (the palette job refills from the joints).
+- **The flat array not filled by the job: 7,343 runs (7.2 percent)**, the same avatars as "of another frame" (7,341). It includes the hover ones; the rest are avatars whose pose job did not fill it (matrices only, no job). Not a late write; it is the cost of the refill path.
+
+So D2c has exactly one thing to move: the hover offset of an avatar on the ground. Design (to build): the main thread captures the hover offset where it already captures `mDeferredSitGroundConstrained` (at the deferral, in `updateCharacter`), the pose job applies it to the root before the world pass, the completion's hover block does nothing for a deferred avatar, the rewalk is not needed, the array stays valid, and `canRunAttachmentJob` no longer needs to refuse ground-sitting avatars. Gate: the joint world matrices after the completion equal today's within 1e-5 m for those avatars over a lap (the counter gives the proof for the rest: late dirty stays 0 apart from the burst).
