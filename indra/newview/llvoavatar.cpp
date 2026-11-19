@@ -654,6 +654,15 @@ F32 LLVOAvatar::sRenderDistance = 256.f;
 S32 LLVOAvatar::sNumVisibleAvatars = 0;
 S32 LLVOAvatar::sNumLODChangesThisFrame = 0;
 std::vector<LLPointer<LLVOAvatar> >* LLVOAvatar::sMotionUpdateBatch = nullptr;
+void (*LLVOAvatar::sMotionBatchPushed)(LLVOAvatar*) = nullptr;
+void LLVOAvatar::pushMotionBatch(LLVOAvatar* avatar)
+{
+    sMotionUpdateBatch->push_back(avatar);
+    if (sMotionBatchPushed)
+    {
+        sMotionBatchPushed(avatar);
+    }
+}
 
 // const LLUUID LLVOAvatar::sStepSoundOnLand("e8af4a28-aa83-4310-a7c4-c047e15ea0df"); - <FS:PP> Commented out for FIRE-3169: Option to change the default footsteps sound
 const LLUUID LLVOAvatar::sStepSounds[LL_MCODE_END] =
@@ -7813,7 +7822,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             mDeferredVisible = visible;
             mRootInJob = root_in_job;
             mDeferredSpeed = speed;
-            sMotionUpdateBatch->push_back(this);
+            pushMotionBatch(this);
             return visible;
         }
     }
@@ -7838,7 +7847,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             mDeferredVisible = visible;
             mRootInJob = root_in_job;
             mDeferredSpeed = speed;
-            sMotionUpdateBatch->push_back(this);
+            pushMotionBatch(this);
             return visible;
         }
     }

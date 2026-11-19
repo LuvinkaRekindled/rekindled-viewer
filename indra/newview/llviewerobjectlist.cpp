@@ -1198,6 +1198,109 @@ struct PalAsync
 PalAsync sPalAsync;
 std::atomic<bool> sPalAsyncActive{ false };
 
+// <FS> D2b (PLAN-avatars-100.md, RK_VK_BLENDOVERLAP, default off): the pose blend of the avatars of the batch is launched in chunks of kChunk while the serial idle loop goes on (each avatar joins the batch at the
+// end of its own serial part, LLVOAvatar::pushMotionBatch), and joined where the batch used to be run. The blend is the pose job of an avatar that nothing else reads or writes between the end of its serial part and the
+// completion (the idle loop of an avatar and of the objects after it never reads another avatar's joints: attachments return early in LLViewerObject::idleUpdate), and it does not touch the pipeline's queues
+// (the batch is launched neutral, as the palette jobs are). The control avatars worn by an avatar (hostJobOwned) are placed from their host's final pose: they stay in the second phase.
+bool rk_blend_overlap_on()
+{
+    static const bool on = getenv("RK_VK_BLENDOVERLAP") && atoi(getenv("RK_VK_BLENDOVERLAP")) != 0;
+    return on;
+}
+struct BlendChunk
+{
+    std::vector<LLVOAvatar*> mAvatars;      // (raw pointers: the batch holds the references until the completions)
+    std::function<void(size_t)> mFn;
+};
+struct BlendOverlap
+{
+    static constexpr size_t kChunk = 8;
+    std::vector<LLVOAvatar*> mPending;      // joined the batch, not launched yet
+    std::vector<std::pair<RKForkJoinPool::Handle, std::shared_ptr<BlendChunk> > > mFlight;
+    U64 mBatches = 0, mChunks = 0, mLaunchedEarly = 0, mFinalLaunched = 0, mInline = 0;
+} sBlendOverlap;
+
+static void blend_overlap_launch(RKForkJoinPool* pool)
+{
+    std::shared_ptr<BlendChunk> chunk = std::make_shared<BlendChunk>();
+    chunk->mAvatars.swap(sBlendOverlap.mPending);
+    BlendChunk* raw = chunk.get();
+    chunk->mFn = [raw](size_t k) { raw->mAvatars[k]->runDeferredMotionBlend(); };
+    RKForkJoinPool::Label label("avatar motion batch (overlapped)");
+    const RKForkJoinPool::Handle handle = pool->launch(chunk->mAvatars.size(), chunk->mFn, true);
+    sBlendOverlap.mFlight.push_back(std::make_pair(handle, chunk));
+    ++sBlendOverlap.mChunks;
+}
+
+static void blend_overlap_pushed(LLVOAvatar* avatar)
+{
+    if (avatar->isControlAvatar() && static_cast<LLControlAvatar*>(avatar)->hostJobOwned())
+    {
+        return;
+    }
+    sBlendOverlap.mPending.push_back(avatar);
+    if (sBlendOverlap.mPending.size() >= BlendOverlap::kChunk)
+    {
+        sBlendOverlap.mLaunchedEarly += sBlendOverlap.mPending.size();
+        blend_overlap_launch(RKForkJoinPool::shared());
+    }
+}
+
+// before the idle loop: the pushes launch chunks; after it (blend_overlap_end) they do not
+static bool blend_overlap_begin(bool parallel_motion)
+{
+    sBlendOverlap.mPending.clear();
+    sBlendOverlap.mFlight.clear();
+    if (!parallel_motion || !rk_blend_overlap_on() || !RKForkJoinPool::shared() || gRKAvTimersOn || RKAttCensus::sOn)
+    {
+        return false;
+    }
+    LLVOAvatar::sMotionBatchPushed = blend_overlap_pushed;
+    return true;
+}
+static void blend_overlap_end()
+{
+    LLVOAvatar::sMotionBatchPushed = nullptr;
+}
+
+// where the batch's blend was run: launches the avatars not launched yet (the rest of the batch), joins every chunk; false = nothing was launched early (the caller runs the batch as it always did)
+static bool blend_overlap_finish(RKForkJoinPool* pool)
+{
+    if (sBlendOverlap.mFlight.empty() && sBlendOverlap.mPending.empty())
+    {
+        return false;
+    }
+    if (!sBlendOverlap.mPending.empty())
+    {
+        if (pool && sBlendOverlap.mPending.size() >= 2)
+        {
+            sBlendOverlap.mFinalLaunched += sBlendOverlap.mPending.size();
+            blend_overlap_launch(pool);
+        }
+        else
+        {
+            for (LLVOAvatar* a : sBlendOverlap.mPending)
+            {
+                a->runDeferredMotionBlend();
+                ++sBlendOverlap.mInline;
+            }
+            sBlendOverlap.mPending.clear();
+        }
+    }
+    for (auto& flight : sBlendOverlap.mFlight)
+    {
+        pool->join(flight.first);
+    }
+    sBlendOverlap.mFlight.clear();
+    static U64 batches = 0;
+    ++sBlendOverlap.mBatches;
+    if (++batches % 6000 == 0)
+    {
+        RK_DIAG("BlendOverlap") << "pose blend overlapped with the idle loop (D2b): " << (double)sBlendOverlap.mChunks / sBlendOverlap.mBatches << " chunks a batch, " << (double)sBlendOverlap.mLaunchedEarly / sBlendOverlap.mBatches
+            << " avatars launched during the loop, " << (double)sBlendOverlap.mFinalLaunched / sBlendOverlap.mBatches << " after it, " << (double)sBlendOverlap.mInline / sBlendOverlap.mBatches << " inline" << LL_ENDL;
+    }
+    return true;
+}
 
 void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
 {
@@ -1250,8 +1353,11 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         LL_PROFILE_ZONE_NAMED_CATEGORY_AVATAR("parallel motion blend");
         {
             RK_CPU_ZONE("motion batch: blend (launch to join)");
-            const std::function<void(size_t)> blend1 = [&blend](size_t k) { blend(phase1[k]); };
-            pool->runLabeled("avatar motion batch", phase1.size(), blend1);
+            if (!blend_overlap_finish(pool))        // (D2b: the blends launched during the idle loop are joined here; false = none were)
+            {
+                const std::function<void(size_t)> blend1 = [&blend](size_t k) { blend(phase1[k]); };
+                pool->runLabeled("avatar motion batch", phase1.size(), blend1);
+            }
         }
 
         // <FS> view rework A2: the attachment loops of the avatars of the batch run as pool jobs, each with its own record of the writes to shared state; the completion loop below replays
@@ -1286,9 +1392,12 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
     }
     else
     {
-        for (size_t i : phase1)
+        if (!blend_overlap_finish(pool))
         {
-            batch[i]->runDeferredMotionBlend();
+            for (size_t i : phase1)
+            {
+                batch[i]->runDeferredMotionBlend();
+            }
         }
     }
 
@@ -1618,6 +1727,7 @@ void LLViewerObjectList::update(LLAgent &agent)
         {
             LLVOAvatar::sMotionUpdateBatch = &motion_batch;
         }
+        blend_overlap_begin(parallelAvatarMotion);      // <FS> D2b: with RK_VK_BLENDOVERLAP the avatars' pose blends are launched as they join the batch
 
         const auto idle_loop_start = gRKAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
         for (std::vector<LLViewerObject*>::iterator idle_iter = idle_list.begin();
@@ -1649,6 +1759,7 @@ void LLViewerObjectList::update(LLAgent &agent)
         }
 
         LLVOAvatar::sMotionUpdateBatch = nullptr;
+        blend_overlap_end();
         if (!motion_batch.empty())
         {
             { RK_CPU_ZONE("objectlist: avatar motion batch"); run_avatar_motion_batch(motion_batch); }

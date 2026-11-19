@@ -488,6 +488,9 @@ public:
     // runs the batch (see LLViewerObjectList::update) and then calls
     // completeDeferredMotionUpdate() on each entry.
     static std::vector<LLPointer<LLVOAvatar> >* sMotionUpdateBatch;
+    // D2b (PLAN-avatars-100.md, RK_VK_BLENDOVERLAP): called as an avatar joins the batch (the end of its serial part); the object list launches the pose blend of a chunk of avatars from it while the idle loop goes on
+    static void (*sMotionBatchPushed)(LLVOAvatar*);
+    static void pushMotionBatch(LLVOAvatar* avatar);
     static S32      sNumVisibleChatBubbles;
     static bool     sDebugInvisible;
     static bool     sShowAttachmentPoints;
