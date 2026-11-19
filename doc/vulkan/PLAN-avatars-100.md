@@ -291,3 +291,22 @@ Of the 56 us of a main view avatar, the world walk is 16.8 us (0.375 ms a frame)
 **What decides it:** how many of an avatar's ~15 active motions win no joint at all (their sampling is the saving). Not measured: `flat_slot_blend` knows joint states, not motions. A counter needs the motion index beside each state in the slot. Not built.
 
 D1 is therefore a CPU win for machines with few cores (the pool competes with main and the render worker there), not for the 12-thread development machine where the pool sits at 17 to 19 percent a thread.
+
+### D1 outcome (2026-11-18, committed e7db962c5e)
+
+**What D1 turned out to be.** Stage B of `PLAN-avatars.md` (B1 flat blend, B2 flat curves, B2b pose vector and signature words, B2c scale guard) had already done most of what section 3 D1 describes, with compare modes, and the pose job is about 39 to 44 us for a seen avatar, about 5.7 us a motion (a short lap, about 70 avatars, 6.8 to 7.7 motions a job). The plan's 85 to 99 us and its target of 15 are not reachable on this build: what is left in a job is the keyframe sampling (about 9 us), the physics motion (about 7), the stand motion (about 3), the blend (about 11), `addMotion` (about 4) and the controller (about 5), and the procedural motions stay procedural. The one thing D1 still described and the code lacked was the cut at the first state that brings a channel's weight to 1.
+
+**Built (two switches, both default on):**
+- `RK_VK_SAMPLESKIP`: the controller keeps, while it walks the motions of the normal blend in order, the highest priority per joint (position and rotation) of the motions already added to the blend with a weight of at least 1, and a plain `LLKeyframeMotion` skips the position or rotation sampling of a joint state whose own priority is not higher (never a constraint joint, never the stand, walk or fall motions, never scale or additive motions). Mode 2 overwrites a skipped channel with NaN: 6,000,039 joints blended, 0 reads of a skipped channel; 976,445 channels skipped of 8.06 M joint states updated (about 6 percent of the channels).
+- `RK_VK_BLENDCUT`: the blend does not read a non-additive state of a channel whose weight sum is already exactly 1. 8 M joints compared: 99.8 percent bit equal, 1 joint differing by more than 1e-5 (1.37e-5, one float step).
+- Fair A/B (four short laps, no diagnostics, 69.7 to 70.3 avatars in all four): pose job per motion old 5.736 and 5.759 us, new 5.846 and 5.499 us: neutral within the noise.
+
+**Rejected after measuring: lazy sampling in the joint state getters** (a state samples a channel when it is first read). It was exact (0 of 16.9 M channels differed from the eager value; 28 percent of the channels were never read) but cost about 5.7 percent more per motion in a fair A/B (5.75 old, 6.08 new): the curves are sampled in blend order, joint by joint across motions, instead of motion by motion in the loop. The same saving done motion by motion (above) is neutral.
+
+**Mistakes on the way, kept so they are not repeated:**
+- The first A/B of the lazy version looked 28 percent slower: my own diagnostic counters (shared atomics, hit by nine pool threads) were on in the new path only, because the lap harness sets `RK_VK_DIAG=1`. A/B laps for a hot path use `H6_NODIAG=1`, and a counter in a hot path is per thread.
+- My first SAMPLESKIP cleared the pointers with a destructor at the end of each loop iteration, which writes into a motion that `deactivateMotionInstance` may just have deleted (a deprecated motion is excised with `delete`): a use-after-free write, heap corruption (`0xc0000374`) at startup in three laps. Nothing may touch a motion after `deactivateMotionInstance` in that loop; the pointers are now set and cleared around the update call.
+
+**Left of D1, and why it is not built:** the compiled plan rebuilt on events and the flat per-avatar pose arrays that replace the `LLJointState` objects. The procedural motions (physics, stand, walk, head, eyes, hands, emotes, the FS poser) all work through the `LLJointState` API; a plan that replaces it has to keep a state for each of them anyway, and the keyframe part that could move is the 9 us above, now cut at the first full-weight state. Open for Adam's call, not a measurement.
+
+**Not verified:** the picture (Adam's eye on animations: walks, dances, transitions, hands), a turning lap, unit tests.
