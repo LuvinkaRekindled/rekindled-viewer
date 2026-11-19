@@ -2120,7 +2120,7 @@ void LLPipeline::unlinkDrawable(LLDrawable *drawable)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
 
     assertInitialized();
-    rk_phase_check("unlinkDrawable");
+    rk_phase_check_pipeline("unlinkDrawable");
 
     LLPointer<LLDrawable> drawablep = drawable; // make sure this doesn't get deleted before we are done
 
@@ -4963,12 +4963,12 @@ void LLPipeline::markMoved(LLDrawable *drawablep, bool damped_motion)
         if (drawablep->isSpatialBridge())
         {
             if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_BRIDGE, drawablep, nullptr, nullptr, 0 }); }
-            else { rk_phase_check("markMoved: mMovedBridge"); mMovedBridge.push_back(drawablep); }
+            else { rk_phase_check_pipeline("markMoved: mMovedBridge"); mMovedBridge.push_back(drawablep); }
         }
         else
         {
             if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_LIST, drawablep, nullptr, nullptr, 0 }); }
-            else { rk_phase_check("markMoved: mMovedList"); mMovedList.push_back(drawablep); }
+            else { rk_phase_check_pipeline("markMoved: mMovedList"); mMovedList.push_back(drawablep); }
         }
         drawablep->setState(LLDrawable::ON_MOVE_LIST);
     }
@@ -5085,7 +5085,7 @@ void LLPipeline::markPartitionMove(LLDrawable* drawable)
     if (!drawable->isState(LLDrawable::PARTITION_MOVE) &&
         !drawable->getPositionGroup().equals3(LLVector4a::getZero()))
     {
-        rk_phase_check("markPartitionMove: mPartitionQ");
+        rk_phase_check_pipeline("markPartitionMove: mPartitionQ");
         drawable->setState(LLDrawable::PARTITION_MOVE);
         mPartitionQ.push_back(drawable);
     }
@@ -5114,7 +5114,7 @@ void LLPipeline::processPartitionQ()
 
 void LLPipeline::markMeshDirty(LLSpatialGroup* group)
 {
-    rk_phase_check("markMeshDirty: mMeshDirtyGroup");
+    rk_phase_check_pipeline("markMeshDirty: mMeshDirtyGroup");
     mMeshDirtyGroup.push_back(group);
 }
 
@@ -5136,7 +5136,7 @@ void LLPipeline::markRebuild(LLSpatialGroup* group)
         {
             llassert_always(!mGroupQ1Locked);
 
-            rk_phase_check("markRebuild: mGroupQ1");
+            rk_phase_check_pipeline("markRebuild: mGroupQ1");
             mGroupQ1.push_back(group);
             group->setState(LLSpatialGroup::IN_BUILD_Q1);
         }

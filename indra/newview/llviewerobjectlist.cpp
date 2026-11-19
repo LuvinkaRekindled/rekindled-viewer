@@ -1183,9 +1183,26 @@ struct AvClassCensus
 };
 AvClassCensus gAvClass;
 
+// <FS> the palette join off the main thread (RK_VK_PALJOIN, 1 default, 0 = the old launch and join in one): the palette jobs of the batch are launched at its end and joined later, before display() advances the frame
+// count (they read it) or before a request for a palette, whichever comes first. The avatars of the batch are held here until then (the caller clears its list). The touch serial is taken at the launch: a joint
+// touched while the jobs run makes the request rebuild that palette, it never reads one made from a half moved skeleton.
+struct PalAsync
+{
+    RKForkJoinPool* mPool = nullptr;
+    RKForkJoinPool::Handle mHandle;
+    std::vector<LLPointer<LLVOAvatar> > mBatch;
+    U32 mTarget = 0;
+    U32 mSerial = 0;
+    U64 mLaunches = 0, mWaited = 0, mTouched = 0, mWaitNs = 0, mDead = 0;
+};
+PalAsync sPalAsync;
+std::atomic<bool> sPalAsyncActive{ false };
+
+
 void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
+    LLVOAvatar::sPalJobsJoin();     // (the jobs of an earlier batch whose frame never reached display(): done before a new batch starts)
     const auto batch_start = gRKAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
 
     static const bool av_class = getenv("RK_VK_AVCLASS") != nullptr;
@@ -1356,7 +1373,26 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         rk_frame_palette_prepare((U32)gFrameCount + 1);      // <FS> P1 step 2: the coming frame's palette list begins (and takes its arena) before the jobs write into it
         static const bool pal_time = getenv("RK_VK_PALTIME") != nullptr;
         const auto pal_t0 = pal_time ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
-        if (pool && batch.size() >= MIN_PARALLEL_BATCH)
+        static const bool pal_async = !(getenv("RK_VK_PALJOIN") && atoi(getenv("RK_VK_PALJOIN")) == 0);
+        bool async_launched = false;
+        if (pal_async && pool && batch.size() >= MIN_PARALLEL_BATCH)
+        {
+            RK_CPU_ZONE("motion batch: palette jobs (launch only)");
+            sPalAsync.mBatch = batch;
+            sPalAsync.mTarget = (U32)gFrameCount + 1;
+            LLVOAvatar::sPalJobDone();      // (the touch serial of the launch)
+            sPalAsync.mSerial = LLJoint::sTouchSerial;
+            sPalAsync.mPool = pool;
+            static const std::function<void(size_t)> pal_job = [](size_t index) { sPalAsync.mBatch[index]->buildPalettesInJob(); };
+            {
+                RKForkJoinPool::Label label("avatar palettes");
+                sPalAsync.mHandle = pool->launch(sPalAsync.mBatch.size(), pal_job, true);      // (the palette jobs read joints, skins and their own avatar's cache: none of the pipeline's queues)
+            }
+            sPalAsyncActive.store(true, std::memory_order_release);
+            ++sPalAsync.mLaunches;
+            async_launched = true;
+        }
+        else if (pool && batch.size() >= MIN_PARALLEL_BATCH)
         {
             RK_CPU_ZONE("motion batch: palette jobs (launch to join)");
             const std::function<void(size_t)> pal_job = [&batch](size_t index) { batch[index]->buildPalettesInJob(); };
@@ -1369,19 +1405,22 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
                 avatar->buildPalettesInJob();
             }
         }
-        LLVOAvatar::sPalJobDone();
-        LLVOAvatar::sPalGpuFlush((U32)gFrameCount + 1);      // <FS> D3 stage 3a (RK_VK_PALGPU=1): what the GPU needs to make these palettes
-        if (rk_diag_on())
+        if (!async_launched)
         {
-            static U32 census_batches = 0;
-            if (++census_batches % 600 == 0)
+            LLVOAvatar::sPalJobDone();
+            LLVOAvatar::sPalGpuFlush((U32)gFrameCount + 1);      // <FS> D3 stage 3a (RK_VK_PALGPU=1): what the GPU needs to make these palettes
+            if (rk_diag_on())
             {
-                LLVOAvatar::skinSharingCensus(batch);
+                static U32 census_batches = 0;
+                if (++census_batches % 600 == 0)
+                {
+                    LLVOAvatar::skinSharingCensus(batch);
+                }
             }
-        }
-        if (pal_time)
-        {
-            LLVOAvatar::sPalJobWallNsAdd((U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - pal_t0).count());
+            if (pal_time)
+            {
+                LLVOAvatar::sPalJobWallNsAdd((U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - pal_t0).count());
+            }
         }
     }
     if (gRKAvTimersOn)
@@ -1393,6 +1432,47 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
         gRKAvBatchCount++;
     }
 }
+}
+
+// <FS> the join of the palette jobs (see PalAsync above). Main thread only; any other thread, or no jobs running, returns at once.
+void LLVOAvatar::sPalJobsJoin()
+{
+    if (!sPalAsyncActive.load(std::memory_order_acquire) || !on_main_thread())
+    {
+        return;
+    }
+    PalAsync& a = sPalAsync;
+    const auto t0 = std::chrono::steady_clock::now();
+    {
+        RK_CPU_ZONE("palettes: join (wait for the jobs)");
+        a.mPool->join(a.mHandle);
+    }
+    const U64 wait_ns = (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0).count();
+    sPalAsyncActive.store(false, std::memory_order_release);
+    a.mWaitNs += wait_ns;
+    a.mWaited += wait_ns > 20000 ? 1 : 0;                     // (more than 20 us: the jobs were not done when the main thread came to join)
+    // (a joint was touched between the launch and the join: the request rebuilds such a palette. Measured 2026-11-18: all of these are the login burst, a NEW avatar's buildCharacter from process_object_update, whose
+    // joints no job reads; the count stays flat after the first 600 launches)
+    a.mTouched += LLJoint::sTouchSerial != a.mSerial ? 1 : 0;
+    for (LLPointer<LLVOAvatar>& av : a.mBatch)
+    {
+        a.mDead += av.notNull() && av->isDead() ? 1 : 0;       // (an avatar that died while its palette job ran or after it)
+    }
+    LLVOAvatar::sPalGpuFlush(a.mTarget);
+    if (rk_diag_on())
+    {
+        static U32 census_batches = 0;
+        if (++census_batches % 600 == 0)
+        {
+            LLVOAvatar::skinSharingCensus(a.mBatch);
+        }
+        if (a.mLaunches % 600 == 0)
+        {
+            RK_DIAG("PalJoin") << "palette jobs joined later: " << a.mLaunches << " launches, " << a.mWaited << " joins that had to wait (" << (double)a.mWaitNs / 1.0e3 / a.mLaunches << " us a join on average), "
+                               << a.mTouched << " launches with a joint touched before the join, " << a.mDead << " avatars dead at the join" << LL_ENDL;
+        }
+    }
+    a.mBatch.clear();
 }
 
 void LLViewerObjectList::update(LLAgent &agent)

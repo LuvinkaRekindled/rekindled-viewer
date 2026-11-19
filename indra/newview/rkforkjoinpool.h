@@ -101,7 +101,8 @@ public:
     // main thread, every frame: logs and resets the per-label accounting every 600 frames (a few lines: family, ms a frame on all threads, of it on the main thread, jobs and batches a frame)
     static void reportLabels(unsigned frame_count);
 
-    Handle launch(size_t count, const std::function<void(size_t)>& fn)
+    // pipeline_neutral: the jobs read none of the pipeline's rebuild, moved, partition and unlink queues and lists (rkphasecheck.h): a writer of those on the main thread beside this batch is not reported
+    Handle launch(size_t count, const std::function<void(size_t)>& fn, bool pipeline_neutral = false)
     {
         if (count == 0)
         {
@@ -116,7 +117,8 @@ public:
                 if (mBatches[i].mActive.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
                 {
                     slot = i;
-                    RKPhaseCheck::sPhaseDepth.fetch_add(1, std::memory_order_relaxed);      // (GPU-LIFETIMES.md step 4: a parallel phase is running until the join ends)
+                    mBatches[i].mNeutral = pipeline_neutral;
+                    (pipeline_neutral ? RKPhaseCheck::sPhaseDepthNeutral : RKPhaseCheck::sPhaseDepth).fetch_add(1, std::memory_order_relaxed);      // (GPU-LIFETIMES.md step 4: a parallel phase is running until the join ends)
                     break;
                 }
             }
@@ -242,7 +244,7 @@ public:
             }
         }
         b.mFn = nullptr;
-        RKPhaseCheck::sPhaseDepth.fetch_sub(1, std::memory_order_relaxed);
+        (b.mNeutral ? RKPhaseCheck::sPhaseDepthNeutral : RKPhaseCheck::sPhaseDepth).fetch_sub(1, std::memory_order_relaxed);
         b.mActive.store(false, std::memory_order_release);      // (the slot can be launched again; its claim word already has the index at the count)
     }
 
@@ -363,6 +365,7 @@ private:
         const std::function<void(size_t)>* mFn = nullptr;
         const char* mLabel = nullptr;
         size_t mCount = 0;
+        bool mNeutral = false;                           // launched with pipeline_neutral: counted in sPhaseDepthNeutral, not sPhaseDepth
     };
 
     // the per-label accounting (RK_VK_POOL_LABELS): a few families, found by the address of their label string
