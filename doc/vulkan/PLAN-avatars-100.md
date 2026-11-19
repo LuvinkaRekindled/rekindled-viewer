@@ -468,3 +468,16 @@ Where it stands: about 0.87 ms of the 7.82 ms loop is the main thread's avatar w
 **Checked:** key check rk3s4, 20,000 faces, 6,463 keys: 0 differing floats in every array; not compared (the fill does not write them): weights of 2,416 faces, texcoord1/2 of 1,253 faces. Cache lap rk2s4: 12,089 faces attached (4.49M vertices not filled), 5,500 buffers filled, 0 blocked, 0 mismatches, guard 3 times. The key check does not count planar or animated faces, so the 0 does not show that any were in the crowd.
 
 **A/B (zoff, cache off, zones lap) was run and not compared:** Adam: "we don't need off/on laps", after I had said the cache skips work. The cost of the planning on the main thread is therefore unmeasured. Log `zoff-def1` is in run-logs.
+
+### What D4 still owes D5, read from the code (2026-11-19)
+
+**How a rigged draw names its geometry today.** A draw is a `GeoEntry` (llrender/rkvkbridge.h): a vertex buffer id, an index buffer id, first index and index count, byte offsets of every array in the vertex buffer (normal, texcoords 0 to 2, colour, emissive, tangent, weight4), the palette's offset in the frame's list and its joint count, and (since D4 1b-1, off) a constant colour and map matrix slots. The worker keeps the entries of a group in a persistent table (RETAIN_GEO, PREPARE_GEO) and draws by pass type; the pull shaders read the arrays by address. A cache face is the same entry with the shared buffer's ids and offsets: the cache needs no change downstream, which is why stages 1b-3 to 4 touched only `genDrawInfo` and the key. What I did not read: how the worker stores a buffer (one allocation each or sub-allocated) and where the index buffer binds happen per run: that is what "one arena" in D5 depends on.
+
+**How a level of detail change flows.** `LLVOVolume::updateLOD` (llvovolume.cpp:2191): `calcLOD` changes the object's level, `markRebuild(REBUILD_VOLUME)`; `lodOrSculptChanged` calls `setVolume` with the new detail (a different LLVolume: the mesh asset's block for that level), regenerates faces if their count changed, and `rebuildGeom` re-plans the group. With the cache this is a key lookup (the detail is in the key): a level another avatar already uses is a hit with no fill, an unseen one fills one buffer. It is still a rebuild on the main thread per object per change, with a volume per level.
+
+**What D5 needs and the cache does not give:**
+1. The level chosen per frame on the GPU (the plan's index range per level inside one store entry): the cache holds one buffer per (asset, level, skin, material state), so a level change is a rebuild and a re-keyed entry, not a per frame choice. A store keyed by (asset, skin) holding every level's vertices and index ranges is the original D4 design; the cache's buffers could become its members, but that is a new stage.
+2. Rows that persist without per frame copies: the worker already keeps a persistent table; the rigged paths still copy whole stored rows per frame (the geo_prepare part D5 deletes). That is D5's own work.
+3. One arena for the index data (no bind per run): not read.
+
+**What D2 needs:** the plan puts the pipeline-owned writes (bridges, moved list) with D5's owner loops over all avatars per view, not with the class coverage; nothing in stages 1b-3 to 4 changes them.
