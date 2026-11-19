@@ -837,6 +837,28 @@
                 <integer>0</integer>
             </array>
         </map>
+    <key>floater_vis_camera</key>
+        <map>
+        <key>Comment</key>
+            <string>Window Visibility for camera (Camera Controls). Shown by default.</string>
+        <key>Persist</key>
+            <integer>1</integer>
+        <key>Type</key>
+            <string>Boolean</string>
+        <key>Value</key>
+            <integer>1</integer>
+        </map>
+    <key>floater_vis_moveview</key>
+        <map>
+        <key>Comment</key>
+            <string>Window Visibility for moveview (walk, run, fly). Shown by default.</string>
+        <key>Persist</key>
+            <integer>1</integer>
+        <key>Type</key>
+            <string>Boolean</string>
+        <key>Value</key>
+            <integer>1</integer>
+        </map>
     <key>LockBridgeFolder</key>
         <map>
         <key>Comment</key>

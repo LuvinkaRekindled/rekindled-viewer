@@ -4,8 +4,8 @@
     header_height="0"
     bg_opaque_image="Window_NoTitle_Foreground"
     bg_alpha_image="Window_NoTitle_Foreground"
-    right="-460"
-    bottom="-50"
+    right="-708"
+    bottom="-1"
     can_dock="false"
     can_minimize="false"
     can_resize="true"
@@ -22,7 +22,7 @@
     save_visibility="true"
     show_title="false"
     single_instance="true"
-    width="170"
+    width="155"
     min_width="155">
   <floater.string name="rotate_tooltip">
         Rotate Camera Around Focus

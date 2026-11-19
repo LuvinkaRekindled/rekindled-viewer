@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <floater
  positioning="specified"
- right="-693"
- bottom="-50"
+ right="-863"
+ bottom="-1"
  legacy_header_height="15"
  bg_opaque_image="Window_NoTitle_Foreground"
  bg_alpha_image="Window_NoTitle_Foreground"
@@ -10,7 +10,7 @@
  can_minimize="false"
  can_close="false"
  can_resize="true"
- height="78"
+ height="90"
  layout="topleft"
  min_height="82"
  min_width="86"
@@ -21,7 +21,7 @@
  single_instance="true"
  chrome="true"
  show_title="false"
- width="86">
+ width="87">
     <string
      name="walk_forward_tooltip">
         Walk Forward (press Up Arrow or W)
