@@ -31,7 +31,8 @@ struct FrameHeader
     U32 mAnchorActive;                      // 1: the palettes of this frame are relative to it
     U32 mEntries;
     U32 mAvatars;
-    U32 mPad[2];
+    U32 mArena;                             // the index of the arena of this frame (RKVkBridge::paletteArenaIndexOf(frame))
+    U32 mPrevArena;                         // the index of the arena of the frame before: the entries' previous palettes are read from it
 };
 static_assert(sizeof(FrameHeader) == 32, "layout");
 
@@ -45,8 +46,11 @@ struct BuildEntry
     U32 mPrevFrame;                         // the viewer frame whose arena holds this entry's palette of the frame before (kNone: no history)
     U32 mPrevFloat;                         // its float offset there
     U32 mRelative;                          // 1: made from the avatar's relative world matrices
+    F32 mScale;                             // the moving scale (rk_palette_moving_scale): 1.5 x focal pixels / distance, 0 when the flag is not made for this avatar
+    U32 mFlags;                             // kFlagSkipPrev: the CPU had a previous palette but this entry's slice of the frame before is not known (rebuilt in the same frame, or not written): not compared
 };
-static_assert(sizeof(BuildEntry) == 32, "layout");
+static_assert(sizeof(BuildEntry) == 40, "layout");
+constexpr U32 kFlagSkipPrev = 1;
 
 struct AvatarRec
 {

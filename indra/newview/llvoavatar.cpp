@@ -14400,9 +14400,11 @@ void LLVOAvatar::buildPalettesInJob()
                 e.mCount = count;
                 const U64 slot = entry.mListSlot.load(std::memory_order_acquire);
                 e.mOutFloat = (U32)(slot >> 32) == target ? (U32)slot : RKVkPaletteGpu::kNone;
-                e.mPrevFrame = (U32)(palgpu_prev_slot >> 32) == target - 1 ? target - 1 : RKVkPaletteGpu::kNone;
+                e.mPrevFrame = entry.mHasPrev && (U32)(palgpu_prev_slot >> 32) == target - 1 ? target - 1 : RKVkPaletteGpu::kNone;
                 e.mPrevFloat = e.mPrevFrame != RKVkPaletteGpu::kNone ? (U32)palgpu_prev_slot : RKVkPaletteGpu::kNone;
                 e.mRelative = entry.mRebased ? 1 : 0;
+                e.mScale = rk_palette_moving_scale(getRenderPosition());
+                e.mFlags = entry.mHasPrev && e.mPrevFrame == RKVkPaletteGpu::kNone ? RKVkPaletteGpu::kFlagSkipPrev : 0;
                 palgpu_entries.push_back(e);
                 palgpu_relative = palgpu_relative || entry.mRebased;
             }
@@ -14496,6 +14498,8 @@ void LLVOAvatar::sPalGpuFlush(U32 frame)
     fh.mAnchorActive = rig.mActive ? 1 : 0;
     fh.mEntries = (U32)entries.size();
     fh.mAvatars = (U32)avatars.size();
+    fh.mArena = RKVkBridge::paletteArenaIndexOf(frame);
+    fh.mPrevArena = RKVkBridge::paletteArenaIndexOf(frame - 1);
     std::vector<U8> blob(sizeof(FrameHeader) + entries.size() * sizeof(BuildEntry) + avatars.size() * sizeof(AvatarRec) + worlds.size() * sizeof(F32));
     U8* at = blob.data();
     memcpy(at, &fh, sizeof(fh));

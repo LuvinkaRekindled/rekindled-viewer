@@ -56,6 +56,7 @@ void RKVkBridge::paletteArenaClear() {}
 bool RKVkBridge::paletteArenaInfo(U32, PaletteArena&) { return false; }
 void RKVkBridge::paletteArenaSent(U32, U64) {}
 void RKVkBridge::paletteArenaFree(U64) {}
+U32 RKVkBridge::paletteArenaIndexOf(U32) { return ~0u; }
 void RKVkBridge::upscale(const UpscaleArgs&) {}
 U32 RKVkBridge::rtShadowMode() { return 0; }
 bool RKVkBridge::rtLoadingGates() { return false; }
@@ -1591,6 +1592,12 @@ void RKVkBridge::paletteArenaSent(U32 index, U64 free_at_renderer_frame)
     while (cur < free_at_renderer_frame && !s.mFreeAt.compare_exchange_weak(cur, free_at_renderer_frame, std::memory_order_acq_rel))
     {
     }
+}
+
+U32 RKVkBridge::paletteArenaIndexOf(U32 frame)
+{
+    const U32 count = gPaletteArenaCount.load(std::memory_order_acquire);
+    return count ? frame % count : ~0u;
 }
 
 void RKVkBridge::paletteArenaFree(U64 renderer_frame)
