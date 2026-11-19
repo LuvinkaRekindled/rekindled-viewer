@@ -3518,10 +3518,13 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
         mNeedsExtentUpdate = ((thisFrame + mID.mData[0]) % upd_freq == 0);
     }
 
-    checkTextureLoading() ;
+    {
+        RK_CPU_ZONE("av idle: texture check, pixel area");
+        checkTextureLoading() ;
 
-    // force immediate pixel area update on avatars using last frames data (before drawable or camera updates)
-    setPixelAreaAndAngle(gAgent);
+        // force immediate pixel area update on avatars using last frames data (before drawable or camera updates)
+        setPixelAreaAndAngle(gAgent);
+    }
 
     // force asynchronous drawable update
     if(mDrawable.notNull())
@@ -3585,8 +3588,12 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
         gRKAvStatNs[AV_IDLE_PRE] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - idle_total_scope.mStart).count();
         gRKAvStatCount[AV_IDLE_PRE]++;
     }
-    bool detailed_update = updateCharacter(agent);
-    detailed_update = RKAvatarTable::attachmentLoop(this, detailed_update);     // <FS> stage A step 3: the gate of the attachment loop and the detailed presentation is the row's bit
+    bool detailed_update = false;
+    {
+        RK_CPU_ZONE("av idle: updateCharacter");
+        detailed_update = updateCharacter(agent);
+        detailed_update = RKAvatarTable::attachmentLoop(this, detailed_update);     // <FS> stage A step 3: the gate of the attachment loop and the detailed presentation is the row's bit
+    }
 
     if (mMotionUpdateDeferred)
     {
@@ -4806,6 +4813,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
     if (detailed_update)
     {
         AvSelfScope self_scope(6, this);
+        RK_CPU_ZONE("av post: attachment replay");
         if (mAttJobDone)
         {
             replayAttachmentJob();      // <FS> A2: the loop ran as a pool job, its writes are made now
@@ -4833,6 +4841,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
     if (isImpostor() && !mNeedsImpostorUpdate)
     {
         AvSelfScope self_scope(7, this);
+        RK_CPU_ZONE("av post: impostor checks");
         LL_ALIGN_16(LLVector4a ext[2]);
         F32 distance;
         LLVector3 angle;
@@ -4891,6 +4900,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
     if (mDrawable.notNull())
     {
         AvSelfScope self_scope(8, this);
+        RK_CPU_ZONE("av post: movePartition");
         mDrawable->movePartition();
 
         //force a move if sitting on an active object
