@@ -6,7 +6,7 @@
  *  1  (stage 1a, diagnostic) builds, for every rigged face the fill writes, the entry a shared store would hold with code of its own and compares it with what the face's own vertex buffer holds.
  *  3  (stage 1b-3, the key check, diagnostic) the faces are filled as always; the first face of each cache key leaves a snapshot of its arrays, every later face with the same key is compared with it
  *     array by array (positions, normals, texcoords of all channels, colour, emissive, tangents, weights, indices). 0 differences means the key names everything the bake depends on.
- *  2  (stage 1b-3, the cache) a rigged face of the class (default texgen, opaque, no glTF, no bump, no texture animation, not selected) whose key is already held by a buffer attaches to that buffer
+ *  2  (the default since stage 3; 0 = off) (stage 1b-3, the cache; stage 2 alpha faces, stage 3 glTF faces) a rigged face of the class (default texgen, no bump, no texture animation, not selected) whose key is already held by a buffer attaches to that buffer
  *     and is not filled: its buffer pointer is the shared buffer, its geometry and index start are 0. The first face of a key fills a buffer of its own (the existing getGeometryVolume) and the registry
  *     keeps it. A face of the cache is never written again (LLFace::mRigStore makes getGeometryVolume a no-op for it; rebuildMesh marks its group's geometry dirty instead). Everything downstream
  *     (draw infos, entry makers, fallbacks, shaders) sees a buffer that holds exactly what the face's own fill would have written.

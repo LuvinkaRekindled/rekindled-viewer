@@ -10,6 +10,7 @@
 #include "llface.h"
 #include "llviewerobject.h"
 #include "llmaterial.h"
+#include "llgltfmaterial.h"
 #include "llvolume.h"
 #include "llvertexbuffer.h"
 #include "llmatrix4a.h"
@@ -570,9 +571,11 @@ bool make_key(const LLFace* face, U32 mask, CKey& k)
     k.mSkin = skin->mHash;
     k.mFace = (U32)face->getTEOffset();
     k.mMask = mask;
-    const LLMaterial* mat = te->getMaterialParams().get();
-    LLColor4U colour(te->getColor());
-    if (!face->isInAlphaPool() && te->getGLTFRenderMaterial() == nullptr && (!mat || mat->getSpecularID().isNull()))
+    const LLGLTFMaterial* gltf = te->getGLTFRenderMaterial();
+    // (getGeometryVolume: a glTF face's colour is the material's base colour, no shiny in alpha, and neither the texture entry's nor the legacy material's transforms are baked: they are applied later, so those three transforms are the identity)
+    const LLMaterial* mat = gltf ? nullptr : te->getMaterialParams().get();
+    LLColor4U colour(gltf ? LLColor4U(gltf->mBaseColor) : LLColor4U(te->getColor()));
+    if (!face->isInAlphaPool() && !gltf && (!mat || mat->getSpecularID().isNull()))
     {
         static const F32 kShinyAlpha[4] = { 0.0000f, 0.25f, 0.5f, 0.75f };
         colour.mV[3] = (U8)(kShinyAlpha[te->getShiny() & 3] * 255);       // (the shininess goes in the alpha of the colour when there is no specular map: getGeometryVolume)
@@ -587,11 +590,15 @@ bool make_key(const LLFace* face, U32 mask, CKey& k)
         flags |= mat->getSpecularID().isNull() ? 0u : 4u;
     }
     flags |= face->isInAlphaPool() ? 8u : 0u;       // (the colour's alpha channel is baked by another rule in the alpha pool)
+    flags |= gltf ? 16u : 0u;
     k.mGlowAndFlags = glow | (flags << 8);
     F32 os = 0.f, ot = 0.f, ms = 1.f, mt = 1.f;
-    te->getOffset(&os, &ot);
-    te->getScale(&ms, &mt);
-    const F32 tx[5] = { te->getRotation(), os, ot, ms, mt };
+    if (!gltf)
+    {
+        te->getOffset(&os, &ot);
+        te->getScale(&ms, &mt);
+    }
+    const F32 tx[5] = { gltf ? 0.f : te->getRotation(), os, ot, ms, mt };
     memcpy(k.mX[0], tx, sizeof(tx));
     if (mat)
     {
@@ -620,22 +627,23 @@ extern U32 gFrameCount;
 
 int rk_rigstore_mode()
 {
-    static const int mode = getenv("RK_VK_RIGSTORE") ? atoi(getenv("RK_VK_RIGSTORE")) : 0;
+    static const int mode = getenv("RK_VK_RIGSTORE") ? atoi(getenv("RK_VK_RIGSTORE")) : 2;       // (default on since D4 stage 3: 0 = off, 1 = store compare, 3 = key check)
     return mode;
 }
 
 bool rk_rigcache_eligible(LLFace* face, bool distance_sort)
 {
-    if (distance_sort || !face->isState(LLFace::RIGGED) || face->mSkinInfo.isNull() || face->getGeomCount() == 0)
+    if (!face->isState(LLFace::RIGGED) || face->mSkinInfo.isNull() || face->getGeomCount() == 0)
     {
         return false;
     }
     const LLTextureEntry* te = face->getTextureEntry();
-    if (!te || te->getTexGen() != LLTextureEntry::TEX_GEN_DEFAULT || te->getGLTFRenderMaterial() != nullptr || te->getBumpmap() != 0)
+    if (!te || te->getTexGen() != LLTextureEntry::TEX_GEN_DEFAULT || te->getBumpmap() != 0)
     {
         return false;
     }
-    if (!distance_sort && (face->isInAlphaPool() || te->getColor().mV[3] < 0.999f))
+    const LLGLTFMaterial* gltf = te->getGLTFRenderMaterial();       // (D4 stage 3: a glTF face is baked from its base colour and with identity texture transforms, see make_key)
+    if (!distance_sort && (face->isInAlphaPool() || (gltf ? gltf->mBaseColor.mV[3] : te->getColor().mV[3]) < 0.999f))
     {
         return false;       // (an opaque kind's face is not transparent; the alpha kind's faces are, and are cached too since stage 2)
     }
@@ -751,7 +759,7 @@ std::unordered_map<CKey, std::shared_ptr<Snap>, CKeyHash> sSnaps;
 struct VerifyStats
 {
     std::atomic<U64> mFaces{ 0 }, mFirst{ 0 }, mCountDiffer{ 0 };
-    std::atomic<U64> mCompared[10]{}, mDiffer[10]{}, mTailDiffer[10]{};
+    std::atomic<U64> mCompared[10]{}, mDiffer[10]{}, mTailDiffer[10]{}, mNotWritten[10]{};      // (mNotWritten: faces whose array the fill does not write, so it holds whatever the buffer held: not compared)
     std::atomic<U32> mLogged{ 0 };
 } sVerify;
 const char* const kVArr[10] = { "position", "normal", "texcoord0", "colour", "emissive", "tangent", "weight", "texcoord1", "texcoord2", "index" };
@@ -885,8 +893,27 @@ void rk_rigcache_verify(LLFace* face, U32 mask)
         ++sVerify.mCountDiffer;
         return;
     }
+    // What getGeometryVolume writes (llface.cpp): the weights only when the volume face has them; texcoord 1 and 2 only for a face with a legacy material or a glTF material (a face with neither takes the
+    // cheap texcoord 0 path, a bump map is excluded from the class). The same key means the same material state, so the first face's snapshot is covered by the same test.
+    bool not_written[9] = {};
+    {
+        const LLTextureEntry* te = face->getTextureEntry();
+        LLViewerObject* vobj = face->getViewerObject();
+        const LLVolume* volume = vobj ? vobj->getVolume() : nullptr;
+        const S32 face_index = face->getTEOffset();
+        const bool has_weights = volume && face_index >= 0 && face_index < volume->getNumVolumeFaces() && volume->getVolumeFace(face_index).mWeights != nullptr;
+        const bool has_material = te && (te->getMaterialParams().notNull() || te->getGLTFRenderMaterial() != nullptr);
+        not_written[6] = !has_weights;
+        not_written[7] = !has_material;
+        not_written[8] = !has_material;
+    }
     for (int a = 0; a < 9; ++a)
     {
+        if (not_written[a])
+        {
+            ++sVerify.mNotWritten[a];
+            continue;
+        }
         if (ref->mA[a].size() != snap->mA[a].size())
         {
             ++sVerify.mDiffer[a];
@@ -925,6 +952,7 @@ void rk_rigcache_verify(LLFace* face, U32 mask)
         {
             text += std::string(kVArr[a]) + " " + std::to_string(sVerify.mDiffer[a].load()) + "/" + std::to_string(sVerify.mCompared[a].load()) + (a < 9 ? " (tail " + std::to_string(sVerify.mTailDiffer[a].load()) + "), " : "");
         }
-        RK_DIAG("RigCache") << "faces with the same key compared: " << faces << " faces seen, " << sVerify.mFirst.load() << " keys, vertex count differs " << sVerify.mCountDiffer.load() << "; differing / compared: " << text << LL_ENDL;
+        RK_DIAG("RigCache") << "faces with the same key compared: " << faces << " faces seen, " << sVerify.mFirst.load() << " keys, vertex count differs " << sVerify.mCountDiffer.load() << "; differing / compared: " << text
+                            << "; faces whose fill does not write the array (not compared): weight " << sVerify.mNotWritten[6].load() << ", texcoord1 " << sVerify.mNotWritten[7].load() << ", texcoord2 " << sVerify.mNotWritten[8].load() << LL_ENDL;
     }
 }
