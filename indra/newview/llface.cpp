@@ -29,6 +29,7 @@
 #include "lldrawable.h" // lldrawable needs to be included before llface
 #include "llface.h"
 #include "rkmatrixtable.h"
+#include "rkrigstore.h"
 
 static_assert(LLRender::NUM_TEXTURE_CHANNELS == 7, "RKFaceRow::recIdx (rkfacetable.h) has one slot per texture channel");   // <FS> C3.3
 #include "llviewertextureanim.h"
@@ -1556,6 +1557,11 @@ bool LLFace::getGeometryVolume(const LLVolume& volume,
                                 bool rebuild_for_gltf)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_FACE;
+    if (mRigStore)
+    {
+        rk_rigstore_note_blocked();     // <FS> D4 1b-3: a shared buffer is never written in place
+        return true;
+    }
     if (!sStampedByCaller) stampTextures();        // <FS> a rebuild of the face's vertices and texture coordinates is how a change of the texture entry (scale, offset, colour) reaches the face: the texture priority cache starts over
     llassert(verify());
 

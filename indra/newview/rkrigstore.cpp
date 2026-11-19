@@ -6,7 +6,10 @@
 
 #include "rkrigstore.h"
 
+#include "lldrawable.h"      // (before llface.h)
 #include "llface.h"
+#include "llviewerobject.h"
+#include "llmaterial.h"
 #include "llvolume.h"
 #include "llvertexbuffer.h"
 #include "llmatrix4a.h"
@@ -26,8 +29,7 @@
 
 bool rk_rigstore_on()
 {
-    static const bool on = getenv("RK_VK_RIGSTORE") && atoi(getenv("RK_VK_RIGSTORE")) != 0;
-    return on;
+    return rk_rigstore_mode() == 1;
 }
 
 namespace
@@ -506,5 +508,418 @@ void rk_rigstore_compare(LLFace* face, const LLVolume& volume, U32 te_idx)
                             << ", faces without normals " << sStats.mNoNormals.load() << ", compares that found their entry already there " << sStats.mReused.load() << ", distinct face objects " << distinct_faces << " using "
                             << used_entries << " entries (" << multi_entries << " used by two or more distinct faces), distinct faces' shared arrays " << sStats.mDistinctBytes.load() / 1048576.0 << " MB against the store's "
                             << sStats.mStoreBytes.load() / 1048576.0 << " MB (every compare: " << sStats.mFaceBytes.load() / 1048576.0 << " MB); differing / compared: " << diff << LL_ENDL;
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// D4 stage 1b-3: the cache of baked rigged face buffers (see rkrigstore.h)
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+namespace
+{
+struct CKey
+{
+    LLUUID mAsset;
+    S32 mDetail = 0;
+    U64 mSkin = 0;
+    U32 mFace = 0, mMask = 0, mColour = 0, mGlowAndFlags = 0;
+    F32 mX[3][5] = {};          // the texture coordinate transforms: the texture entry's, the material's normal map and specular map: rotation, offset s and t, repeat s and t
+    bool operator==(const CKey& o) const
+    {
+        return mAsset == o.mAsset && mDetail == o.mDetail && mSkin == o.mSkin && mFace == o.mFace && mMask == o.mMask && mColour == o.mColour && mGlowAndFlags == o.mGlowAndFlags && memcmp(mX, o.mX, sizeof(mX)) == 0;
+    }
+};
+struct CKeyHash
+{
+    size_t operator()(const CKey& k) const
+    {
+        size_t h = (size_t)k.mAsset.getDigest64();
+        auto mix = [&h](size_t v) { h = h * 1099511628211ull ^ v; };
+        mix((size_t)k.mSkin);
+        mix((size_t)(U32)k.mDetail);
+        mix(k.mFace);
+        mix(k.mMask);
+        mix(k.mColour);
+        mix(k.mGlowAndFlags);
+        for (int a = 0; a < 3; ++a)
+        {
+            for (int b = 0; b < 5; ++b)
+            {
+                U32 bits;
+                memcpy(&bits, &k.mX[a][b], 4);
+                mix(bits);
+            }
+        }
+        return h;
+    }
+};
+
+// everything the bake of a rigged face's arrays depends on (llface.cpp getGeometryVolume): the asset and the skin (positions, normals, tangents, weights, indices, base texcoords), the colour with the shiny in alpha
+// rule, the glow, and the three texture transforms. The texture itself is not in it (it is the draw's, not the buffer's), nor is the texture index (0 for a face that is not batched).
+bool make_key(const LLFace* face, U32 mask, CKey& k)
+{
+    const LLTextureEntry* te = face->getTextureEntry();
+    LLViewerObject* vobj = face->getViewerObject();
+    const LLVolume* volume = vobj ? vobj->getVolume() : nullptr;
+    const LLMeshSkinInfo* skin = face->mSkinInfo.get();
+    if (!te || !volume || !skin)
+    {
+        return false;
+    }
+    k.mAsset = volume->getParams().getSculptID();
+    k.mDetail = (S32)lroundf(volume->getDetail() * 1000.f);
+    k.mSkin = skin->mHash;
+    k.mFace = (U32)face->getTEOffset();
+    k.mMask = mask;
+    const LLMaterial* mat = te->getMaterialParams().get();
+    LLColor4U colour(te->getColor());
+    if (!face->isInAlphaPool() && te->getGLTFRenderMaterial() == nullptr && (!mat || mat->getSpecularID().isNull()))
+    {
+        static const F32 kShinyAlpha[4] = { 0.0000f, 0.25f, 0.5f, 0.75f };
+        colour.mV[3] = (U8)(kShinyAlpha[te->getShiny() & 3] * 255);       // (the shininess goes in the alpha of the colour when there is no specular map: getGeometryVolume)
+    }
+    k.mColour = colour.asRGBA();
+    const U32 glow = (U32)llclamp((S32)(te->getGlow() * 255), 0, 255);
+    U32 flags = 0;
+    if (mat)
+    {
+        flags |= 1u;
+        flags |= mat->getNormalID().isNull() ? 0u : 2u;
+        flags |= mat->getSpecularID().isNull() ? 0u : 4u;
+    }
+    k.mGlowAndFlags = glow | (flags << 8);
+    F32 os = 0.f, ot = 0.f, ms = 1.f, mt = 1.f;
+    te->getOffset(&os, &ot);
+    te->getScale(&ms, &mt);
+    const F32 tx[5] = { te->getRotation(), os, ot, ms, mt };
+    memcpy(k.mX[0], tx, sizeof(tx));
+    if (mat)
+    {
+        F32 a = 0.f, b = 0.f, c = 1.f, d = 1.f;
+        mat->getNormalOffset(a, b);
+        mat->getNormalRepeat(c, d);
+        const F32 nx[5] = { mat->getNormalRotation(), a, b, c, d };
+        memcpy(k.mX[1], nx, sizeof(nx));
+        mat->getSpecularOffset(a, b);
+        mat->getSpecularRepeat(c, d);
+        const F32 sx[5] = { mat->getSpecularRotation(), a, b, c, d };
+        memcpy(k.mX[2], sx, sizeof(sx));
+    }
+    return true;
+}
+
+std::unordered_map<CKey, LLPointer<LLVertexBuffer>, CKeyHash> sRegistry;       // main thread only: the cache's buffers (a strong pointer each: a buffer lives while a face holds it or the registry does; the sweep gives up those nobody holds)
+U32 sLastSweep = 0;
+struct CacheStats
+{
+    std::atomic<U64> mHits{ 0 }, mMisses{ 0 }, mIneligible{ 0 }, mMismatch{ 0 }, mReleased{ 0 }, mSwept{ 0 }, mBlocked{ 0 }, mHitVerts{ 0 }, mFillVerts{ 0 }, mPlans{ 0 };
+} sCache;
+}
+
+extern U32 gFrameCount;
+
+int rk_rigstore_mode()
+{
+    static const int mode = getenv("RK_VK_RIGSTORE") ? atoi(getenv("RK_VK_RIGSTORE")) : 0;
+    return mode;
+}
+
+bool rk_rigcache_eligible(LLFace* face, bool distance_sort)
+{
+    if (distance_sort || !face->isState(LLFace::RIGGED) || face->mSkinInfo.isNull() || face->getGeomCount() == 0)
+    {
+        return false;
+    }
+    const LLTextureEntry* te = face->getTextureEntry();
+    if (!te || te->getTexGen() != LLTextureEntry::TEX_GEN_DEFAULT || face->isInAlphaPool() || te->getGLTFRenderMaterial() != nullptr || te->getBumpmap() != 0 || te->getColor().mV[3] < 0.999f)
+    {
+        return false;
+    }
+    if (face->isState(LLFace::TEXTURE_ANIM) || face->mTextureMatrix || face->hasSelectionBuffer())
+    {
+        return false;
+    }
+    LLViewerObject* vobj = face->getViewerObject();
+    LLDrawable* drawable = face->getDrawable();
+    return vobj && !vobj->isSelected() && drawable && !drawable->isState(LLDrawable::ANIMATED_CHILD);
+}
+
+int rk_rigcache_plan(LLFace* face, U32 mask, bool batch_textures, LLPointer<LLVertexBuffer>& buffer)
+{
+    CKey key;
+    if (!make_key(face, mask, key))
+    {
+        ++sCache.mIneligible;
+        return 0;
+    }
+    const U32 verts = face->getGeomCount(), indices = face->getIndicesCount();
+    auto it = sRegistry.find(key);
+    if (it != sRegistry.end())
+    {
+        LLVertexBuffer* vb = it->second.get();
+        if (vb->getNumVerts() != verts || vb->getNumIndices() != indices)
+        {
+            ++sCache.mMismatch;         // (the key does not name the geometry: the face goes the normal way)
+            return 0;
+        }
+        face->setVertexBuffer(vb);
+        face->setGeomIndex(0);
+        face->setIndicesIndex(0);
+        face->setTextureIndex(batch_textures ? 0 : FACE_DO_NOT_BATCH_TEXTURES);
+        face->mRigStore = true;
+        ++sCache.mHits;
+        sCache.mHitVerts += verts;
+        buffer = nullptr;
+        return 1;
+    }
+    LLPointer<LLVertexBuffer> vb = new LLVertexBuffer(mask);
+    if (!vb->allocateBuffer(verts, indices))
+    {
+        ++sCache.mIneligible;
+        return 0;
+    }
+    sRegistry.emplace(key, vb);
+    buffer = vb;
+    face->setTextureIndex(batch_textures ? 0 : FACE_DO_NOT_BATCH_TEXTURES);
+    face->mRigStore = true;
+    ++sCache.mMisses;
+    sCache.mFillVerts += verts;
+    const U64 plans = ++sCache.mPlans + sCache.mHits.load();
+    (void)plans;
+    static const bool diag = getenv("RK_VK_DIAG") != nullptr;
+    if (diag && (sCache.mMisses.load() % 500) == 0)
+    {
+        RK_DIAG("RigCache") << "rigged face buffers: " << sCache.mHits.load() << " faces attached to a cached buffer (" << sCache.mHitVerts.load() << " vertices not filled), " << sCache.mMisses.load() << " buffers made and filled ("
+                            << sCache.mFillVerts.load() << " vertices), " << sRegistry.size() << " in the registry, released " << sCache.mReleased.load() << ", swept " << sCache.mSwept.load() << ", writes blocked by the guard "
+                            << sCache.mBlocked.load() << ", key mismatches " << sCache.mMismatch.load() << ", not handled " << sCache.mIneligible.load() << LL_ENDL;
+    }
+    return 2;
+}
+
+void rk_rigcache_release(LLFace* face)
+{
+    if (face->mRigStore)
+    {
+        face->setVertexBuffer(nullptr);
+        face->mRigStore = false;
+        ++sCache.mReleased;
+    }
+}
+
+void rk_rigcache_sweep()
+{
+    if (gFrameCount - sLastSweep < 300)
+    {
+        return;
+    }
+    sLastSweep = gFrameCount;
+    for (auto it = sRegistry.begin(); it != sRegistry.end(); )
+    {
+        if (it->second->getNumRefs() == 1)
+        {
+            it = sRegistry.erase(it);
+            ++sCache.mSwept;
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+void rk_rigstore_note_blocked()
+{
+    ++sCache.mBlocked;
+}
+
+// ---- mode 3: the key check ----
+namespace
+{
+struct Snap
+{
+    U32 mVerts = 0;
+    U32 mReal = 0;                  // the vertices the volume face really has (the rest of the face's range is padding no array write fills, except the positions)
+    std::vector<F32> mA[9];         // position (3), normal (3), texcoord 0 (2), colour (4), emissive (4), tangent (4), weights (4), texcoord 1 (2), texcoord 2 (2)
+    std::vector<U16> mIdx;          // minus the face's first vertex
+};
+std::mutex sVerifyMutex;
+std::unordered_map<CKey, std::shared_ptr<Snap>, CKeyHash> sSnaps;
+struct VerifyStats
+{
+    std::atomic<U64> mFaces{ 0 }, mFirst{ 0 }, mCountDiffer{ 0 };
+    std::atomic<U64> mCompared[10]{}, mDiffer[10]{}, mTailDiffer[10]{};
+    std::atomic<U32> mLogged{ 0 };
+} sVerify;
+const char* const kVArr[10] = { "position", "normal", "texcoord0", "colour", "emissive", "tangent", "weight", "texcoord1", "texcoord2", "index" };
+
+bool read_snap(LLFace* face, Snap& s)
+{
+    LLVertexBuffer* vb = face->getVertexBuffer();
+    if (!vb)
+    {
+        return false;
+    }
+    const U32 gi = face->getGeomIndex(), gc = face->getGeomCount();
+    s.mVerts = gc;
+    {
+        const LLVolume* volume = face->getViewerObject() ? face->getViewerObject()->getVolume() : nullptr;
+        s.mReal = gc;
+        if (volume && face->getTEOffset() >= 0 && face->getTEOffset() < volume->getNumVolumeFaces())
+        {
+            s.mReal = std::min<U32>(gc, (U32)volume->getVolumeFace(face->getTEOffset()).mNumVertices);
+        }
+    }
+    if (vb->hasDataType(LLVertexBuffer::TYPE_VERTEX))
+    {
+        LLStrider<LLVector4a> p;
+        if (vb->getVertexStrider(p, gi, gc))
+        {
+            s.mA[0].resize((size_t)3 * gc);
+            for (U32 i = 0; i < gc; ++i) { const F32* f = p[i].getF32ptr(); for (int k = 0; k < 3; ++k) { s.mA[0][(size_t)3 * i + k] = f[k]; } }
+        }
+    }
+    if (vb->hasDataType(LLVertexBuffer::TYPE_NORMAL))
+    {
+        LLStrider<LLVector4a> p;
+        if (vb->getNormalStrider(p, gi, gc))
+        {
+            s.mA[1].resize((size_t)3 * gc);
+            for (U32 i = 0; i < gc; ++i) { const F32* f = p[i].getF32ptr(); for (int k = 0; k < 3; ++k) { s.mA[1][(size_t)3 * i + k] = f[k]; } }
+        }
+    }
+    auto read_uv = [&](LLVertexBuffer::AttributeType type, int slot)
+    {
+        LLStrider<LLVector2> t;
+        if (!vb->hasDataType(type))
+        {
+            return;
+        }
+        const bool got = type == LLVertexBuffer::TYPE_TEXCOORD0 ? vb->getTexCoord0Strider(t, gi, gc) : (type == LLVertexBuffer::TYPE_TEXCOORD1 ? vb->getTexCoord1Strider(t, gi, gc) : vb->getTexCoord2Strider(t, gi, gc));
+        if (!got)
+        {
+            return;
+        }
+        s.mA[slot].resize((size_t)2 * gc);
+        for (U32 i = 0; i < gc; ++i) { s.mA[slot][(size_t)2 * i] = t[i].mV[0]; s.mA[slot][(size_t)2 * i + 1] = t[i].mV[1]; }
+    };
+    read_uv(LLVertexBuffer::TYPE_TEXCOORD0, 2);
+    read_uv(LLVertexBuffer::TYPE_TEXCOORD1, 7);
+    read_uv(LLVertexBuffer::TYPE_TEXCOORD2, 8);
+    if (vb->hasDataType(LLVertexBuffer::TYPE_COLOR))
+    {
+        LLStrider<LLColor4U> c;
+        if (vb->getColorStrider(c, gi, gc))
+        {
+            s.mA[3].resize((size_t)4 * gc);
+            for (U32 i = 0; i < gc; ++i) { for (int k = 0; k < 4; ++k) { s.mA[3][(size_t)4 * i + k] = (F32)c[i].mV[k]; } }
+        }
+    }
+    if (vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
+    {
+        LLStrider<LLColor4U> c;
+        if (vb->getEmissiveStrider(c, gi, gc))
+        {
+            s.mA[4].resize((size_t)4 * gc);
+            for (U32 i = 0; i < gc; ++i) { for (int k = 0; k < 4; ++k) { s.mA[4][(size_t)4 * i + k] = (F32)c[i].mV[k]; } }
+        }
+    }
+    if (vb->hasDataType(LLVertexBuffer::TYPE_TANGENT))
+    {
+        LLStrider<LLVector4a> p;
+        if (vb->getTangentStrider(p, gi, gc))
+        {
+            s.mA[5].resize((size_t)4 * gc);
+            for (U32 i = 0; i < gc; ++i) { const F32* f = p[i].getF32ptr(); for (int k = 0; k < 4; ++k) { s.mA[5][(size_t)4 * i + k] = f[k]; } }
+        }
+    }
+    if (vb->hasDataType(LLVertexBuffer::TYPE_WEIGHT4))
+    {
+        LLStrider<LLVector4a> p;
+        if (vb->getWeight4Strider(p, gi, gc))
+        {
+            s.mA[6].resize((size_t)4 * gc);
+            for (U32 i = 0; i < gc; ++i) { const F32* f = p[i].getF32ptr(); for (int k = 0; k < 4; ++k) { s.mA[6][(size_t)4 * i + k] = f[k]; } }
+        }
+    }
+    LLStrider<U16> idx;
+    if (vb->getIndexStrider(idx, face->getIndicesStart(), face->getIndicesCount()))
+    {
+        s.mIdx.resize(face->getIndicesCount());
+        for (U32 i = 0; i < face->getIndicesCount(); ++i) { s.mIdx[i] = (U16)(idx[i] - (U16)gi); }
+    }
+    return true;
+}
+}
+
+void rk_rigcache_verify(LLFace* face, U32 mask)
+{
+    CKey key;
+    if (!rk_rigcache_eligible(face, false) || !make_key(face, mask, key))
+    {
+        return;
+    }
+    const U64 faces = ++sVerify.mFaces;
+    std::shared_ptr<Snap> snap = std::make_shared<Snap>();
+    if (!read_snap(face, *snap))
+    {
+        return;
+    }
+    std::shared_ptr<Snap> ref;
+    {
+        std::lock_guard<std::mutex> lock(sVerifyMutex);
+        auto it = sSnaps.find(key);
+        if (it == sSnaps.end())
+        {
+            sSnaps.emplace(key, snap);
+            ++sVerify.mFirst;
+            return;
+        }
+        ref = it->second;
+    }
+    if (ref->mVerts != snap->mVerts)
+    {
+        ++sVerify.mCountDiffer;
+        return;
+    }
+    for (int a = 0; a < 9; ++a)
+    {
+        if (ref->mA[a].size() != snap->mA[a].size())
+        {
+            ++sVerify.mDiffer[a];
+            continue;
+        }
+        static const int kComps[9] = { 3, 3, 2, 4, 4, 4, 4, 2, 2 };
+        const size_t real_floats = (size_t)std::min(ref->mReal, snap->mReal) * kComps[a];
+        for (size_t i = 0; i < ref->mA[a].size(); ++i)
+        {
+            if (i >= real_floats)
+            {
+                sVerify.mTailDiffer[a] += differs(ref->mA[a][i], snap->mA[a][i]) ? 1 : 0;       // (the padding after the real vertices: not what a draw reads)
+                continue;
+            }
+            ++sVerify.mCompared[a];
+            if (differs(ref->mA[a][i], snap->mA[a][i]))
+            {
+                ++sVerify.mDiffer[a];
+                if (++sVerify.mLogged <= 12)
+                {
+                    LL_WARNS("RigCache") << "faces with the same key differ: " << kVArr[a] << " float " << i << ": first face " << ref->mA[a][i] << ", this face " << snap->mA[a][i] << ", mesh " << key.mAsset << " detail " << key.mDetail
+                                         << " face " << key.mFace << " skin " << key.mSkin << " mask " << key.mMask << LL_ENDL;
+                }
+            }
+        }
+    }
+    for (size_t i = 0; i < ref->mIdx.size() && i < snap->mIdx.size(); ++i)
+    {
+        ++sVerify.mCompared[9];
+        sVerify.mDiffer[9] += ref->mIdx[i] != snap->mIdx[i] ? 1 : 0;
+    }
+    if (faces % 4000 == 0)
+    {
+        std::string text;
+        for (int a = 0; a < 10; ++a)
+        {
+            text += std::string(kVArr[a]) + " " + std::to_string(sVerify.mDiffer[a].load()) + "/" + std::to_string(sVerify.mCompared[a].load()) + (a < 9 ? " (tail " + std::to_string(sVerify.mTailDiffer[a].load()) + "), " : "");
+        }
+        RK_DIAG("RigCache") << "faces with the same key compared: " << faces << " faces seen, " << sVerify.mFirst.load() << " keys, vertex count differs " << sVerify.mCountDiffer.load() << "; differing / compared: " << text << LL_ENDL;
     }
 }
