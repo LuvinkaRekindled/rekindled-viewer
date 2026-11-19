@@ -1370,6 +1370,7 @@ void run_avatar_motion_batch(std::vector<LLPointer<LLVOAvatar> >& batch)
             }
         }
         LLVOAvatar::sPalJobDone();
+        LLVOAvatar::sPalGpuFlush((U32)gFrameCount + 1);      // <FS> D3 stage 3a (RK_VK_PALGPU=1): what the GPU needs to make these palettes
         if (rk_diag_on())
         {
             static U32 census_batches = 0;

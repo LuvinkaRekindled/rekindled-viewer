@@ -378,6 +378,7 @@ public:
     std::vector<AttRow> mAttRows;
     U32 mAttRowsRevision = ~0u;
     void            rebuildAttRows();
+    static void     sPalGpuFlush(U32 frame);        // <FS> PLAN-avatars-100.md D3 stage 3a (RK_VK_PALGPU=1): after the palette jobs, the main thread sends what the GPU needs to make the palettes (skin blocks, the frame's entries and world arrays)
     static void     sPalJobDone();                  // (the palette jobs of a batch are done: remember the joint touch serial; a joint touched after it makes the job's palettes suspect)
     static void     sPalJobWallNsAdd(U64 ns);       // (RK_VK_PALTIME: the wall time of the palette jobs of a batch)
     bool            canRunAttachmentJob();

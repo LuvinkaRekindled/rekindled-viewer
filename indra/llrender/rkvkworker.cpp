@@ -15,6 +15,9 @@
 #if defined(RK_VULKAN)
 
 #include "rkvkbridge.h"
+#include "rkvkpalettegpu.h"     // <FS> PLAN-avatars-100.md D3 stage 3a: the records of kinds 44 and 45
+#include "rkhandletable.h"
+class LLMeshSkinInfo;       // (the handle table of skins: only a pointer is needed here)
 #include "llimage.h"            // <FS> rk_sparse_hash (describe_textures)
 #include "rkimagebc7.h"         // <FS> RKImageBC7::lookupLevel (the mip levels of a bake slot that are not what was uploaded)
 #include "rkvknative.h"
@@ -4918,6 +4921,112 @@ static void on_palette_arena(const RKVkBridge::ShadowPacketsHeader& h)
     palette_cpu_register(address, 4u * h.mPaletteFloats, arena.mPtr + h.mFragment);        // (the skin catcher's snapshot)
     RKVkBridge::paletteArenaSent(h.mEntries, Context::instance().getFrameNumber() + Context::frameCount() + 3);
     Context::instance().flight(Context::FL_PAL_SEG, (unsigned long long)h.mFragment, (unsigned long long)h.mPaletteFloats, (unsigned long long)address, (unsigned long long)h.mPass);
+}
+
+// <FS> PLAN-avatars-100.md D3 (palettes made on the GPU), stage 3a: the inputs of the palette arithmetic, kept or copied, counted, read by nothing yet (rkvkpalettegpu.h has the layouts).
+// kind 44: a skin block becomes a mapped device buffer, immutable, found by (skin handle, hash). It is given back when the handle no longer resolves (the skin is gone): destroyBuffer waits for the
+// frames that may still read it (GPU-LIFETIMES.md P4). kind 45: the frame's entries and world arrays are copied into the frame's palette scratch (P1).
+namespace
+{
+struct PalGpuSkin
+{
+    Buffer mBuf;
+    U32 mCount = 0;
+    U32 mHandle = 0;
+};
+std::unordered_map<U64, PalGpuSkin> sPalGpuSkins;       // by handle << 32 | hash; the render worker's thread only
+struct PalGpuStats
+{
+    U64 mBlocksMade = 0, mBlocksRetired = 0, mBlocksFailed = 0, mBuilds = 0, mEntries = 0, mAvatars = 0, mBytes = 0, mMissingBlock = 0, mScratchFailed = 0, mNoArena = 0;
+} sPalGpuStats;
+}
+
+static void on_palette_gpu_skin(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    const U32 count = h.mEntries;
+    if (!count || count > RKVkPaletteGpu::kJoints)
+    {
+        return;
+    }
+    const U64 key = ((U64)h.mFragment << 32) | h.mPass;
+    if (sPalGpuSkins.find(key) != sPalGpuSkins.end())
+    {
+        return;
+    }
+    const size_t bytes = (size_t)count * (16 * sizeof(F32) + sizeof(S32));
+    PalGpuSkin block;
+    block.mCount = count;
+    block.mHandle = h.mFragment;
+    if (!Context::instance().createBuffer((VkDeviceSize)bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::UploadDevice, block.mBuf) || !block.mBuf.mMapped || !block.mBuf.mAddress)
+    {
+        ++sPalGpuStats.mBlocksFailed;
+        return;
+    }
+    memcpy(block.mBuf.mMapped, blob, bytes);
+    sPalGpuSkins.emplace(key, std::move(block));
+    ++sPalGpuStats.mBlocksMade;
+}
+
+static void on_palette_gpu_build(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
+{
+    using namespace RKVkPaletteGpu;
+    const size_t bytes = sizeof(FrameHeader) + (size_t)h.mEntries * sizeof(BuildEntry) + (size_t)h.mMatrices * sizeof(AvatarRec) + 4 * (size_t)h.mPaletteFloats;
+    const BuildEntry* entries = (const BuildEntry*)(blob + sizeof(FrameHeader));
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        if (sPalGpuSkins.find(((U64)entries[i].mSkin << 32) | entries[i].mSkinHash) == sPalGpuSkins.end())
+        {
+            ++sPalGpuStats.mMissingBlock;
+        }
+        if (entries[i].mOutFloat == kNone)
+        {
+            ++sPalGpuStats.mNoArena;
+        }
+    }
+    Renderer::ScratchAlloc a = Renderer::instance().allocPaletteScratch((VkDeviceSize)bytes);
+    if (a.mPtr && a.mAddress)
+    {
+        memcpy(a.mPtr, blob, bytes);
+    }
+    else
+    {
+        ++sPalGpuStats.mScratchFailed;
+    }
+    ++sPalGpuStats.mBuilds;
+    sPalGpuStats.mEntries += h.mEntries;
+    sPalGpuStats.mAvatars += h.mMatrices;
+    sPalGpuStats.mBytes += bytes;
+    if (sPalGpuStats.mBuilds % 600 == 0)
+    {
+        RK_DIAG("PalGpu") << "palette inputs for the GPU, " << sPalGpuStats.mBuilds << " frames: " << (double)sPalGpuStats.mEntries / sPalGpuStats.mBuilds << " entries, " << (double)sPalGpuStats.mAvatars / sPalGpuStats.mBuilds
+                          << " avatars, " << (double)sPalGpuStats.mBytes / sPalGpuStats.mBuilds / 1024.0 << " KB a frame; skin blocks made " << sPalGpuStats.mBlocksMade << ", retired " << sPalGpuStats.mBlocksRetired
+                          << ", live " << sPalGpuSkins.size() << ", failed " << sPalGpuStats.mBlocksFailed << "; entries without a skin block " << sPalGpuStats.mMissingBlock << ", without an arena slot "
+                          << sPalGpuStats.mNoArena << ", scratch full " << sPalGpuStats.mScratchFailed << LL_ENDL;
+    }
+}
+
+// the blocks of skins that are gone: looked at about once a second (the handle no longer resolves)
+static void palette_gpu_pump(U64 frame)
+{
+    static U64 last = 0;
+    if (sPalGpuSkins.empty() || frame < last + 120)
+    {
+        return;
+    }
+    last = frame;
+    for (auto it = sPalGpuSkins.begin(); it != sPalGpuSkins.end(); )
+    {
+        if (RKHandleTable<LLMeshSkinInfo>::resolve(it->second.mHandle) == nullptr)
+        {
+            Context::instance().destroyBuffer(it->second.mBuf);
+            ++sPalGpuStats.mBlocksRetired;
+            it = sPalGpuSkins.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
 }
 
 static void on_palette_segment(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
@@ -12365,6 +12474,16 @@ void on_shadow_packets_impl(const RKVkBridge::ShadowPacketsHeader& h, const U8* 
         on_palette_ids(h, blob);
         return;
     }
+    if (h.mKind == RKVkPaletteGpu::kKindSkin)
+    {
+        on_palette_gpu_skin(h, blob);
+        return;
+    }
+    if (h.mKind == RKVkPaletteGpu::kKindBuild)
+    {
+        on_palette_gpu_build(h, blob);
+        return;
+    }
     if (h.mKind == 33)
     {
         on_light_volumes(h, blob);
@@ -12854,6 +12973,7 @@ void before_end_frame()
 
 void after_frame()
 {
+    palette_gpu_pump(Context::instance().getFrameNumber());
     {
         // <FS> RK_VK_PIN_WORKER=<logical cpu>: a test of what a core of its own does for the render worker (doc/vulkan/PLAN-texture-handles.md section 17.22)
         static bool pinned = false;
