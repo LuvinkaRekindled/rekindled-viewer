@@ -112,7 +112,22 @@ void main()
 
     const mat4 texmat = row_texture_matrix(row, TexMatTable(rk_packet_texmats));
     vary_texcoord0 = (texmat * vec4(RowVec2(row.texcoords).t[index], 0.0, 1.0)).xy;
-    vertex_color = unpackUnorm4x8(RowWords(row.colors).w[index]);
+    // D4 1b-1: a draw whose vertices all have one colour carries it in the row (flag 1024, pad.y) and the array is not read; flag 2048 also reads it and paints a vertex magenta where the two differ
+    if ((row.flags & 1024u) != 0u)
+    {
+        vertex_color = unpackUnorm4x8(row.pad.y);
+        if ((row.flags & 2048u) != 0u && vertex_color != unpackUnorm4x8(RowWords(row.colors).w[index]))
+        {
+            vertex_color = vec4(1.0, 0.0, 1.0, 1.0);
+        }
+    }
+    else
+    {
+        vertex_color = unpackUnorm4x8(RowWords(row.colors).w[index]);
+    }
+    // D4 1b-1: the normal map's and the specular map's channels have a texture matrix slot of their own when the row names one (skinPad2: low and high 16 bits), else the row's one, as before
+    const mat4 texmat1 = (row.skinPad2 & 0xFFFFu) != 0u ? texture_matrix_at(row.skinPad2 & 0xFFFFu, TexMatTable(rk_packet_texmats)) : texmat;
+    const mat4 texmat2 = (row.skinPad2 >> 16u) != 0u ? texture_matrix_at(row.skinPad2 >> 16u, TexMatTable(rk_packet_texmats)) : texmat;
 #ifdef GB_MATERIAL
     vary_slot = row.slots.x & 0xFFFFu;      // (a material draw has one diffuse texture)
 #else
@@ -131,7 +146,7 @@ void main()
 #ifdef MAT_NORMAL_MAP
     {
         const vec4 tangent = RowVec4(row.tangents).v[index];
-        vary_texcoord1 = (texmat * vec4(RowVec2(row.texcoords1).t[index], 0.0, 1.0)).xy;
+        vary_texcoord1 = (texmat1 * vec4(RowVec2(row.texcoords1).t[index], 0.0, 1.0)).xy;
 #ifdef HAS_SKIN
         vary_tangent = normalize(mat3(model.mv) * (skin_rotation * tangent.xyz));
 #else
@@ -141,7 +156,7 @@ void main()
     }
 #endif
 #ifdef MAT_SPEC_MAP
-    vary_texcoord2 = (texmat * vec4(RowVec2(row.texcoords2).t[index], 0.0, 1.0)).xy;
+    vary_texcoord2 = (texmat2 * vec4(RowVec2(row.texcoords2).t[index], 0.0, 1.0)).xy;
 #endif
 #endif
 #ifdef GB_BUMP

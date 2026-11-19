@@ -157,15 +157,21 @@ mat4 texanim_matrix(mat4 m, vec2 clock)
                 vec4(-0.5 * (c + s) * scale_s + off_s + 0.5, -0.5 * (-s + c) * scale_t + off_t + 0.5, 0.0, 1.0));
 }
 
-// the texture matrix of a row (identity for none)
-mat4 row_texture_matrix(Row row, TexMatTable table)
+// the texture matrix in a slot of the table (identity for slot 0)
+mat4 texture_matrix_at(uint slot, TexMatTable table)
 {
-    if (row.pad.x == 0u)
+    if (slot == 0u)
     {
         return mat4(1.0);
     }
-    const mat4 m = table.t[row.pad.x];
+    const mat4 m = table.t[slot];
     return m[3][3] == 0.0 ? texanim_matrix(m, table.t[0][0].yz) : m;
+}
+
+// the texture matrix of a row (identity for none)
+mat4 row_texture_matrix(Row row, TexMatTable table)
+{
+    return texture_matrix_at(row.pad.x, table);
 }
 
 // ---- avatar relative skinning (lldrawpool.h, rk_rig_anchor): above a height a rigged palette is relative to an anchor A (a 64 m grid point), the skinned vertex v is relative too, and the

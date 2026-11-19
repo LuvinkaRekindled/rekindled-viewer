@@ -282,6 +282,8 @@ namespace RKVkBridge
         GEO_MATERIAL = 64,          // item D2 (alpha runs): a material alpha draw: the merged program (ALPHA_UBER_MAT) shades it as the materials blend shader does
         GEO_NORMAL_MAP = 128,       // ... with a normal map (the row's mapSlots low half)
         GEO_SPEC_MAP = 256,         // ... with a specular map (the row's mapSlots high half)
+        GEO_CONST_COLOR = 1024,     // D4 1b-1: the draw's vertices all have the colour in the entry's mConstColor (the row's pad.y): the pull shader does not read the colour array
+        GEO_VERIFY_COLOR = 2048,    // D4 1b-1 (RK_VK_ROWCONST=2): with GEO_CONST_COLOR, the shader also reads the array and paints a vertex magenta where the two differ
         GEO_DOUBLE_SIDED = 512      // P3: a double sided glTF draw of the table's G-buffer passes: the worker keeps these commands apart (after the single sided ones of the type) and a kind 22 with mFragment = 1 draws them, culling off
     };
     struct GeoEntry
@@ -297,6 +299,7 @@ namespace RKVkBridge
         U32 mPbrRow;                // S5f F3 (kind 32): the number of the entry's PBR row in the record (glTF alpha items)
         U32 mTangentOffset, mTexcoord1Offset, mTexcoord2Offset;     // materials passes: byte offsets of the tangent and the texcoord 1 and 2 arrays
         U32 mWeightOffset, mPaletteOffset, mJoints, mPad3;          // A1 rigged draws: byte offset of the weight4 array, the palette's offset in floats (12 per joint) and its joint count
+        U32 mConstColor, mMapMatrices;      // D4 1b-1: the constant colour (packed RGBA, with GEO_CONST_COLOR) and the texture matrix slots of the normal map (low 16 bits) and specular map (high 16 bits) channels, 0 = the row's own slot
         U32 mDebugColor;            // K6 B1: the Batch Size debug view's colour of the draw (RKDrawBatch::getDebugColor, made when the entry is built; 0 = none), carried in a spare word of the table row
     };
     // S4 A2 kind 27 PALETTES: the viewer's per-frame palette list grows by mPaletteFloats floats (12 per joint, whole palettes) at float offset mFragment; mPass = the viewer's frame; the blob is the floats. The worker keeps

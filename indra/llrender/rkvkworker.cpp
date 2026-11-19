@@ -9074,6 +9074,11 @@ void geo_write_items(GeoFrag& f)
             g.mPad[1] = f.mPbrOfItem[i] - 1;       // S5c: its PBR row (S6 X4: the glTF items of the G passes have one too)
         }
         g.mEmissiveOffset = e.mEmissiveOffset;      // S5e (the alpha items' glow draw), S6 X2 (the glow pass items: the emissive array; 0 for everything else)
+        if (e.mFlags & RKVkBridge::GEO_CONST_COLOR)
+        {
+            g.mPad[1] = e.mConstColor;          // D4 1b-1: a constant colour draw has no PBR row (glTF items are not of its class)
+        }
+        g.mSkinPad[2] = e.mMapMatrices;         // D4 1b-1: the texture matrix slots of the normal and specular map channels (0: the row's own slot, as before)
         g.mSkinPad[0] = e.mDebugColor;              // K6 B1: the Batch Size view's colour of the draw (the row's skinPad0)
         {
             // <FS> the vertex limit (the row's skinPad1, 2026-11-14 device lost: an index past the vertex buffer's data read memory past its end). The position array (16 bytes a vertex) is the first in the
