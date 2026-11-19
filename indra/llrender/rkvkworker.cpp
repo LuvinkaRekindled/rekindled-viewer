@@ -656,6 +656,12 @@ DrawStats sStats, sStatsLast;
 bool sVerifySnapshotPending = false;   // a snapshot render is being mirrored: report on it when its off-screen frame ends
 // the per-draw statistics / pass graph are only gathered when asked for (they cost string work on every draw)
 const bool sStatsEnabled = getenv("RK_VK_STATS") != nullptr || getenv("RK_VK_DEBUG_SHADERS") != nullptr || getenv("RK_VK_VALIDATION") != nullptr;
+// D5 step 1 (PLAN-avatars-100.md): the opaque rigged draws bind an arena block once and adjacent runs of one block are one multi draw (the index buffer's arena offset is in the commands' first index). 0 = as before.
+static bool rig_merge_on()
+{
+    static const bool on = []() { const char* e = getenv("RK_VK_RIGMERGE"); return !(e && e[0] == '0'); }();
+    return on;
+}
 bool sDbgMatch = false;                 // the draw being prepared belongs to a program the debug filter selects
 bool sDbgNoDepth = false, sDbgNoDepthWrite = false, sDbgNoDepthTest = false, sDbgNoBlend = false, sDbgNoCull = false, sDbgNoScissor = false,
      sDbgFullMask = false, sDbgNoFeedback = false;      // debug draw state overrides from <work>\vk-debug.txt
@@ -8570,7 +8576,10 @@ static struct GeoState
     U32 mFirst[kGeoTypes] = {}, mCount[kGeoTypes] = {};
     U32 mDsFirst[kGeoTypes] = {}, mDsCount[kGeoTypes] = {};      // P3: the double sided commands of type t (after its single sided ones)
     // S4 B: the frame's rigged draws by rigged type: a run = the commands of one buffer pair of one fragment (index buffer bound, one indirect indexed draw)
-    struct RDraw { U32 mIbName; U32 mFirst, mCount; bool mDs; };       // (the index buffer by its GL name: looked up again at the draw, a buffer destroyed since the prepare must not be used)
+    // D5 step 1 (RK_VK_RIGMERGE, default on): mBaked = the commands of the run carry the index buffer's arena offset in their first index (in indices), so the draw binds the arena block (mBlock) at offset 0 and
+    // adjacent runs of one block are one multi draw; mBase = the offset the prepare read (the draw checks it: a buffer that moved or went since is skipped, as a destroyed one always was)
+    struct RDraw { U32 mIbName; U32 mFirst, mCount; bool mDs; bool mBaked = false; VkBuffer mBlock = VK_NULL_HANDLE; VkDeviceSize mBase = 0; };       // (the index buffer by its GL name: looked up again at the draw, a buffer destroyed since the prepare must not be used)
+    U64 mRRunsListed = 0, mRDrawsIssued = 0, mRRunsStale = 0;       // (D5 step 1: runs the prepare listed, draws the draw issued after merging adjacent runs, runs skipped because their buffer moved or went since the prepare)
     std::vector<RDraw> mRDraws[kGeoTypes];
     Renderer::ScratchAlloc mRCommands;
     Renderer::ScratchAlloc mRTable;         // the rows of the rigged items of this frame (copies of the table's rows with the frame's palette), the rigged commands index it
@@ -9775,26 +9784,81 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 ++s.mScratchFail;
             }
             U32 cursor = 0;
-            for (const GeoFrag* f : rigged_listed)
+            // D5 step 1: the runs in the order the commands are laid out. Merge on: by type, then single sided before double sided, then fragment, so the runs a draw issues (one type, one sidedness) are adjacent
+            // in the command list and runs of one arena block merge; off: by fragment as before (RK_VK_RIGMERGE=0).
+            struct RunRef { const GeoFrag* mFrag; U32 mType; U32 mRun; };
+            static thread_local std::vector<RunRef> run_order;
+            run_order.clear();
+            const bool merge_on = rig_merge_on();
+            if (merge_on)
             {
                 for (U32 rt = 0; rt < kGeoTypes; ++rt)
                 {
-                    for (U32 k = f->mRTypeFirst[rt]; k < f->mRTypeFirst[rt + 1]; ++k)
+                    for (U32 ds = 0; ds < 2; ++ds)
+                    {
+                        for (const GeoFrag* f : rigged_listed)
+                        {
+                            for (U32 k = f->mRTypeFirst[rt]; k < f->mRTypeFirst[rt + 1]; ++k)
+                            {
+                                if ((U32)f->mRRuns[k].mDs == ds)
+                                {
+                                    run_order.push_back({ f, rt, k });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                for (const GeoFrag* f : rigged_listed)
+                {
+                    for (U32 rt = 0; rt < kGeoTypes; ++rt)
+                    {
+                        for (U32 k = f->mRTypeFirst[rt]; k < f->mRTypeFirst[rt + 1]; ++k)
+                        {
+                            run_order.push_back({ f, rt, k });
+                        }
+                    }
+                }
+            }
+            for (const RunRef& rr : run_order)
+            {
+                {
+                    const GeoFrag* f = rr.mFrag;
+                    const U32 rt = rr.mType;
+                    const U32 k = rr.mRun;
                     {
                         const GeoFrag::RRun& run = f->mRRuns[k];
                         // item E: a command whose item has a simplified list (its buffer on the GPU) draws that list: its own range of the command, split into draws by index buffer
                         U32 seg = 0, seg_lod = 0;
                         const bool lods = f->mRLodIb.size() == f->mRCmds.size();
+                        // D5 step 1: the run's index buffer (its arena offset goes into the commands' first index), and the run descriptor with the block the draw binds
+                        Buf* run_ib = merge_on ? packet_buffer(f->mPairs[run.mPair].mIb) : nullptr;
+                        auto make_rdraw = [&](U32 ib_name, U32 first, U32 count) -> GeoState::RDraw
+                        {
+                            GeoState::RDraw d{ ib_name, first, count, run.mDs };
+                            Buf* b = merge_on ? packet_buffer(ib_name) : nullptr;
+                            if (b && b->mVk.valid() && !(b->mArena.mOffset & 1))
+                            {
+                                d.mBaked = true;
+                                d.mBlock = b->mVk.mBuffer;
+                                d.mBase = b->mArena.mOffset;
+                            }
+                            return d;
+                        };
                         for (U32 c = 0; c < run.mCount; ++c)
                         {
                             U32 lod = 0;
                             const U32 ci = run.mFirst + c;
                             VkDrawIndexedIndirectCommand cmd = f->mRCmds[ci];
+                            Buf* cmd_ib = run_ib;
                             if (lods && f->mRLodIb[ci] && f->mRCmds[ci].indexCount)
                             {
                                 Buf* lb = packet_buffer(f->mRLodIb[ci]);
                                 if (lb && lb->mVk.valid() && lb->mVk.mAddress)        // (a list whose buffer is not on the GPU yet: the item's own list this frame)
                                 {
+                                    cmd_ib = lb;
                                     lod = f->mRLodIb[ci];
                                     cmd.indexCount = f->mRLodCount[ci];
                                     cmd.firstIndex = 0;
@@ -9804,6 +9868,10 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
                                     sGeo.mRLodTris += f->mRLodCount[ci] / 3;
                                 }
                             }
+                            if (merge_on && cmd_ib && cmd_ib->mVk.valid() && !(cmd_ib->mArena.mOffset & 1))
+                            {
+                                cmd.firstIndex += (U32)(cmd_ib->mArena.mOffset >> 1);       // (the same test as make_rdraw's: the run is drawn from the block at offset 0)
+                            }
                             if (rows)
                             {
                                 rows[cursor + c] = sGeo.mTCpu[cmd.firstInstance];
@@ -9812,13 +9880,14 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
                             rout[cursor + c] = cmd;
                             if (c > 0 && lod != seg_lod)
                             {
-                                sGeo.mRDraws[rt].push_back({ seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, c - seg, run.mDs });
+                                sGeo.mRDraws[rt].push_back(make_rdraw(seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, c - seg));
                                 seg = c;
                             }
                             seg_lod = lod;
                         }
-                        sGeo.mRDraws[rt].push_back({ seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, run.mCount - seg, run.mDs });
+                        sGeo.mRDraws[rt].push_back(make_rdraw(seg_lod ? seg_lod : f->mPairs[run.mPair].mIb, cursor + seg, run.mCount - seg));
                         cursor += run.mCount;
+                        sGeo.mRRunsListed += (run.mCount > 0) ? 1 : 0;
                     }
                 }
             }
@@ -9858,8 +9927,10 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
             << " retired, " << sGeo.mFragCount << " fragments, " << s.mRetains << " retains, " << s.mReleases << " releases (" << s.mReleaseUnknown << " unknown), " << s.mOverflow << " overflows, "
             << s.mScratchFail << " scratch failures, " << s.mNotInFrame << " prepares outside a frame, " << s.mDrawStale << " draws without this frame's prepare, " << s.mDrawNoProgram << " draws without the program" << LL_ENDL;
         RK_DIAG("VkScene") << "scene geometry table, opaque rigged commands a frame " << (double)sGeo.mRCmdsFrame / n << ", of them drawing a simplified list " << (double)sGeo.mRLodCmds / n << " (triangles " << (double)sGeo.mRLodTrisFull / n
-            << " -> " << (double)sGeo.mRLodTris / n << " a frame)" << LL_ENDL;
+            << " -> " << (double)sGeo.mRLodTris / n << " a frame); D5 step 1 (RK_VK_RIGMERGE " << (rig_merge_on() ? 1 : 0) << "): rigged runs listed a frame " << (double)sGeo.mRRunsListed / n << ", draws issued " << (double)sGeo.mRDrawsIssued / n
+            << ", runs skipped (buffer moved or gone since the prepare) " << sGeo.mRRunsStale << LL_ENDL;
         sGeo.mRCmdsFrame = sGeo.mRLodCmds = sGeo.mRLodTris = sGeo.mRLodTrisFull = 0;
+        sGeo.mRRunsListed = sGeo.mRDrawsIssued = sGeo.mRRunsStale = 0;
         if (timed)
         {
             RK_DIAG("VkScene") << "scene geometry table, worker time per frame (us): prepare " << (double)s.mNsPrepare / 1000.0 / n << " = pins " << (double)s.mNsPins / 1000.0 / n << " + matrices "
@@ -10140,8 +10211,10 @@ void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (rigged_draw)
     {
         U32 drawn = 0, runs = 0;
-        for (const GeoState::RDraw& d : sGeo.mRDraws[type - kGeoTypes])
+        const std::vector<GeoState::RDraw>& rdraws = sGeo.mRDraws[type - kGeoTypes];
+        for (size_t di = 0; di < rdraws.size(); ++di)
         {
+            const GeoState::RDraw& d = rdraws[di];
             if (d.mDs != ds_draw)
             {
                 continue;
@@ -10151,17 +10224,47 @@ void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
             {
                 continue;
             }
-            r.setIndexBuffer(ib->mVk.mBuffer, ib->mArena.mOffset, VK_INDEX_TYPE_UINT16);
+            U32 draw_first = d.mFirst, draw_count = d.mCount;
+            if (d.mBaked)
+            {
+                // D5 step 1: the commands carry the arena offset in their first index: the block is bound at offset 0, and the following runs of the same block whose commands follow on are drawn with this one. A
+                // buffer that moved or went since the prepare is skipped (its commands would read the wrong indices).
+                if (ib->mVk.mBuffer != d.mBlock || ib->mArena.mOffset != d.mBase)
+                {
+                    ++sGeo.mRRunsStale;
+                    continue;
+                }
+                while (di + 1 < rdraws.size())
+                {
+                    const GeoState::RDraw& e = rdraws[di + 1];
+                    if (e.mDs != ds_draw || !e.mBaked || e.mBlock != d.mBlock || e.mFirst != draw_first + draw_count)
+                    {
+                        break;
+                    }
+                    Buf* eb = packet_buffer(e.mIbName);
+                    if (!eb || !eb->mVk.valid() || eb->mVk.mBuffer != e.mBlock || eb->mArena.mOffset != e.mBase)
+                    {
+                        break;      // (it is skipped or counted stale by its own turn)
+                    }
+                    draw_count += e.mCount;
+                    ++di;
+                }
+                r.setIndexBuffer(d.mBlock, 0, VK_INDEX_TYPE_UINT16);
+            }
+            else
+            {
+                r.setIndexBuffer(ib->mVk.mBuffer, ib->mArena.mOffset, VK_INDEX_TYPE_UINT16);
+            }
             VkBuffer cmd_buffer = sGeo.mRCommands.mBuffer;
-            VkDeviceSize cmd_offset = sGeo.mRCommands.mOffset + (VkDeviceSize)d.mFirst * sizeof(VkDrawIndexedIndirectCommand);
+            VkDeviceSize cmd_offset = sGeo.mRCommands.mOffset + (VkDeviceSize)draw_first * sizeof(VkDrawIndexedIndirectCommand);
             if (floor_mode == 2)
             {
-                Renderer::ScratchAlloc empty = r.allocVertexScratch(sizeof(VkDrawIndexedIndirectCommand) * (size_t)d.mCount);
+                Renderer::ScratchAlloc empty = r.allocVertexScratch(sizeof(VkDrawIndexedIndirectCommand) * (size_t)draw_count);
                 if (empty.mPtr)
                 {
-                    memcpy(empty.mPtr, (const U8*)sGeo.mRCommands.mPtr + (size_t)d.mFirst * sizeof(VkDrawIndexedIndirectCommand), sizeof(VkDrawIndexedIndirectCommand) * (size_t)d.mCount);
+                    memcpy(empty.mPtr, (const U8*)sGeo.mRCommands.mPtr + (size_t)draw_first * sizeof(VkDrawIndexedIndirectCommand), sizeof(VkDrawIndexedIndirectCommand) * (size_t)draw_count);
                     VkDrawIndexedIndirectCommand* e = (VkDrawIndexedIndirectCommand*)empty.mPtr;
-                    for (U32 c = 0; c < d.mCount; ++c)
+                    for (U32 c = 0; c < draw_count; ++c)
                     {
                         e[c].indexCount = 0;
                     }
@@ -10169,10 +10272,11 @@ void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
                     cmd_offset = empty.mOffset;
                 }
             }
-            if (r.drawPacketsIndexed(nullptr, d.mCount, cmd_buffer, cmd_offset))
+            if (r.drawPacketsIndexed(nullptr, draw_count, cmd_buffer, cmd_offset))
             {
-                drawn += d.mCount;
+                drawn += draw_count;
                 ++runs;
+                ++sGeo.mRDrawsIssued;
             }
         }
         if (drawn)
