@@ -38,6 +38,8 @@
 #include "rkretirelist.h"
 #include "rkavatarref.h"
 #include <map>      // <FS> RK_VK_PALSTATS
+#include <set>      // <FS> D4 step 0 census
+#include <algorithm>
 
 #include <stdio.h>
 #include <ctype.h>
@@ -14339,6 +14341,65 @@ void LLVOAvatar::buildPalettesInJob()
         mFlatSkel->mFrame = ~0u;            // (the render's own palette requests fill it again at their frame)
         mFlatSkel->mFromJob = false;
     }
+}
+
+// <FS> PLAN-avatars-100.md D4 step 0 (RK_VK_DIAG): the sharing of rigged meshes in a crowd. Every avatar keeps one palette entry per skin it wears (mMatrixPaletteCache: the skin names the mesh asset and
+// its joints), so the entries over the avatars of the batch are the rigged meshes worn, and the distinct mesh assets among them are what a shared mesh store would hold once. "Heavy" = a skin of 50 or more
+// joints (bodies and heads rank there; hair and small clothes do not): the split Adam's note asked for (3 to 4 bodies a gender are worn by most). Entries are counted once built (a skin asked for at draw).
+void LLVOAvatar::skinSharingCensus(const std::vector<LLPointer<LLVOAvatar> >& batch)
+{
+    std::map<LLUUID, std::pair<U32, U32> > by_mesh;     // mesh asset -> (entries, joints of its skin)
+    std::set<std::pair<LLUUID, U64> > by_skin;
+    std::set<LLUUID> heavy_meshes;
+    U32 avatars = 0, entries = 0, heavy = 0, avatars_heavy = 0;
+    for (const LLPointer<LLVOAvatar>& av : batch)
+    {
+        if (av.isNull() || av->isDead())
+        {
+            continue;
+        }
+        ++avatars;
+        bool has_heavy = false;
+        std::shared_lock<std::shared_mutex> lock(av->mPaletteMutex);
+        for (const auto& kv : av->mMatrixPaletteCache)
+        {
+            const MatrixPaletteCache& e = kv.second;
+            if (!e.mComputed || e.mSkin.isNull())
+            {
+                continue;
+            }
+            const LLMeshSkinInfo* skin = e.mSkin.get();
+            ++entries;
+            std::pair<U32, U32>& m = by_mesh[skin->mMeshID];
+            ++m.first;
+            m.second = (U32)skin->mInvBindMatrix.size();
+            by_skin.insert(std::make_pair(skin->mMeshID, skin->mHash));
+            if (skin->mInvBindMatrix.size() >= 50)
+            {
+                ++heavy;
+                heavy_meshes.insert(skin->mMeshID);
+                has_heavy = true;
+            }
+        }
+        if (has_heavy)
+        {
+            ++avatars_heavy;
+        }
+    }
+    std::vector<std::pair<U32, LLUUID> > top;
+    for (const auto& kv : by_mesh)
+    {
+        top.push_back(std::make_pair(kv.second.first, kv.first));
+    }
+    std::sort(top.begin(), top.end(), [](const std::pair<U32, LLUUID>& a, const std::pair<U32, LLUUID>& b) { return a.first > b.first; });
+    std::string most;
+    for (size_t i = 0; i < top.size() && i < 6; ++i)
+    {
+        most += llformat(" %s x%u (%u joints)", top[i].second.asString().substr(0, 8).c_str(), top[i].first, by_mesh[top[i].second].second);
+    }
+    LL_INFOS("AvSkins") << "rigged mesh sharing over " << avatars << " avatars: " << entries << " skin entries (one a mesh an avatar wears), " << by_mesh.size() << " distinct mesh assets ("
+                        << (by_mesh.empty() ? 0.0 : (double)entries / by_mesh.size()) << " entries each on average), " << by_skin.size() << " distinct skins (asset and hash); heavy skins (50 or more joints): "
+                        << heavy << " entries on " << avatars_heavy << " avatars, " << heavy_meshes.size() << " distinct assets; most worn:" << most << LL_ENDL;
 }
 
 LLVOAvatar::MatrixPaletteCache::~MatrixPaletteCache()

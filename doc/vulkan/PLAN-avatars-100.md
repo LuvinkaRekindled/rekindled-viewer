@@ -259,3 +259,15 @@ The ground sit hover offset is added at the end of the pose job (`LLVOAvatar::ap
 Counters over 90,000 palette job runs (73 to 83 avatars, short lap, mode def): hover offset writes in the completion **0** (was 4,308 of 102,000), added in the pool job 3,908, the completion found another value or state **0**, a joint dirty after the job **0** (the burst of the earlier lap did not repeat), the flat array not filled by the job 730 (0.8 percent; was 7,343, 7.2 percent). Device lost 0, no errors, fps 132 to 134 in the still phase as before.
 
 Not verified: the picture. The gate left is Adam's eye on avatars sitting on the ground (the avatar, its hair and attachments, animated objects worn by it: no blink, no one hover offset too high or too low) and an A/B with `RK_VK_HOVERJOB=0`.
+
+### D4 step 0 result: the sharing of rigged meshes is low in the London crowd (2026-11-18, lap `skins-def1`)
+
+The census (`LLVOAvatar::skinSharingCensus`, `AvSkins` line, `RK_VK_DIAG` only, every 600 batches) counts the palette entries of the avatars in the motion batch (one entry per skin an avatar wears, built when a draw asked for it) and the distinct mesh assets among them. A short lap, mode def, exe 18:40:14, 43 avatars with entries (of 73 to 83 in the region), 10 lines, the last ones steady:
+
+- **241 skin entries, 206 distinct mesh assets: 1.17 entries to an asset.** A shared store would hold 15 percent fewer rigged meshes than there are instances, not a third or a half.
+- **Heavy skins (50 or more joints, where bodies and heads rank, but so does fully weighted clothing): 89 entries on 15 avatars, 62 distinct assets (1.4 to an asset).** About 5.6 skins an avatar overall.
+- Most worn assets: 8, 7, 5, 3, 3, 3 avatars (the first three have 70 joints). Three assets account for 20 entries.
+
+So the hunch that 3 to 4 body meshes per gender cover most avatars does not show in this crowd: the heavy skins are mostly distinct assets (bodies are split in parts and sizes, and a body is only a few of an avatar's heavy skins). Caveats: 43 of about 80 avatars have entries (the others are impostors, hidden or not yet drawn), the count is of skins, not of triangles (a body weighs far more than a hat, so the byte saving could still be larger than 15 percent), one lap in one place.
+
+What it changes for D4: the memory argument is weak (about 15 percent of instances, bytes not measured). The case for D4 rests on the other things it does: no rigged fill on the main thread (the serial `mSerialOnly` for `mAvatar` faces, `llvovolume.cpp:7995`), no per-avatar rebuild on a LOD, texture or hover change, immutable buffers. The cheap first question is why rigged fills are serial at all and whether they can run on the pool as the other faces do (the loading stalls of `PLAN-hitchless-loading.md`), before any shared store.

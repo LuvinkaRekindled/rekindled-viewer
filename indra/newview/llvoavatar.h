@@ -1399,6 +1399,7 @@ public:
 public:
     void            sitDown(bool bSitting);
     bool            isSitting(){return mIsSitting;}
+    static void     skinSharingCensus(const std::vector<LLPointer<LLVOAvatar> >& batch);        // <FS> PLAN-avatars-100.md D4 step 0: how many avatars wear the same rigged mesh (RK_VK_DIAG, one line every 600 batches)
     // <FS> true while this avatar's deferred motion update (the batched pose blend, completeDeferredMotionUpdate) has not made its post motion step yet, and that step is going to add the ground sit hover
     // offset to the root (updateCharacterPostMotion): until then the skeleton is one hover offset below where the frame ends
     bool            hasPendingGroundSitHover() const { return mMotionUpdateDeferred && !mHoverDone && !getParent() && (mIsSitting || mDeferredSitGroundConstrained); }
