@@ -27,6 +27,9 @@ namespace RKPhaseCheck
 {
     // fork-join batches between the slot taken in launch and the end of the join (RKForkJoinPool keeps it)
     inline std::atomic<unsigned> sPhaseDepth{ 0 };
+    // the same for batches that declared themselves pipeline neutral (RKForkJoinPool::launch, pipeline_neutral): their jobs read none of the pipeline's rebuild, moved, partition and unlink queues and lists, so
+    // a writer of those (rk_phase_check_pipeline) does not report beside them; any other writer (rk_phase_check) still does. Not counted in sPhaseDepth.
+    inline std::atomic<unsigned> sPhaseDepthNeutral{ 0 };
 
     struct Slot
     {
@@ -90,6 +93,17 @@ namespace RKPhaseCheck
 }
 
 inline void rk_phase_check(const char* writer)
+{
+    const bool main_thread = on_main_thread();
+    if (main_thread && RKPhaseCheck::sPhaseDepth.load(std::memory_order_relaxed) == 0 && RKPhaseCheck::sPhaseDepthNeutral.load(std::memory_order_relaxed) == 0)
+    {
+        return;
+    }
+    RKPhaseCheck::report(writer, !main_thread);
+}
+
+// a writer of the pipeline's queues and lists (markRebuild, markMoved, markPartitionMove, markMeshDirty, unlinkDrawable): like rk_phase_check, except that a batch that declared itself pipeline neutral does not count
+inline void rk_phase_check_pipeline(const char* writer)
 {
     const bool main_thread = on_main_thread();
     if (main_thread && RKPhaseCheck::sPhaseDepth.load(std::memory_order_relaxed) == 0)

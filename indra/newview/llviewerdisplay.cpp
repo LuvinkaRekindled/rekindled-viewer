@@ -722,6 +722,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 // <FS:CR> Aurora sim
 
     gPipeline.mBackfaceCull = true;
+    LLVOAvatar::sPalJobsJoin();     // <FS> the palette jobs read gFrameCount: they are done before it advances
     gFrameCount++;
     gRecentFrameCount++;
     if (gFocusMgr.getAppHasFocus())

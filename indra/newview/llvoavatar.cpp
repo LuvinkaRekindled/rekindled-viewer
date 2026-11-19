@@ -13916,6 +13916,7 @@ const LLVOAvatar::MatrixPaletteCache& LLVOAvatar::updateSkinInfoMatrixPalette(co
     // <FS> the packet builders of the shadow cascades run on pool threads and ask for palettes at the same time: the lazy cache (and the lazy joint matrices and joint numbers it fills in) is one at a time.
     // The entry returned is not written again in this frame, so the callers read it without the lock.
     static std::mutex palette_mutex;
+    sPalJobsJoin();         // (a request is a reader of what the palette jobs write: they are joined first when they still run; only the main thread joins)
     const bool timed = rk_paltime_on();
     // <FS> stage B3b: a request that finds the palette ready (the job built it, or an earlier request) reads the avatar's cache under a shared lock and never touches the global lock
     {
