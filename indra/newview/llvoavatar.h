@@ -324,6 +324,7 @@ public:
     bool            computeImpostorLive();      // isImpostor() derived from the avatar's state (what the table caches at endFrame)
     bool            reducedHiddenSkip();        // idleUpdate's reduced update of an avatar nobody sees (every 2nd or 4th frame)
     void            updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible, U32 clean_serial = ~0u);
+    void            applyGroundSitHoverInJob(bool try_flat);      // <FS> PLAN-avatars-100.md D2c: the ground sit hover offset, added at the end of the pool job (RK_VK_HOVERJOB=0: in the completion as before)
     void            idleUpdatePostCharacter(bool detailed_update);
     bool            canDeferMotionUpdate() const;
     // Runs the deferred pose blend phase. Safe to call from a worker thread
@@ -715,6 +716,8 @@ private:
     F32         mDeferredSpeed = 0.f;           // (the speed updateCharacter worked out, for the root update in the job)
     bool        mDeferredMatricesOnly = false; // <FS> hidden avatar: only its skeleton's world matrices are worked out on the worker (no pose blend)
     bool        mDeferredSitGroundConstrained = false;
+    bool        mHoverDone = false;             // <FS> PLAN-avatars-100.md D2c: the pool job already added the ground sit hover offset (applyGroundSitHoverInJob); the completion writes nothing
+    F32         mHoverZ = 0.f;                  // (the offset it added, for the completion's check)
     bool        mDeferredVisible = false;
 public:
     bool        mFarTierHeavy = false;          // the avatar's rigged attachments are over the budget of its far tier: it is drawn as an impostor (shouldImpostor), never cut apart
@@ -1398,8 +1401,8 @@ public:
     bool            isSitting(){return mIsSitting;}
     // <FS> true while this avatar's deferred motion update (the batched pose blend, completeDeferredMotionUpdate) has not made its post motion step yet, and that step is going to add the ground sit hover
     // offset to the root (updateCharacterPostMotion): until then the skeleton is one hover offset below where the frame ends
-    bool            hasPendingGroundSitHover() const { return mMotionUpdateDeferred && !getParent() && (mIsSitting || mDeferredSitGroundConstrained); }
-    // <FS> the avatar's pose job (blend + world pass) has finished for this frame: its joints hold this frame's pose WITHOUT the ground-sit hover (the post motion step adds it). Before that they still hold last frame's final
+    bool            hasPendingGroundSitHover() const { return mMotionUpdateDeferred && !mHoverDone && !getParent() && (mIsSitting || mDeferredSitGroundConstrained); }
+    // <FS> the avatar's pose job (blend + world pass) has finished for this frame: its joints hold this frame's pose WITHOUT the ground-sit hover (the post motion step adds it; with RK_VK_HOVERJOB the job adds it itself and hasPendingGroundSitHover is then false). Before that they still hold last frame's final
     // value, which has the hover in. An animated object worn by this avatar adds the hover only in the first case (LLControlAvatar::matchVolumeTransform).
     bool            poseJobDoneThisFrame() const { return mPoseJobFrame.load(std::memory_order_acquire) == (U32)LLFrameTimer::getFrameCount(); }
     std::atomic<U32> mPoseJobFrame{ ~0u };

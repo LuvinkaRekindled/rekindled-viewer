@@ -7786,6 +7786,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             mMotionUpdateDeferred = true;
             mDeferredMatricesOnly = true;
             mDeferredSitGroundConstrained = was_sit_ground_constrained;
+            mHoverDone = false;
             mDeferredVisible = visible;
             mRootInJob = root_in_job;
             mDeferredSpeed = speed;
@@ -7810,6 +7811,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         {
             mMotionUpdateDeferred = true;
             mDeferredSitGroundConstrained = was_sit_ground_constrained;
+            mHoverDone = false;
             mDeferredVisible = visible;
             mRootInJob = root_in_job;
             mDeferredSpeed = speed;
@@ -7881,7 +7883,7 @@ thread_local LLVOAvatar* LLVOAvatar::sBlendJobAvatar = nullptr;
 // filled by the job this frame, when its frame is not this one, or when a joint was dirtied since (skeletonDirty). Counted there by cause, plus the hover offset writes of the completion. RK_VK_DIAG only.
 namespace
 {
-std::atomic<U64> sLateRuns{0}, sLateNotFromJob{0}, sLateOtherFrame{0}, sLateDirty{0}, sLateDirtySelf{0}, sLateDirtyControl{0}, sLateDirtySit{0}, sLateDirtyNotSit{0}, sLateHoverWrites{0};
+std::atomic<U64> sLateRuns{0}, sLateNotFromJob{0}, sLateOtherFrame{0}, sLateDirty{0}, sLateDirtySelf{0}, sLateDirtyControl{0}, sLateDirtySit{0}, sLateDirtyNotSit{0}, sLateHoverWrites{0}, sLateHoverInJob{0}, sLateHoverMismatch{0};
 }
 
 void LLVOAvatar::cleanJointMatricesOnce(U32 frame)
@@ -7927,6 +7929,35 @@ void LLVOAvatar::cleanJointMatrices()
     }
 }
 
+// <FS> PLAN-avatars-100.md D2c: the ground sit hover offset, added at the end of the pool job, where the completion's post motion step added it (updateCharacterPostMotion): the same write, the same
+// order (after the pass, then the children follow), moved before the join. The skeleton is final when the job ends: nothing writes the joints after it, the attachment loop and the palette job read the
+// array the job made, the rewalk of the completion and the stale array it caused are gone. The offset and the sit state are the avatar's own, nothing else runs while the batch's jobs do.
+// RK_VK_HOVERJOB=0: as before (the completion adds it).
+void LLVOAvatar::applyGroundSitHoverInJob(bool try_flat)
+{
+    static const bool on = !getenv("RK_VK_HOVERJOB") || atoi(getenv("RK_VK_HOVERJOB")) != 0;
+    if (!on || !mRoot || getParent() || !(isSitting() || mDeferredSitGroundConstrained))
+    {
+        return;
+    }
+    const F32 hover_z = (F32)LLVector3d(getHoverOffset()).mdV[VZ];
+    if (hover_z == 0.0f)
+    {
+        return;
+    }
+    LLVector3 pos = mRoot->getWorldPosition();
+    pos.mV[VZ] += hover_z;
+    mRoot->touch();
+    mRoot->setWorldPosition(pos);
+    if (!(try_flat && flatWorldPass()))
+    {
+        mRoot->updateWorldMatrixChildren();
+    }
+    mHoverDone = true;
+    mHoverZ = hover_z;
+    if (rk_diag_on()) { ++sLateHoverInJob; }
+}
+
 void LLVOAvatar::runDeferredMotionBlend()
 {
     AvImpTimer imp_blend_timer(1, this);
@@ -7956,6 +7987,7 @@ void LLVOAvatar::runDeferredMotionBlend()
         {
             mRoot->updateWorldMatrixChildren();
         }
+        applyGroundSitHoverInJob(false);
         mPoseJobFrame.store((U32)LLFrameTimer::getFrameCount(), std::memory_order_release);
         return;
     }
@@ -7971,6 +8003,7 @@ void LLVOAvatar::runDeferredMotionBlend()
             mRoot->updateWorldMatrixChildren();
         }
     }
+    applyGroundSitHoverInJob(true);
     mPoseJobFrame.store((U32)LLFrameTimer::getFrameCount(), std::memory_order_release);
 }
 
@@ -8009,7 +8042,12 @@ void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool
     {
 
         F32 off_z = (F32)LLVector3d(getHoverOffset()).mdV[VZ];
-        if (off_z != 0.0f)
+        if (mHoverDone)
+        {
+            // <FS> PLAN-avatars-100.md D2c: the pool job added it to the pose of this frame; nothing is written after the job (the check: the value is the one the job used)
+            if (rk_diag_on() && off_z != mHoverZ) { ++sLateHoverMismatch; }
+        }
+        else if (off_z != 0.0f)
         {
             LLVector3 pos = mRoot->getWorldPosition();
             pos.mV[VZ] += off_z;
@@ -8018,6 +8056,12 @@ void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool
             // SL-315
             mRoot->setWorldPosition(pos);
         }
+    }
+
+    if (mHoverDone)
+    {
+        if (rk_diag_on() && (getParent() || !(isSitting() || was_sit_ground_constrained))) { ++sLateHoverMismatch; }       // (the job added a hover the completion would not have)
+        mHoverDone = false;
     }
 
     // update head position
@@ -14236,7 +14280,7 @@ void LLVOAvatar::buildPalettesInJob()
         {
             LL_INFOS("AvLate") << "pose changed after the pose job, seen by the palette job: " << runs << " runs; array not filled by the job " << sLateNotFromJob.load() << ", of another frame " << sLateOtherFrame.load()
                                << ", a joint dirty " << sLateDirty.load() << " (own avatar " << sLateDirtySelf.load() << ", animesh " << sLateDirtyControl.load() << ", sitting on the ground " << sLateDirtySit.load()
-                               << ", not sitting " << sLateDirtyNotSit.load() << "); hover offset writes in the completion " << sLateHoverWrites.load() << LL_ENDL;
+                               << ", not sitting " << sLateDirtyNotSit.load() << "); hover offset writes in the completion " << sLateHoverWrites.load() << ", added in the pool job " << sLateHoverInJob.load() << " (the completion found another value or state: " << sLateHoverMismatch.load() << ")" << LL_ENDL;
         }
     }
     if (mFlatSkel)
