@@ -40,6 +40,7 @@
 #include "llerror.h"
 #include "rkdevicecaps.h"
 #include "rkvkbridge.h"      // <FS> native-vk: the main window is handed to Vulkan
+#include "SDL2/SDL_vulkan.h" // <FS> native-vk: the drawable size of the Vulkan window
 #include "llstring.h"
 #include "lldir.h"
 #include "llfindlocale.h"
@@ -403,6 +404,7 @@ LLWindowSDL::LLWindowSDL(LLWindowCallbacks* callbacks,
 
     // Ignore use_gl for now, only used for drones on PC
     mWindow = NULL;
+    mSurface = NULL;
     mContext = {};
     mNeedsResize = false;
     mOverrideAspectRatio = 0.f;
@@ -1010,12 +1012,31 @@ bool LLWindowSDL::getPosition(LLCoordScreen *position)
     return true;
 }
 
+// <FS> native-vk: the window has no SDL surface (the renderer presents through a swapchain), its size is the window's own, in pixels
+static bool rk_window_pixels(SDL_Window* window, S32& w, S32& h)
+{
+    if (!window)
+    {
+        return false;
+    }
+    int pw = 0, ph = 0;
+    SDL_Vulkan_GetDrawableSize(window, &pw, &ph);
+    if (pw <= 0 || ph <= 0)
+    {
+        SDL_GetWindowSize(window, &pw, &ph);
+    }
+    w = pw;
+    h = ph;
+    return pw > 0 && ph > 0;
+}
+
 bool LLWindowSDL::getSize(LLCoordScreen *size)
 {
-    if (mSurface)
+    S32 w = 0, h = 0;
+    if (size && rk_window_pixels(mWindow, w, h))
     {
-        size->mX = mSurface->w;
-        size->mY = mSurface->h;
+        size->mX = w;
+        size->mY = h;
         return (true);
     }
 
@@ -1024,10 +1045,11 @@ bool LLWindowSDL::getSize(LLCoordScreen *size)
 
 bool LLWindowSDL::getSize(LLCoordWindow *size)
 {
-    if (mSurface)
+    S32 w = 0, h = 0;
+    if (size && rk_window_pixels(mWindow, w, h))
     {
-        size->mX = mSurface->w;
-        size->mY = mSurface->h;
+        size->mX = w;
+        size->mY = h;
         return (true);
     }
 
@@ -1413,8 +1435,12 @@ bool LLWindowSDL::convertCoords(LLCoordGL from, LLCoordWindow *to)
     if (!to)
         return false;
 
+    S32 w = 0, h = 0;
+    if (!rk_window_pixels(mWindow, w, h))
+        return false;
+
     to->mX = from.mX;
-    to->mY = mSurface->h - from.mY - 1;
+    to->mY = h - from.mY - 1;
 
     return true;
 }
@@ -1424,8 +1450,12 @@ bool LLWindowSDL::convertCoords(LLCoordWindow from, LLCoordGL* to)
     if (!to)
         return false;
 
+    S32 w = 0, h = 0;
+    if (!rk_window_pixels(mWindow, w, h))
+        return false;
+
     to->mX = from.mX;
-    to->mY = mSurface->h - from.mY - 1;
+    to->mY = h - from.mY - 1;
 
     return true;
 }
@@ -1940,7 +1970,7 @@ void LLWindowSDL::gatherInput()
 
                     S32 width = llmax(event.window.data1, (S32)mMinWindowWidth);
                     S32 height = llmax(event.window.data2, (S32)mMinWindowHeight);
-                    mSurface = SDL_GetWindowSurface( mWindow );
+                    // <FS> native-vk: no SDL surface on a Vulkan window (SDL_GetWindowSurface would fail or fight the swapchain)
 
                     // *FIX: I'm not sure this is necessary!
                     // <FS:ND> I think is is not

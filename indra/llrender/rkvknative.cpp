@@ -879,16 +879,13 @@ void load_manifest(Manager& m)
 #if LL_WINDOWS
         char exe[MAX_PATH] = {};
         GetModuleFileNameA(nullptr, exe, MAX_PATH);
-#else
-        char exe[PATH_MAX] = {};
-        if (readlink("/proc/self/exe", exe, sizeof(exe) - 1) < 0)
-        {
-            exe[0] = 0;
-        }
-#endif
         std::string dir = exe;
         dir.resize(dir.find_last_of("\\/"));
         m.mRoot = dir + "/app_settings/shaders/native";
+#else
+        // the Linux package keeps the executable in bin/ and app_settings/ next to it, not beside the executable
+        m.mRoot = gDirUtilp->getAppRODataDir() + "/app_settings/shaders/native";
+#endif
     }
     for (char& c : m.mRoot)
     {
