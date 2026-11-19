@@ -4874,23 +4874,6 @@ static U64 palette_id_address(U32 id)
     return 0;
 }
 
-// P3: the palette an id had in the viewer frame BEFORE the frame in hand (its arena is held until frameCount() + 3 renderer frames after its last record: still there); 0 = it was not in that frame's table
-static U64 palette_id_address_prev(U32 id, U32 viewer_frame)
-{
-    const U32 prev_frame = viewer_frame - 1;
-    const U32 index = id & 0xFFFFFFu;
-    const std::vector<PalIdSlot>& table = gFrameState.mPalIds[prev_frame & 1];
-    if (index < table.size())
-    {
-        const PalIdSlot& s = table[index];
-        if (s.mId == id && s.mFrame == prev_frame && s.mAddress)
-        {
-            return s.mAddress;
-        }
-    }
-    return 0;
-}
-
 // <FS> P1 step 3: kind 40: the palettes the viewer stamped into the frame's list, as (id, float offset) pairs (mEntries of them in the blob); each offset is resolved to an address now, the records that follow name the palette by its id
 static void on_palette_ids(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {

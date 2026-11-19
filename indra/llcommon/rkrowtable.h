@@ -63,7 +63,7 @@ public:
         if (!chunk)
         {
             chunk = static_cast<Row*>(ll_aligned_malloc_64(sizeof(Row) * kChunkRows));       // 64-byte aligned: a row of a multiple of 64 bytes starts on a cache line
-            if (chunk) std::memset(chunk, 0, sizeof(Row) * kChunkRows);
+            if (chunk) std::memset(static_cast<void*>(chunk), 0, sizeof(Row) * kChunkRows);
             if (!chunk)
             {
                 ++s.mFull;
@@ -72,7 +72,7 @@ public:
             }
         }
         Row& r = chunk[id & (kChunkRows - 1)];
-        std::memset(&r, 0, sizeof(Row));
+        std::memset(static_cast<void*>(&r), 0, sizeof(Row));
         r.owner = owner;
         ++s.mLive;
         ++s.mAcquired;

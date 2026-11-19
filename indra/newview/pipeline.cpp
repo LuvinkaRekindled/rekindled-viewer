@@ -4198,7 +4198,10 @@ void churn_report_if_due()
         {
             const U32 f = std::get<0>(rows[i].second);
             std::string fl;
-            if (f & 1) fl += "V"; if (f & 2) fl += "T"; if (f & 4) fl += "C"; if (f & 8) fl += "P";
+            if (f & 1) { fl += "V"; }
+            if (f & 2) { fl += "T"; }
+            if (f & 4) { fl += "C"; }
+            if (f & 8) { fl += "P"; }
             flags_text += llformat(" [%llu %s %s]", (unsigned long long)rows[i].first, fl.c_str(), kChurnClass[std::get<1>(rows[i].second)]);
         }
     }

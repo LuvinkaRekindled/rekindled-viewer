@@ -24,7 +24,13 @@
 #include <sstream>
 #include <unordered_map>
 
+#if LL_WINDOWS
 #include <windows.h>
+#else
+#include <limits.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 #include "lldir.h"
 #include "llfile.h"
@@ -154,6 +160,7 @@ U64 fnv1a(const void* data, size_t n, U64 h = 1469598103934665603ull)
 // the content hash of a file, remembered for the time stamp and size it was made at (the includes of the programs are read by hundreds of them)
 bool file_content_hash(const std::string& path, U64& hash)
 {
+#if LL_WINDOWS
     WIN32_FILE_ATTRIBUTE_DATA d;
     if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &d))
     {
@@ -161,6 +168,15 @@ bool file_content_hash(const std::string& path, U64& hash)
     }
     const U64 stamp = ((U64)d.ftLastWriteTime.dwHighDateTime << 32) | d.ftLastWriteTime.dwLowDateTime;
     const U64 size = ((U64)d.nFileSizeHigh << 32) | d.nFileSizeLow;
+#else
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0)
+    {
+        return false;
+    }
+    const U64 stamp = ((U64)st.st_mtim.tv_sec << 32) ^ (U64)st.st_mtim.tv_nsec;
+    const U64 size = (U64)st.st_size;
+#endif
     {
         std::lock_guard<std::mutex> lock(gFileMemoLock);
         auto it = gFileMemo.find(path);
@@ -860,8 +876,16 @@ void load_manifest(Manager& m)
     }
     else
     {
+#if LL_WINDOWS
         char exe[MAX_PATH] = {};
         GetModuleFileNameA(nullptr, exe, MAX_PATH);
+#else
+        char exe[PATH_MAX] = {};
+        if (readlink("/proc/self/exe", exe, sizeof(exe) - 1) < 0)
+        {
+            exe[0] = 0;
+        }
+#endif
         std::string dir = exe;
         dir.resize(dir.find_last_of("\\/"));
         m.mRoot = dir + "/app_settings/shaders/native";

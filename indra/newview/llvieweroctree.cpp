@@ -28,7 +28,9 @@
 #include "llvieweroctree.h"
 #include "rkcullshadow.h"
 #include <deque>
+#if LL_WINDOWS
 #include <intrin.h>
+#endif
 #include <array>
 #include <unordered_map>
 #include "llviewerregion.h"
@@ -1098,7 +1100,11 @@ void LLOcclusionCullingGroup::worldOccluded(std::vector<LLOcclusionCullingGroup*
         while (bits)
         {
             unsigned long b;
+#if LL_WINDOWS
             _BitScanForward64(&b, bits);
+#else
+            b = (unsigned long)__builtin_ctzll(bits);
+#endif
             bits &= bits - 1;
             const U32 id = (w << 6) + (U32)b;
             RKGroupRows::Row* chunk = RKGroupRows::sChunks[id >> RKGroupRows::kChunkShift];
