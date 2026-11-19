@@ -481,3 +481,5 @@ Where it stands: about 0.87 ms of the 7.82 ms loop is the main thread's avatar w
 3. One arena for the index data (no bind per run): not read.
 
 **What D2 needs:** the plan puts the pipeline-owned writes (bridges, moved list) with D5's owner loops over all avatars per view, not with the class coverage; nothing in stages 1b-3 to 4 changes them.
+
+**The arena, read (2026-11-19, rkvkrenderer.cpp, rkvkcontext.cpp):** the buffers are already sub-allocated from arena blocks (`Context::arenaAlloc`, 64 MB blocks by default, RK_VK_ARENA_BLOCK_MB; kinds device, host, shared, accel; each block has a device address), and a draw names its buffer by block handle and offset. So the "one arena" D5 asks for exists for storage: what a run costs today is `vkCmdBindIndexBuffer` when the (block, offset, type) differs from the one bound (rkvkrenderer.cpp:4472 and :4540), and two buffers in one block have different offsets. D5 can bind a block once and put the buffer's offset into each command's first index (indirect commands, `drawPacketsIndexed`); it needs no change in how D4 buffers are stored. So D4 owes D5 storage-wise nothing; it owes the per-frame level choice (above).
