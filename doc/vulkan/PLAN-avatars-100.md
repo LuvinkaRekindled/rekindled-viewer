@@ -456,3 +456,5 @@ Where it stands: about 0.87 ms of the 7.82 ms loop is the main thread's avatar w
 **Not verified:** the picture (hair, transparent clothes, glTF clothes with the cache on; Adam saw the opaque class only), the planning cost on the main thread, arrival stall, glTF material edits live (a colour or transform change on a worn glTF mesh).
 
 **Adam's eye (2026-11-19):** "i looked at the last run. it was fine": the run after stage 3 (alpha and glTF cached, cache on by default). Which run (a lap or a live session) was not stated; no details on hair, transparent clothes or glTF clothes were given.
+
+**Correction (Adam, 2026-11-19):** the run he looked at and called fine was the last lap, `rk2s3` (stage 3 exe, no RK_VK variable, the cache on by default), not an unstated run. It is the first look at the default-on cache with alpha and glTF faces really cached. Still no detail on hair, transparent clothes or glTF clothes specifically.
