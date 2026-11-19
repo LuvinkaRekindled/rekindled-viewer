@@ -31,6 +31,7 @@
 
 #include "llvovolume.h"
 #include "rkmatrixtable.h"
+#include "rkdiag.h"        // <FS> RK_DIAG: the rigged fill counters
 
 #include <sstream>
 
@@ -7987,12 +7988,34 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
         task.mBegin = batch.mBegin;
         task.mEnd = batch.mEnd;
         task.mBuffer = batch.mBuffer;
+        // <FS> PLAN-avatars-100.md D4: a rigged face used to make its batch serial ("a rigged face holds its avatar in the draw info, and an avatar's count is not atomic", R3b2, 2026-10-31). Since C2.4d
+        // (2026-11-05) the draw info holds an RKAvatarRef, a handle that resolves lock-free from any thread, and a skin handle: nothing is counted, so a rigged batch fills on the pool like the others.
+        // RK_VK_RIGGEDFILL=0: serial as before.
+        static const bool rigged_serial = getenv("RK_VK_RIGGEDFILL") && atoi(getenv("RK_VK_RIGGEDFILL")) == 0;
         for (LLFace** f = batch.mBegin; f < batch.mEnd && !task.mSerialOnly; ++f)
         {
             LLDrawable* d = (*f)->getDrawable();
             const LLTextureEntry* fte = (*f)->getTextureEntry();
             // an animated child writes its object's relative transform; a selected face (or one that just was) makes or frees a vertex buffer of its own; a rigged face holds its avatar in the draw info, and an avatar's count is not atomic
-            task.mSerialOnly = (d && d->isState(LLDrawable::ANIMATED_CHILD)) || (fte && fte->isSelected()) || (*f)->hasSelectionBuffer() || (*f)->mAvatar || (*f)->getViewerObject()->isSelected();
+            task.mSerialOnly = (d && d->isState(LLDrawable::ANIMATED_CHILD)) || (fte && fte->isSelected()) || (*f)->hasSelectionBuffer() || (rigged_serial && (*f)->mAvatar) || (*f)->getViewerObject()->isSelected();
+        }
+        if (rk_diag_on())
+        {
+            // proof it ran (RK_VK_DIAG): the fill tasks of the rebuilds by kind
+            static U64 total = 0, rigged_parallel = 0, rigged_serial_n = 0, other_serial = 0;
+            bool has_rigged = false;
+            for (LLFace** f = batch.mBegin; f < batch.mEnd && !has_rigged; ++f)
+            {
+                has_rigged = (*f)->mAvatar != nullptr;
+            }
+            ++total;
+            if (has_rigged) { ++(task.mSerialOnly ? rigged_serial_n : rigged_parallel); }
+            else if (task.mSerialOnly) { ++other_serial; }
+            if (total % 5000 == 0)
+            {
+                LL_INFOS("RigFill") << "fill tasks of the rebuilds: " << total << " so far, with rigged faces " << (rigged_parallel + rigged_serial_n) << " (on the pool " << rigged_parallel << ", serial " << rigged_serial_n
+                                    << "), other serial tasks " << other_serial << LL_ENDL;
+            }
         }
         tasks.push_back(std::move(task));
     }
