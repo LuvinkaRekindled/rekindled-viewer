@@ -211,3 +211,29 @@ What the two remaining op kinds do when the completion replays them (`LLPipeline
 Counts: 0.81 ops a loop at about 57 loops a frame is about 46 ops a frame, of which about 21 are bridge moves. At well under a microsecond each that is **about 0.03 to 0.05 ms a frame**, not the 0.16 ms of the zone `av post: idleUpdateMisc (attachment replay, matrices)`. The rest of that zone is the sort deltas (`applySortDeltas`: marks, LOD updates, rebuilds), the texture stamps (`stampTextures` per moved face), the impostor checks of the same function and the zone's own cost (about 0.3 us a call over 57 calls). Estimated from counts, not measured: one zone around `replayAttachmentJob` would split it.
 
 So D2a as written removes at most about 0.05 ms. It stays a structural clean-up (the ledger concept), not a frame-time step. The frame time in D2 is in the overlap (D2b): the palette jobs launched after the completions and joined where the render side first reads the palettes (hides most of the 0.10 ms join; the render read comes after the rest of the frame's update), and the blend launched in chunks while the serial idle loop (0.24 ms) goes on, joined before the completions (up to about 0.24 ms). Together about 0.35 ms, 4 to 5 percent of the main loop. D2b needs the readers between launch and join read first, as said above.
+
+### D2 re-evaluated for structure, not frames (2026-11-18)
+
+Adam's rule: structure is not skipped for being small; a new correct path must be neutral or faster. The yardstick of the notes above (milliseconds against the loop) was the wrong one. Read again for structure, one stream at a time. The "ledger" is three streams, not one:
+
+1. **The AvOps** (`pipeline.h:371`): MOVED_LIST, BRIDGE_MOVE and traces of the rest.
+   - BRIDGE_MOVE replays `updateSpatialExtents()` and `RKCullShadow::touchBridge`. `touch` takes `sCullMutex` already (`pipeline.cpp:12419`), so it is safe from a pool thread, and the non-job path of `LLSpatialBridge::updateMove` already runs `updateSpatialExtents()` inline (`lldrawable.cpp:2043`). The deferral looks like a leftover from when the bridge was in an octree. **Can go inline in the job.** Compare: the extents the replay computes equal what the inline call computed, 0 differences over a crowd lap (the replay recomputes from the same drawables; any difference means the inputs changed between the job and the replay, which is the thing to know).
+   - MOVED_LIST: for an attachment the job already ran `updateMove` and set EARLY_MOVE; the moved list pass then only clears EARLY_MOVE and MOVE_UNDAMPED, clears ON_MOVE_LIST, handles ANIMATED_CHILD (`markRebuild` plus `dirtySpatialGroup`) and erases the entry (`pipeline.cpp:2750-2790`). All of it is state of the drawable the avatar owns. **Can become an avatar-owned list** processed at the same point of the frame. Compare: the bits and rebuild marks after the pass equal today's.
+2. **The sort deltas** (`applySortDeltasRange`, `pipeline.cpp:5349`): REBUILD_DRAWABLE, PARTITION_MOVE, REBUILD_GROUP, OBJECT_LOD, REBUILD_MESH and others. Their targets are the pipeline's global rebuild lists and group marks, owned by the main thread. Taking them out needs a thread-safe owner for those lists. **Stays until D4 and D5** give rigged and attachment draws a table to write instead of a list to mark.
+3. **The stamps** (`stampTextures` per moved face): the texture records are the main thread's. Same answer as 2.
+
+So the ledger does not go whole in D2; two of its op kinds go, and the rest waits for the owners D4 and D5 create. The plan's sentence "the ledger and its replay go" is true only after D5.
+
+**The bug class is the bigger structural prize, and it is D2c.** Today the completion changes the pose after the job (`updateCharacterPostMotion`, `llvoavatar.cpp:7998`): for an avatar sitting on the ground it adds the hover offset to the root's world position, `touch()`es the root, and `walkWorldAfterPass(true)` recomputes the children when the touch serial moved. That is the second source of the pose behind the six one-frame-late bugs, and it is why `canRunAttachmentJob` refuses ground-sitting avatars (`llvoavatar.cpp:4737`). The offset needs no frame of lag: `getHoverOffset()` and the sit state are known when the job starts (`mDeferredSitGroundConstrained` is already captured). It can be applied inside the job, to the root before the world pass. Then the pose is final at the job's end for every avatar, the rewalk goes, ground-sitting avatars take the job path, and a rule "nothing writes an avatar's joints between the job's start and the next frame" can be checked by a counter. Float rounding can differ from add-after-pass in the last bit, so the gate is a tolerance (1e-5 of a metre) over a lap, not bit equality, for those avatars only.
+
+Not yet established, to count before building: how often the completion finds a dirtied joint at all (`clean_serial != LLJoint::sTouchSerial`), by cause, for avatars that are not on the ground. If it is never, the late-write class is already empty for them and D2c is only the ground sit. One `RK_DIAG` counter answers it.
+
+### The structural order of D2
+
+1. **Count the late writers** (one counter, diagnostic lap): which causes dirty a joint after the job.
+2. **D2c: the hover offset into the job**, the rewalk out, ground-sitting avatars on the job path. Gate: joint world matrices after the completion equal today's within 1e-5 m over a crowd lap with a ground-sitting avatar (Adam's own avatar sits on the ground in every lap); Adam's eye on a sitting avatar and its attachments.
+3. **D2a-bridge:** BRIDGE_MOVE inline in the job, the op kind deleted.
+4. **D2a-moved:** MOVED_LIST as the avatar's own list, the op kind deleted.
+5. **D2b:** the overlap (the pose is frozen from launch to join now, by construction).
+6. **D2d:** readers of the record.
+The sort delta and stamp streams stay as they are; each step is neutral or faster by the lap.
