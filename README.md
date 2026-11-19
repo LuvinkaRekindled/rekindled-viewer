@@ -64,5 +64,3 @@ The viewer always draws with Vulkan. The `RK_VK_*` environment variables and the
 ## License
 
 Firestorm and the Second Life viewer it derives from are available under the GNU Lesser General Public License, version 2.1 (see `LICENSE`). Third-party components keep their own licenses. Rekindled is an independent derivative and is not an official Firestorm or Linden Lab product. See the [Third-Party Viewer Policy](https://secondlife.com/corporate/third-party-viewers) for the rules that apply to viewers for Second Life.
-
-Firestorm's contribution guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md).
