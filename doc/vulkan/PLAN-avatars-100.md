@@ -271,3 +271,23 @@ The census (`LLVOAvatar::skinSharingCensus`, `AvSkins` line, `RK_VK_DIAG` only, 
 So the hunch that 3 to 4 body meshes per gender cover most avatars does not show in this crowd: the heavy skins are mostly distinct assets (bodies are split in parts and sizes, and a body is only a few of an avatar's heavy skins). Caveats: 43 of about 80 avatars have entries (the others are impostors, hidden or not yet drawn), the count is of skins, not of triangles (a body weighs far more than a hat, so the byte saving could still be larger than 15 percent), one lap in one place.
 
 What it changes for D4: the memory argument is weak (about 15 percent of instances, bytes not measured). The case for D4 rests on the other things it does: no rigged fill on the main thread (the serial `mSerialOnly` for `mAvatar` faces, `llvovolume.cpp:7995`), no per-avatar rebuild on a LOD, texture or hover change, immutable buffers. The cheap first question is why rigged fills are serial at all and whether they can run on the pool as the other faces do (the loading stalls of `PLAN-hitchless-loading.md`), before any shared store.
+
+### D1 step 0, measured and read (2026-11-18, lap `imp-def1`, `RK_VK_AVIMP=1`)
+
+**The blend rule (read, `llcharacter/llpose.cpp:497-664`; the flat form `FlatBlend` already exists, 216 slots of 6 states).** Per joint, the states of the active motions sit in a slot of 6 in priority order (a higher priority goes in front; an equal one after). Walking the slot, a state with weight 0 is skipped. A non-additive state of a channel (position, rotation or scale, by the state's usage flags): the first one sets the value and the sum of weights; each later one blends with `new_sum = min(1, w + sum)` and a lerp or nlerp factor `sum / new_sum`; **when the sum is already 1 the factor is 1 and the state changes nothing**, so a channel is decided by the states up to the first that brings the sum to 1. An additive state adds `value * (min(1, w + sum) - sum)` (it does not change the sum). The result is `blended + added` (rotation `added * blended`). So the plan's rule "highest priority first, cut at the first that brings the weight to 1" is the real rule per channel, and the cut moves while a motion eases in or out (the weights change every frame): the plan must be rebuilt not only when a motion starts, stops or changes priority but when a weight reaches or leaves 1.
+
+**What the pose job costs (timers included, 22.3 main view avatars, 26 tested, a frame):**
+
+| Class | us an avatar | avatars | ms CPU a frame (all threads) |
+|---|---|---|---|
+| main view | 56.1 | 22.3 | 1.252 |
+| own avatar | 129.9 | 1.0 | 0.130 |
+| animesh | 28.2 | 7.0 | 0.198 |
+| hidden ("nothing") | 11.9 | 9.4 | 0.112 |
+| cascade only | 11.3 | 0.5 | 0.006 |
+
+Of the 56 us of a main view avatar, the world walk is 16.8 us (0.375 ms a frame); the pose (sampling and blend) is about 39 us. The own avatar has 16.9 active motions. So the plan's 85 to 99 us a seen avatar was too high for this build (the flat blend and flat world pass of stages B and C are already in): **the part D1 can shrink is about 39 us, to the plan's target of 15 us: about 24 us an avatar, 2.4 ms of CPU a frame at 100 seen avatars, spread over the pool (wall time about 0.3 ms)**, not the plan's 7 ms. Nothing here is a main thread cost.
+
+**What decides it:** how many of an avatar's ~15 active motions win no joint at all (their sampling is the saving). Not measured: `flat_slot_blend` knows joint states, not motions. A counter needs the motion index beside each state in the slot. Not built.
+
+D1 is therefore a CPU win for machines with few cores (the pool competes with main and the render worker there), not for the 12-thread development machine where the pool sits at 17 to 19 percent a thread.
