@@ -29,6 +29,8 @@ bool rk_rigstore_on();      // mode 1
 void rk_rigstore_compare(LLFace* face, const LLVolume& volume, U32 te_idx);
 
 // mode 2, main thread (genDrawInfo): the faces of the class
+// D4 stage 4: a face in the animated state, big enough (MIN_TEX_ANIM_SIZE) that the matrix is applied on the GPU: its coordinates are baked raw
+bool rk_rigcache_tex_anim_raw(LLFace* face);
 bool rk_rigcache_eligible(LLFace* face, bool distance_sort);
 // 0: not handled (the face goes the normal way), 1: a hit (the face is attached to the shared buffer: no fill), 2: a miss (a buffer was allocated and registered for this face: it fills it, buffer returned)
 int rk_rigcache_plan(LLFace* face, U32 mask, bool batch_textures, LLPointer<LLVertexBuffer>& buffer);
