@@ -370,7 +370,7 @@ public:
     // at once, so the next step of the loop sees them.
     struct AvOp
     {
-        enum Kind : U8 { MOVED_LIST = 0, MOVED_BRIDGE, MOVE_PARTITION, BRIDGE_MOVE, RENDER_ORDER, MAKE_ACTIVE_SHARED, UPDATE_TEXT, DIRTY_GROUP } mKind;
+        enum Kind : U8 { MOVED_LIST = 0, MOVED_BRIDGE, MOVE_PARTITION, RENDER_ORDER, MAKE_ACTIVE_SHARED, UPDATE_TEXT, DIRTY_GROUP } mKind;
         LLDrawable* mDrawable;
         LLVOAvatar* mAvatar;            // RENDER_ORDER
         LLSpatialGroup* mSeenGroup;     // RENDER_ORDER: the group the loop saw when it made the request

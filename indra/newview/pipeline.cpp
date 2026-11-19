@@ -2358,12 +2358,14 @@ void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
             if (!op.mDrawable->isDead())
             {
                 op.mDrawable->movePartition();
-            }
-            break;
-        case AvOp::BRIDGE_MOVE:
-            if (!op.mDrawable->isDead())
-            {
-                ((LLSpatialBridge*)op.mDrawable)->moveInPartition();
+                // D2a-bridge: a move into a bridge's octree changes what its extents are made of (the job made them before the move): made again after it
+                if (LLSpatialPartition* part = op.mDrawable->getSpatialPartition())
+                {
+                    if (LLSpatialBridge* bridge = dynamic_cast<LLSpatialBridge*>(part))
+                    {
+                        bridge->updateSpatialExtents();
+                    }
+                }
             }
             break;
         case AvOp::MAKE_ACTIVE_SHARED:
@@ -2405,7 +2407,7 @@ void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
     if (++calls % 6000 == 0)
     {
         RK_DIAG("AvLedger") << "avatar attachment ledger: " << calls << " avatar loops, " << (double)total_ops / calls << " writes each (moved list " << by_kind[AvOp::MOVED_LIST] << ", moved bridge " << by_kind[AvOp::MOVED_BRIDGE]
-                             << ", partition moves " << by_kind[AvOp::MOVE_PARTITION] << ", bridge moves " << by_kind[AvOp::BRIDGE_MOVE] << ", render orders " << orders << "); render orders whose group differed from the one the loop saw: " << stale_group << LL_ENDL;
+                             << ", partition moves " << by_kind[AvOp::MOVE_PARTITION] << ", render orders " << orders << "); render orders whose group differed from the one the loop saw: " << stale_group << LL_ENDL;
     }
 }
 

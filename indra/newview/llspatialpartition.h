@@ -636,7 +636,6 @@ public:
     virtual void makeActive();
     virtual void move(LLDrawable *drawablep, LLSpatialGroup *curp, bool immediate = false);
     virtual bool updateMove();
-    void moveInPartition();     // <FS> view rework A1: the octree half of updateMove
     virtual void shiftPos(const LLVector4a& vec);
     virtual void cleanupReferences();
     virtual LLSpatialPartition* asPartition()       { return this; }
