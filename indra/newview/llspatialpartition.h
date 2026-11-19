@@ -849,6 +849,7 @@ class LLVolumeGeometryManager: public LLGeometryManager
         bool mBatchTextures = false;
         bool mDistanceSort = false;
         bool mBakeSunlight = false;
+        bool mStore = false;            // D4 1b-3: faces attached to a shared cache buffer: registered in the passes, not filled
         bool mPrepared = false;         // the caller did the faces' own setup (indices, vertex buffer, texture stamps) already: the fill runs on a pool thread
         bool mSerialOnly = false;       // a face of an animated child: updateRelativeXform writes its object, which the faces of other batches can share
         LLFace** mBegin = nullptr;

@@ -273,6 +273,7 @@ public:
     LLMatrix4*  mSpecMapMatrix;
     LLMatrix4*  mNormalMapMatrix;
     LLVOAvatar* mAvatar = nullptr;
+    bool mRigStore = false;     // <FS> D4 1b-3 (RK_VK_RIGSTORE=2): the face's vertex buffer is a shared cache buffer (rkrigstore.h): getGeometryVolume does not write it
     LLConstPointer<LLMeshSkinInfo> mSkinInfo;// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
 
     // return mSkinInfo->mHash or 0 if mSkinInfo is null

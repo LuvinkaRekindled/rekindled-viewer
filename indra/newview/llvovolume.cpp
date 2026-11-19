@@ -7011,6 +7011,13 @@ void LLVolumeGeometryManager::rebuildMesh(LLSpatialGroup* group)
                         LLFace* face = drawablep->getFace(i);
                         if (face)
                         {
+                            if (face->mRigStore)
+                            {
+                                // <FS> D4 1b-3: the face's buffer is shared: a colour, texture coordinate or position change makes its group's geometry again (a cache face costs a registration there, not a fill)
+                                group->dirtyGeom();
+                                gPipeline.markRebuild(group);
+                                continue;
+                            }
                             LLVertexBuffer* buff = face->getVertexBuffer();
                             if (buff)
                             {
@@ -7109,6 +7116,11 @@ struct CompareBatchBreakerRigged
 // size table of sculpted attachments), and the texture stamps (the counter of a texture the faces share). The same order as in fillBatch, so the offsets come out the same.
 void LLVolumeGeometryManager::prepareBatch(FillTask& task)
 {
+    if (task.mStore)
+    {
+        task.mPrepared = true;      // D4 1b-3: its faces were attached to their shared buffer when the kind was planned (main thread)
+        return;
+    }
     U32 indices_index = 0;
     U16 index_offset = 0;
     for (LLFace** f = task.mBegin; f < task.mEnd; ++f)
@@ -7159,7 +7171,7 @@ void LLVolumeGeometryManager::fillBatch(FillTask& task)
             //update face indices for new buffer
             facep = *face_iter;
 
-            if (buffer.isNull())
+            if (buffer.isNull() && !task.mStore)
             {
                 // Bulk allocation failed
                 if (!task.mPrepared)
@@ -7177,6 +7189,18 @@ void LLVolumeGeometryManager::fillBatch(FillTask& task)
                 facep->setVertexBuffer(buffer);
             }
 
+            if (facep->getVertexBuffer() == nullptr)
+            {
+                // <FS> D4 1b-3: a face reached the passes with no vertex buffer (the first cache lap died on this: the material pass reads the buffer's type mask). Not drawn, and said what it is.
+                static std::atomic<U32> nobuffer{ 0 };
+                if (++nobuffer <= 20)
+                {
+                    LL_WARNS("RigCache") << "a face reached the passes without a vertex buffer: cache face " << facep->mRigStore << ", store task " << task.mStore << ", prepared " << task.mPrepared << ", task buffer "
+                                         << buffer.notNull() << ", rigged " << facep->isState(LLFace::RIGGED) << ", serial only " << task.mSerialOnly << ", faces in the task " << (U32)(i - task.mBegin) << LL_ENDL;
+                }
+                ++face_iter;
+                continue;
+            }
             if (batch_textures && facep->getTextureIndex() == FACE_DO_NOT_BATCH_TEXTURES)
             {
                 LL_ERRS() << "Invalid texture index." << LL_ENDL;
@@ -7186,6 +7210,7 @@ void LLVolumeGeometryManager::fillBatch(FillTask& task)
                 //for debugging, set last time face was updated vs moved
                 if (!task.mPrepared) facep->updateRebuildFlags();
 
+                if (!task.mStore)
                 { //copy face geometry into vertex buffer
                     LLDrawable* drawablep = facep->getDrawable();
                     LLVOVolume* vobj = drawablep->getVOVolume();
@@ -7199,12 +7224,19 @@ void LLVolumeGeometryManager::fillBatch(FillTask& task)
                     U32 te_idx = facep->getTEOffset();
 
                     bool geometry_ok;
+                    const bool rig_store_was = facep->mRigStore;
+                    facep->mRigStore = false;       // (D4 1b-3: the face that fills a cache buffer writes it this once)
                     { RK_CPU_ZONE("rebuild: face geometry (getGeometryVolume)");
                     geometry_ok = facep->getGeometryVolume(*volume, te_idx,
                         vobj->getRelativeXform(), vobj->getRelativeXformInvTrans(), index_offset,true); }
+                    facep->mRigStore = rig_store_was;
                     if (!geometry_ok)
                     {
                         LL_WARNS() << "Failed to get geometry for face!" << LL_ENDL;
+                    }
+                    else if (rk_rigstore_mode() == 3 && facep->isState(LLFace::RIGGED))
+                    {
+                        rk_rigcache_verify(facep, mask);        // <FS> D4 1b-3 (RK_VK_RIGSTORE=3): faces with the same cache key must hold the same arrays
                     }
                     else if (rk_rigstore_on() && facep->isState(LLFace::RIGGED))
                     {
@@ -7768,8 +7800,51 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
     }
 
     bool hud_group = group->isHUDGroup() ;
+    // <FS> D4 stage 1b-3 (RK_VK_RIGSTORE=2, rkrigstore.h): the rigged faces of the class whose cache key already has a buffer attach to it (no fill), the first face of a key gets a buffer of its own that
+    // the registry keeps, the others go the normal way. All on the main thread (the buffers' reference counts are not atomic); the tasks of the attached faces only register them in the passes.
+    U32 normal_count = face_count;
+    std::vector<LLFace*> cache_fillers, cache_hits;
+    std::vector<LLPointer<LLVertexBuffer> > cache_filler_buffers;
+    if (rigged && rk_rigstore_mode() == 2)
+    {
+        rk_rigcache_sweep();
+        std::vector<LLFace*> normal;
+        normal.reserve(face_count);
+        for (U32 f = 0; f < face_count; ++f)
+        {
+            LLFace* face = faces[f];
+            int how = 0;
+            LLPointer<LLVertexBuffer> vb;
+            if (rk_rigcache_eligible(face, distance_sort))
+            {
+                how = rk_rigcache_plan(face, mask, batch_textures, vb);
+            }
+            else
+            {
+                rk_rigcache_release(face);      // (a face that left the class lets go of its shared buffer)
+            }
+            if (how == 1)
+            {
+                cache_hits.push_back(face);
+            }
+            else if (how == 2)
+            {
+                cache_fillers.push_back(face);
+                cache_filler_buffers.push_back(vb);
+            }
+            else
+            {
+                normal.push_back(face);
+            }
+        }
+        normal_count = (U32)normal.size();
+        U32 at = 0;
+        for (LLFace* face : normal) { faces[at++] = face; }
+        for (LLFace* face : cache_fillers) { faces[at++] = face; }
+        for (LLFace* face : cache_hits) { faces[at++] = face; }
+    }
     LLFace** face_iter = faces;
-    LLFace** end_faces = faces+face_count;
+    LLFace** end_faces = faces+normal_count;
 
     LLViewerTexture* last_tex = NULL;
 
@@ -7785,6 +7860,8 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
         U32 mGeomCount;
         bool mBakeSunlight;
         LLPointer<LLVertexBuffer> mBuffer;
+        bool mStore = false;        // D4 1b-3: faces attached to a shared buffer (no fill)
+        bool mFiller = false;       // D4 1b-3: the one face that fills a new cache buffer (its buffer is made at the planning)
     };
     std::vector<DrawBatch> batches;
 
@@ -7948,10 +8025,30 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
         batches.push_back({ face_iter, i, index_count, geom_count, bake_sunlight, nullptr });
         face_iter = i;
     }
+    // D4 1b-3: a batch of one face for each cache buffer to fill (its buffer exists), and register only batches (up to 8 faces) for the faces attached to a cache buffer
+    for (size_t k = 0; k < cache_fillers.size(); ++k)
+    {
+        LLFace** at = faces + normal_count + k;
+        LLVertexBuffer* vb = cache_filler_buffers[k].get();
+        geometryBytes += vb->getSize() + vb->getIndicesSize();
+        batches.push_back({ at, at + 1, (U32)cache_fillers[k]->getIndicesCount(), (U32)cache_fillers[k]->getGeomCount(), LLPipeline::sBakeSunlight && cache_fillers[k]->getDrawable()->isStatic(), cache_filler_buffers[k] });
+        batches.back().mFiller = true;
+    }
+    for (size_t k = 0; k < cache_hits.size(); k += 8)
+    {
+        LLFace** at = faces + normal_count + cache_fillers.size() + k;
+        LLFace** end = at + std::min<size_t>(8, cache_hits.size() - k);
+        batches.push_back({ at, end, 0, 0, false, nullptr });
+        batches.back().mStore = true;
+    }
 
     // allocation pass
     for (DrawBatch& batch : batches)
     {
+        if (batch.mStore || batch.mFiller)
+        {
+            continue;       // D4 1b-3: no buffer to make
+        }
         const U32 index_count = batch.mIndexCount;
         const U32 geom_count = batch.mGeomCount;
 
@@ -7993,6 +8090,7 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
         task.mBegin = batch.mBegin;
         task.mEnd = batch.mEnd;
         task.mBuffer = batch.mBuffer;
+        task.mStore = batch.mStore;
         // <FS> PLAN-avatars-100.md D4: a rigged face used to make its batch serial ("a rigged face holds its avatar in the draw info, and an avatar's count is not atomic", R3b2, 2026-10-31). Since C2.4d
         // (2026-11-05) the draw info holds an RKAvatarRef, a handle that resolves lock-free from any thread, and a skin handle: nothing is counted, so a rigged batch fills on the pool like the others.
         // RK_VK_RIGGEDFILL=0: serial as before.
@@ -8021,6 +8119,10 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
                 LL_INFOS("RigFill") << "fill tasks of the rebuilds: " << total << " so far, with rigged faces " << (rigged_parallel + rigged_serial_n) << " (on the pool " << rigged_parallel << ", serial " << rigged_serial_n
                                     << "), other serial tasks " << other_serial << LL_ENDL;
             }
+        }
+        if (batch.mStore || batch.mFiller)
+        {
+            prepareBatch(task);        // D4 1b-3: the faces' own setup (and the reference counts of the shared buffers) on this thread, whichever way the task runs
         }
         tasks.push_back(std::move(task));
     }
