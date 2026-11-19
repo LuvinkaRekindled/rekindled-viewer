@@ -1198,13 +1198,13 @@ struct PalAsync
 PalAsync sPalAsync;
 std::atomic<bool> sPalAsyncActive{ false };
 
-// <FS> D2b (PLAN-avatars-100.md, RK_VK_BLENDOVERLAP, default off): the pose blend of the avatars of the batch is launched in chunks of kChunk while the serial idle loop goes on (each avatar joins the batch at the
+// <FS> D2b (PLAN-avatars-100.md, RK_VK_BLENDOVERLAP, default on since the user's eye 2026-11-19: "looks fine"; 0 = the batch is run after the loop as before): the pose blend of the avatars of the batch is launched in chunks of kChunk while the serial idle loop goes on (each avatar joins the batch at the
 // end of its own serial part, LLVOAvatar::pushMotionBatch), and joined where the batch used to be run. The blend is the pose job of an avatar that nothing else reads or writes between the end of its serial part and the
 // completion (the idle loop of an avatar and of the objects after it never reads another avatar's joints: attachments return early in LLViewerObject::idleUpdate), and it does not touch the pipeline's queues
 // (the batch is launched neutral, as the palette jobs are). The control avatars worn by an avatar (hostJobOwned) are placed from their host's final pose: they stay in the second phase.
 bool rk_blend_overlap_on()
 {
-    static const bool on = getenv("RK_VK_BLENDOVERLAP") && atoi(getenv("RK_VK_BLENDOVERLAP")) != 0;
+    static const bool on = !(getenv("RK_VK_BLENDOVERLAP") && atoi(getenv("RK_VK_BLENDOVERLAP")) == 0);
     return on;
 }
 struct BlendChunk
