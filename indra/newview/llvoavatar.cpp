@@ -4732,12 +4732,20 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         }
 }
 
-// <FS> view rework A2: an avatar of the motion batch whose attachment loop can run as a pool job: not the viewer's own, its detailed update this frame, and not sitting on the ground (updateCharacterPostMotion moves
-// its root then, and the loop reads the skeleton)
+// <FS> view rework A2: an avatar of the motion batch whose attachment loop can run as a pool job: not the viewer's own, its detailed update this frame, and not waiting for a ground sit hover offset
+// (the completion's post motion step moved its root after the loop would have read the skeleton). PLAN-avatars-100.md D2c: the pool job adds that offset itself now (mHoverDone), so a ground sitting
+// avatar takes the job path too; it keeps the main thread only when the offset is still to come (RK_VK_HOVERJOB=0, or no job did it).
+static std::atomic<U64> sSitAttJobs{0};       // diagnostic (RK_VK_DIAG, printed with the AvLate line): attachment jobs allowed for ground sitting avatars
 bool LLVOAvatar::canRunAttachmentJob()
 {
-    return mMotionUpdateDeferred && mDeferredDetailedUpdate && !mDeferredMatricesOnly && !isSelf() && !isControlAvatar() && !isDead() && mDrawable.notNull()
-        && !(!getParent() && (isSitting() || mDeferredSitGroundConstrained));
+    const bool ground_sit = !getParent() && (isSitting() || mDeferredSitGroundConstrained);
+    const bool hover_pending = ground_sit && !mHoverDone && LLVector3d(getHoverOffset()).mdV[VZ] != 0.0;
+    const bool ok = mMotionUpdateDeferred && mDeferredDetailedUpdate && !mDeferredMatricesOnly && !isSelf() && !isControlAvatar() && !isDead() && mDrawable.notNull() && !hover_pending;
+    if (ok && ground_sit && rk_diag_on())
+    {
+        ++sSitAttJobs;
+    }
+    return ok;
 }
 
 void LLVOAvatar::runAttachmentJob()
@@ -14280,7 +14288,7 @@ void LLVOAvatar::buildPalettesInJob()
         {
             LL_INFOS("AvLate") << "pose changed after the pose job, seen by the palette job: " << runs << " runs; array not filled by the job " << sLateNotFromJob.load() << ", of another frame " << sLateOtherFrame.load()
                                << ", a joint dirty " << sLateDirty.load() << " (own avatar " << sLateDirtySelf.load() << ", animesh " << sLateDirtyControl.load() << ", sitting on the ground " << sLateDirtySit.load()
-                               << ", not sitting " << sLateDirtyNotSit.load() << "); hover offset writes in the completion " << sLateHoverWrites.load() << ", added in the pool job " << sLateHoverInJob.load() << " (the completion found another value or state: " << sLateHoverMismatch.load() << ")" << LL_ENDL;
+                               << ", not sitting " << sLateDirtyNotSit.load() << "); hover offset writes in the completion " << sLateHoverWrites.load() << ", added in the pool job " << sLateHoverInJob.load() << " (the completion found another value or state: " << sLateHoverMismatch.load() << "); attachment jobs allowed for ground sitting avatars " << sSitAttJobs.load() << LL_ENDL;
         }
     }
     if (mFlatSkel)
