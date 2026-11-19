@@ -152,6 +152,9 @@
 #include "llsidepanelappearance.h"
 #include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 #include "llviewermenufile.h"
+#include "rkvkbridge.h"
+#include "rkvkpalettegpu.h"     // <FS> PLAN-avatars-100.md D3 stage 3a
+#include <unordered_set>
 #include "llviewernetwork.h"    // [FS:CR] isInSecondlife()
 
 
@@ -14260,6 +14263,60 @@ const F32* LLVOAvatar::flatWorld(S32 joint_num) const
 }
 
 // the pool job of one avatar (after the completions of the frame): rebuilds the palettes it had asked for in the last rendered frame, for the frame about to be rendered
+// <FS> PLAN-avatars-100.md D3 (palettes made on the GPU), stage 3a, RK_VK_PALGPU=1 (default off until the switch of 3c): what the GPU needs to make the palettes the jobs make, collected by the palette
+// jobs (pool threads, under one mutex) and sent by the main thread after them (the record queue is not for pool threads): skin blocks (kind 44) first, then the frame's entries and world arrays (kind 45).
+// Nothing reads it yet (stage 3b). rkvkpalettegpu.h has the layouts.
+static_assert(RKVkPaletteGpu::kJoints == LL_CHARACTER_MAX_ANIMATED_JOINTS, "the palette records carry one matrix per joint number");
+namespace
+{
+bool rk_palgpu_on()
+{
+    static const bool on = getenv("RK_VK_PALGPU") && atoi(getenv("RK_VK_PALGPU")) != 0;
+    return on;
+}
+struct PalGpuPendingSkin
+{
+    RKVkPaletteGpu::BuildEntry mKey = {};       // (only mSkin, mSkinHash and mCount are used)
+    std::vector<U8> mBlob;
+};
+struct PalGpuAccum
+{
+    std::mutex mMutex;
+    std::unordered_set<U64> mSkinsKnown;                    // keys (handle << 32 | hash) already sent or pending
+    std::vector<PalGpuPendingSkin> mPendingSkins;
+    std::vector<RKVkPaletteGpu::BuildEntry> mEntries;
+    std::vector<RKVkPaletteGpu::AvatarRec> mAvatars;
+    std::vector<F32> mWorlds;
+    U64 mFlushes = 0, mSkinsSent = 0;
+} sPalGpu;
+}
+
+// a pool thread, once per entry built by a palette job: the skin's block is queued the first time (the skin is initialised: its joint numbers are known)
+static void rk_palgpu_note_skin(const LLMeshSkinInfo* skin, U32 count)
+{
+    const U32 handle = skin->getRenderHandle();
+    const U64 key = ((U64)handle << 32) | (U32)skin->mHash;
+    {
+        std::lock_guard<std::mutex> lock(sPalGpu.mMutex);
+        if (!sPalGpu.mSkinsKnown.insert(key).second)
+        {
+            return;
+        }
+    }
+    PalGpuPendingSkin pending;
+    pending.mKey.mSkin = handle;
+    pending.mKey.mSkinHash = (U32)skin->mHash;
+    pending.mKey.mCount = count;
+    pending.mBlob.resize((size_t)count * (16 * sizeof(F32) + sizeof(S32)));
+    memcpy(pending.mBlob.data(), &skin->mInvBindMatrix[0], (size_t)count * 16 * sizeof(F32));
+    memcpy(pending.mBlob.data() + (size_t)count * 16 * sizeof(F32), skin->mJointNums.data(), (size_t)count * sizeof(S32));
+    std::lock_guard<std::mutex> lock(sPalGpu.mMutex);
+    sPalGpu.mPendingSkins.push_back(std::move(pending));
+}
+
+// a pool thread, once per avatar after its entries: the avatar's record and its world arrays join the frame
+static void rk_palgpu_add_avatar(const RKFlatSkeleton* flat, std::vector<RKVkPaletteGpu::BuildEntry>& entries, bool any_relative);
+
 void LLVOAvatar::buildPalettesInJob()
 {
     const int mode = rk_paljob_mode();
@@ -14301,6 +14358,8 @@ void LLVOAvatar::buildPalettesInJob()
             mFlatSkel->mFrame = ~0u;
         }
     }
+    std::vector<RKVkPaletteGpu::BuildEntry> palgpu_entries;        // (D3 stage 3a)
+    bool palgpu_relative = false;
     for (auto& kv : mMatrixPaletteCache)
     {
         MatrixPaletteCache& entry = kv.second;
@@ -14317,6 +14376,7 @@ void LLVOAvatar::buildPalettesInJob()
         }
         const bool again = entry.mFrame == target;
         const U64 t0 = timed ? rk_pal_now() : 0;
+        const U64 palgpu_prev_slot = entry.mListSlot.load(std::memory_order_acquire);        // (D3 stage 3a: the palette of the frame before sits where this says; the build resets it)
         buildPaletteEntry(entry, skin, target, true, !again);
         {
             // <FS> P1 step 2: the palette goes straight into the coming frame's arena (the request at render time finds the slot stamped: no copy under the list's mutex)
@@ -14328,6 +14388,25 @@ void LLVOAvatar::buildPalettesInJob()
                 entry.mListSlot.store(((U64)target << 32) | at, std::memory_order_release);
             }
         }
+        if (rk_palgpu_on() && mFlatSkel)
+        {
+            const U32 count = (U32)LLSkinningUtil::getMeshJointCount(skin);
+            if (count && count <= RKVkPaletteGpu::kJoints)
+            {
+                rk_palgpu_note_skin(skin, count);
+                RKVkPaletteGpu::BuildEntry e = {};
+                e.mSkin = skin->getRenderHandle();
+                e.mSkinHash = (U32)skin->mHash;
+                e.mCount = count;
+                const U64 slot = entry.mListSlot.load(std::memory_order_acquire);
+                e.mOutFloat = (U32)(slot >> 32) == target ? (U32)slot : RKVkPaletteGpu::kNone;
+                e.mPrevFrame = (U32)(palgpu_prev_slot >> 32) == target - 1 ? target - 1 : RKVkPaletteGpu::kNone;
+                e.mPrevFloat = e.mPrevFrame != RKVkPaletteGpu::kNone ? (U32)palgpu_prev_slot : RKVkPaletteGpu::kNone;
+                e.mRelative = entry.mRebased ? 1 : 0;
+                palgpu_entries.push_back(e);
+                palgpu_relative = palgpu_relative || entry.mRebased;
+            }
+        }
         entry.mJobFor = target;
         entry.mJobChecked = false;
         if (timed)
@@ -14336,11 +14415,104 @@ void LLVOAvatar::buildPalettesInJob()
             ++sPalBuilds[1];
         }
     }
+    if (!palgpu_entries.empty() && mFlatSkel)
+    {
+        rk_palgpu_add_avatar(mFlatSkel.get(), palgpu_entries, palgpu_relative);
+    }
     if (mFlatSkel)
     {
         mFlatSkel->mFrame = ~0u;            // (the render's own palette requests fill it again at their frame)
         mFlatSkel->mFromJob = false;
     }
+}
+
+// <FS> D3 stage 3a: the avatar's world matrices are copied while the pass is still in the array (the line above lets the render's own requests fill it again)
+static void rk_palgpu_add_avatar(const RKFlatSkeleton* flat, std::vector<RKVkPaletteGpu::BuildEntry>& entries, bool any_relative)
+{
+    using namespace RKVkPaletteGpu;
+    if (flat->mWorld.size() != kJoints || (any_relative && flat->mRelWorld.size() != kJoints))
+    {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(sPalGpu.mMutex);
+    AvatarRec rec;
+    rec.mWorldFloat = (U32)sPalGpu.mWorlds.size();
+    const F32* world = (const F32*)flat->mWorld.data();
+    sPalGpu.mWorlds.insert(sPalGpu.mWorlds.end(), world, world + (size_t)kJoints * 16);
+    rec.mRelFloat = kNone;
+    if (any_relative)
+    {
+        rec.mRelFloat = (U32)sPalGpu.mWorlds.size();
+        const F32* rel = (const F32*)flat->mRelWorld.data();
+        sPalGpu.mWorlds.insert(sPalGpu.mWorlds.end(), rel, rel + (size_t)kJoints * 16);
+    }
+    const U32 index = (U32)sPalGpu.mAvatars.size();
+    sPalGpu.mAvatars.push_back(rec);
+    for (BuildEntry& e : entries)
+    {
+        e.mAvatar = index;
+        sPalGpu.mEntries.push_back(e);
+    }
+}
+
+// the main thread, after the palette jobs joined: the pending skin blocks, then the frame's record
+void LLVOAvatar::sPalGpuFlush(U32 frame)
+{
+    using namespace RKVkPaletteGpu;
+    if (!rk_palgpu_on() || !RKVkBridge::shadowPacketsAvailable())
+    {
+        return;
+    }
+    std::vector<PalGpuPendingSkin> skins;
+    std::vector<BuildEntry> entries;
+    std::vector<AvatarRec> avatars;
+    std::vector<F32> worlds;
+    {
+        std::lock_guard<std::mutex> lock(sPalGpu.mMutex);
+        skins.swap(sPalGpu.mPendingSkins);
+        entries.swap(sPalGpu.mEntries);
+        avatars.swap(sPalGpu.mAvatars);
+        worlds.swap(sPalGpu.mWorlds);
+    }
+    for (PalGpuPendingSkin& s : skins)
+    {
+        RKVkBridge::ShadowPacketsHeader h;
+        h.mKind = kKindSkin;
+        h.mFragment = s.mKey.mSkin;
+        h.mPass = s.mKey.mSkinHash;
+        h.mEntries = s.mKey.mCount;
+        RKVkBridge::shadowPackets(h, s.mBlob.data(), s.mBlob.size());
+        ++sPalGpu.mSkinsSent;
+    }
+    if (entries.empty())
+    {
+        return;
+    }
+    const RKRigAnchor rig = rk_rig_anchor(frame);
+    FrameHeader fh = {};
+    fh.mAnchor[0] = rig.mA[0];
+    fh.mAnchor[1] = rig.mA[1];
+    fh.mAnchor[2] = rig.mA[2];
+    fh.mAnchorActive = rig.mActive ? 1 : 0;
+    fh.mEntries = (U32)entries.size();
+    fh.mAvatars = (U32)avatars.size();
+    std::vector<U8> blob(sizeof(FrameHeader) + entries.size() * sizeof(BuildEntry) + avatars.size() * sizeof(AvatarRec) + worlds.size() * sizeof(F32));
+    U8* at = blob.data();
+    memcpy(at, &fh, sizeof(fh));
+    at += sizeof(fh);
+    memcpy(at, entries.data(), entries.size() * sizeof(BuildEntry));
+    at += entries.size() * sizeof(BuildEntry);
+    memcpy(at, avatars.data(), avatars.size() * sizeof(AvatarRec));
+    at += avatars.size() * sizeof(AvatarRec);
+    memcpy(at, worlds.data(), worlds.size() * sizeof(F32));
+    RKVkBridge::ShadowPacketsHeader h;
+    h.mKind = kKindBuild;
+    h.mPass = frame;
+    h.mEntries = fh.mEntries;
+    h.mMatrices = fh.mAvatars;
+    h.mPaletteFloats = (U32)worlds.size();
+    RKVkBridge::shadowPackets(h, blob.data(), blob.size());
+    ++sPalGpu.mFlushes;
 }
 
 // <FS> PLAN-avatars-100.md D4 step 0 (RK_VK_DIAG): the sharing of rigged meshes in a crowd. Every avatar keeps one palette entry per skin it wears (mMatrixPaletteCache: the skin names the mesh asset and

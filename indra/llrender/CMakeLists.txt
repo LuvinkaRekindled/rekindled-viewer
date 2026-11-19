@@ -88,6 +88,7 @@ set(llrender_HEADER_FILES
     rkvkdenoise.h
     rkvkfsr.h
     rkvkupscale.h
+    rkvkpalettegpu.h
     rkvkfunctions.inl
     rkvkasync.h
     rkvkpasscensus.h
