@@ -2570,6 +2570,7 @@ bool LLMeshRepoThread::skinInfoReceived(const LLUUID& mesh_id, U8* data, S32 dat
         LLPointer<LLMeshSkinInfo> info = nullptr;
         info = new LLMeshSkinInfo(mesh_id, skin);
 
+#if LL_WINDOWS      // (a developer diagnostic with a fixed Windows path: on Linux it made files named like the path in the folder the viewer ran from)
         if (info->mBadBindCount > 0)
         {
             // <FS> the raw skin block of an asset whose inverse bind matrices the parse refused, exactly as it came (compressed, before the inflate), the inflated LLSD as this viewer read it, and the
@@ -2601,6 +2602,7 @@ bool LLMeshRepoThread::skinInfoReceived(const LLUUID& mesh_id, U8* data, S32 dat
             }
             LL_WARNS("MeshSkin") << "mesh " << mesh_id << ": raw skin block (" << data_size << " bytes compressed) dumped to " << base << ".skin.z for the reference parse" << LL_ENDL;
         }
+#endif
 
         if (isAgentAvatarValid() && gAgentAvatarp->mInitFlags != 0)
         { // joint numbers are consistent inside LLVOAvatar and animations, but inconsistent inside meshes,
