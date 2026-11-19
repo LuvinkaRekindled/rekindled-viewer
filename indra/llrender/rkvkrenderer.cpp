@@ -702,6 +702,7 @@ const Program::PacketUniforms& Program::packetUniforms()
         mPacketU.mLights = find("rk_light_table");
         mPacketU.mImpostors = find("rk_impostor_table");
         mPacketU.mMotion = find("rk_packet_motion");
+        mPacketU.mPalIds = find("rk_packet_palids");        // D5 step 4: the frame's palette table of a rigged program
         mPacketU.mResolved = true;
     }
     return mPacketU;

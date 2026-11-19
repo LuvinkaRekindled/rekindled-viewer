@@ -57,7 +57,7 @@ public:
     // loose uniforms (write into the shadow copy; uploaded to the uniform ring on the next draw)
     bool hasUniform(const std::string& name) const { return mUniformIndex.count(name) != 0; }
     // S6 (alpha run cost): the indices of the packet table uniforms (~0u: the program has none), looked up by name once per program, not per record
-    struct PacketUniforms { bool mResolved = false; U32 mTable = ~0u, mModels = ~0u, mTexmats = ~0u, mPbr = ~0u, mLights = ~0u, mImpostors = ~0u, mMotion = ~0u; };
+    struct PacketUniforms { bool mResolved = false; U32 mTable = ~0u, mModels = ~0u, mTexmats = ~0u, mPbr = ~0u, mLights = ~0u, mImpostors = ~0u, mMotion = ~0u, mPalIds = ~0u; };
     const PacketUniforms& packetUniforms();
     // scalar / vector floats or ints; for arrays 'count' elements are written with std140 stride
     bool setFloats(const std::string& name, const F32* data, U32 components, U32 count = 1);

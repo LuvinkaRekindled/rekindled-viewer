@@ -7,12 +7,19 @@
 #define ALPHA_REFLECTS 1
 #endif
 
+#ifdef HAS_SKIN
+#define RK_PALIDS 1
+#endif
+
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     // the scene table of the record: three buffer addresses (rows, model matrices, texture matrices), written by the draw record
     uvec2 rk_packet_table;
     uvec2 rk_packet_models;
     uvec2 rk_packet_texmats;
+#ifdef HAS_SKIN
+    uvec2 rk_packet_palids;     // D5 step 4: the frame's palette table by palette id index (an address each, rows.glsl row_palette): a persistent rigged row names its palette by id, so it is not copied every frame
+#endif
 #ifdef ALPHA_PBR
     uvec2 rk_packet_pbr;        // the glTF material rows of the record (10 vec4 a row: four texture transforms, roughness / metallic / emissive, the cutoff)
 #endif
