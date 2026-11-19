@@ -4904,8 +4904,10 @@ static void on_palette_ids(const RKVkBridge::ShadowPacketsHeader& h, const U8* b
 
 // <FS> PLAN-avatars.md rigged draws as rows, P1: kind 39: part of the frame's palette list that the viewer wrote straight into a palette arena (mEntries = the arena, mFragment = the first float, mPaletteFloats = how many):
 // a segment of the frame's list at the arena's own address, no copy; the arena is held until frameCount() + 3 renderer frames after this record
+static void palette_gpu_run_deferred(U32 frame);
 static void on_palette_arena(const RKVkBridge::ShadowPacketsHeader& h)
 {
+    palette_gpu_run_deferred(h.mPass);
     if (h.mPass != gFrameState.mPalFrame)
     {
         gFrameState.mPalFrame = h.mPass;
@@ -4938,6 +4940,11 @@ std::unordered_map<U64, PalGpuSkin> sPalGpuSkins;       // by handle << 32 | has
 struct PalGpuStats
 {
     U64 mBlocksMade = 0, mBlocksRetired = 0, mBlocksFailed = 0, mBuilds = 0, mEntries = 0, mAvatars = 0, mBytes = 0, mMissingBlock = 0, mScratchFailed = 0, mNoArena = 0;
+    // stage 3b (RK_VK_PALGPU=2): the compute pass and its comparison with the palettes the CPU wrote into the arena
+    U64 mDispatches = 0, mDispatchEntries = 0, mInvalid = 0, mRingFull = 0, mCompares = 0, mCompared = 0, mFloatsCompared = 0, mFloatsDiffer = 0, mEntriesDiffer = 0, mMovingCompared = 0, mMovingWrong = 0,
+        mPrevSkipped = 0, mNoPrevGpu = 0, mNotRecorded = 0, mStale = 0, mRelCompared = 0, mPrevCompared = 0, mMovingSet = 0;
+    double mWorst = 0.0;
+    U32 mLogged = 0;
 } sPalGpuStats;
 }
 
@@ -4967,6 +4974,448 @@ static void on_palette_gpu_skin(const RKVkBridge::ShadowPacketsHeader& h, const 
     ++sPalGpuStats.mBlocksMade;
 }
 
+// ---- stage 3b: the compute pass (RK_VK_PALGPU=2). One workgroup a palette entry, 64 threads over its joints: palette[j] = invBind[j] x world[jointNum[j]] packed as 12 floats, the tail entry (the anchor of an avatar relative
+// palette), the previous palette (read from the frame before's arena slice: its translations moved by the change of the anchor, its tail the current one), and the moving flag. The result goes into a mirror buffer at the
+// same float offsets as the arena; once the frame is finished the mirror is compared with what the CPU wrote into the arena. Nothing draws from the mirror: this proves the arithmetic before stage 3c switches to it.
+namespace
+{
+const char* kPalGpuShader = R"GLSL(#version 450
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
+layout(local_size_x = 64) in;
+struct E { uvec2 skin; uvec2 prev; uint outF; uint count; uint world; uint flags; float scale; uint pad; };
+layout(buffer_reference, std430, buffer_reference_align = 8) readonly buffer Table { E e[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Floats { float f[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Ints { int i[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Rows { vec4 r[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer OutF { float f[]; };
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer Stats { uint s[]; };
+layout(push_constant) uniform PC { uvec2 table; uvec2 world; uvec2 outp; uvec2 arena; uvec2 stats; uvec2 pad; vec4 anchor; } pc;
+shared uint gMax;
+// the palette the CPU wrote into the arena against this one: 1e-5 of the larger of 1 and the two values
+void cmpf(float a, float g, uint idx, inout uint cmp, inout uint dif, inout float worst, inout uint fIdx, inout float fCpu, inout float fGpu)
+{
+    float d = abs(a - g) / max(1.0, max(abs(a), abs(g)));
+    ++cmp;
+    if (!(d <= 1e-5))
+    {
+        ++dif;
+        worst = max(worst, d != d ? 1e30 : d);
+        if (fIdx == 0xFFFFFFFFu) { fIdx = idx; fCpu = a; fGpu = g; }
+    }
+}
+void main()
+{
+    E e = Table(pc.table).e[gl_WorkGroupID.x];
+    uint tid = gl_LocalInvocationID.x;
+    if (tid == 0u) gMax = 0u;
+    barrier();
+    uint count = e.count;
+    if (count == 0u) return;
+    Rows sk = Rows(e.skin);
+    Ints sj = Ints(e.skin);
+    Rows wr = Rows(pc.world);
+    OutF o = OutF(pc.outp);
+    Floats ar = Floats(pc.arena);
+    Stats st = Stats(pc.stats);
+    uint hf = (count + 1u) * 12u;
+    bool skipPrev = (e.flags & 1u) != 0u;
+    bool rel = (e.flags & 2u) != 0u;
+    vec3 anchor = rel ? pc.anchor.xyz : vec3(0.0);
+    bool hasPrev = (e.prev.x | e.prev.y) != 0u;
+    Floats pf = Floats(e.prev);
+    vec3 shift = vec3(0.0);
+    if (hasPrev)
+    {
+        shift = vec3(pf.f[count * 12u + 0u], pf.f[count * 12u + 1u], pf.f[count * 12u + 2u]) - anchor;
+    }
+    float localMax = 0.0;
+    uint cmp = 0u, dif = 0u, fIdx = 0xFFFFFFFFu;
+    float worst = 0.0, fCpu = 0.0, fGpu = 0.0;
+    for (uint j = tid; j < count; j += 64u)
+    {
+        uint jn = uint(clamp(sj.i[count * 16u + j], 0, 215));
+        uint wb = e.world / 4u + jn * 4u;
+        vec4 a0 = sk.r[j * 4u + 0u], a1 = sk.r[j * 4u + 1u], a2 = sk.r[j * 4u + 2u], a3 = sk.r[j * 4u + 3u];
+        vec4 b0 = wr.r[wb + 0u], b1 = wr.r[wb + 1u], b2 = wr.r[wb + 2u], b3 = wr.r[wb + 3u];
+        vec4 m0 = a0.x * b0 + a0.y * b1 + a0.z * b2 + a0.w * b3;
+        vec4 m1 = a1.x * b0 + a1.y * b1 + a1.z * b2 + a1.w * b3;
+        vec4 m2 = a2.x * b0 + a2.y * b1 + a2.z * b2 + a2.w * b3;
+        vec4 m3 = a3.x * b0 + a3.y * b1 + a3.z * b2 + a3.w * b3;
+        float c[12] = float[12](m0.x, m0.y, m0.z, m3.x, m1.x, m1.y, m1.z, m3.y, m2.x, m2.y, m2.z, m3.z);
+        for (uint k = 0u; k < 12u; ++k)
+        {
+            float p = c[k];
+            if (hasPrev)
+            {
+                p = pf.f[j * 12u + k];
+                if (k == 3u) p += shift.x;
+                if (k == 7u) p += shift.y;
+                if (k == 11u) p += shift.z;
+            }
+            o.f[e.outF + j * 12u + k] = c[k];
+            o.f[e.outF + hf + j * 12u + k] = p;
+            localMax = max(localMax, abs(c[k] - p));
+            cmpf(ar.f[e.outF + j * 12u + k], c[k], j * 12u + k, cmp, dif, worst, fIdx, fCpu, fGpu);
+            if (!skipPrev) cmpf(ar.f[e.outF + hf + j * 12u + k], p, hf + j * 12u + k, cmp, dif, worst, fIdx, fCpu, fGpu);
+        }
+    }
+    if (tid == 0u)
+    {
+        for (uint k = 0u; k < 12u; ++k)
+        {
+            float t = 0.0;
+            if (rel) { t = k == 0u ? pc.anchor.x : (k == 1u ? pc.anchor.y : (k == 2u ? pc.anchor.z : (k == 3u ? 1.0 : 0.0))); }
+            o.f[e.outF + count * 12u + k] = t;
+            o.f[e.outF + hf + count * 12u + k] = t;
+            if (k != 4u) cmpf(ar.f[e.outF + count * 12u + k], t, count * 12u + k, cmp, dif, worst, fIdx, fCpu, fGpu);
+            if (!skipPrev) cmpf(ar.f[e.outF + hf + count * 12u + k], t, hf + count * 12u + k, cmp, dif, worst, fIdx, fCpu, fGpu);
+        }
+    }
+    atomicAdd(st.s[0], cmp);
+    if (dif > 0u)
+    {
+        atomicAdd(st.s[1], dif);
+        atomicMax(st.s[2], floatBitsToUint(worst));
+        if (atomicCompSwap(st.s[9], 0u, 1u) == 0u)
+        {
+            st.s[10] = e.outF;
+            st.s[11] = fIdx;
+            st.s[12] = floatBitsToUint(fCpu);
+            st.s[13] = floatBitsToUint(fGpu);
+        }
+    }
+    atomicMax(gMax, floatBitsToUint(localMax));
+    barrier();
+    if (tid == 0u)
+    {
+        float biggest = uintBitsToFloat(gMax);
+        float m = (e.scale > 0.0 && hasPrev && biggest * e.scale >= 0.3) ? 1.0 : 0.0;
+        o.f[e.outF + hf - 8u] = m;
+        atomicAdd(st.s[5], 1u);
+        if (rel) atomicAdd(st.s[6], 1u);
+        if (!skipPrev)
+        {
+            float cp = ar.f[e.outF + hf - 8u];
+            atomicAdd(st.s[3], 1u);
+            if (cp != m) atomicAdd(st.s[4], 1u);
+            if (cp != 0.0) atomicAdd(st.s[8], 1u);
+            if (hasPrev) atomicAdd(st.s[7], 1u);
+        }
+    }
+}
+)GLSL";
+struct PalGpuPipe { VkShaderModule mModule = VK_NULL_HANDLE; VkPipelineLayout mLayout = VK_NULL_HANDLE; VkPipeline mPipe = VK_NULL_HANDLE; bool mTried = false; } sPalGpuPipe;
+
+bool palette_gpu_pipeline()
+{
+    if (sPalGpuPipe.mPipe != VK_NULL_HANDLE)
+    {
+        return true;
+    }
+    if (sPalGpuPipe.mTried)
+    {
+        return false;
+    }
+    sPalGpuPipe.mTried = true;
+    static const bool glslang_ready = glslang::InitializeProcess();
+    if (!glslang_ready)
+    {
+        return false;
+    }
+    glslang::TShader shader(EShLangCompute);
+    const char* strings[1] = { kPalGpuShader };
+    shader.setStrings(strings, 1);
+    shader.setEnvInput(glslang::EShSourceGlsl, EShLangCompute, glslang::EShClientVulkan, 100);
+    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);
+    shader.setEnvTarget(glslang::EShTargetSpv, glslang::EShTargetSpv_1_6);
+    const EShMessages msgs = (EShMessages)(EShMsgSpvRules | EShMsgVulkanRules);
+    if (!shader.parse(GetDefaultResources(), 450, ECoreProfile, false, false, msgs))
+    {
+        LL_WARNS("PalGpu") << "palette compute: compile failed: " << shader.getInfoLog() << LL_ENDL;
+        return false;
+    }
+    glslang::TProgram program;
+    program.addShader(&shader);
+    if (!program.link(msgs))
+    {
+        LL_WARNS("PalGpu") << "palette compute: link failed: " << program.getInfoLog() << LL_ENDL;
+        return false;
+    }
+    std::vector<unsigned int> spirv;
+    spv::SpvBuildLogger logger;
+    glslang::SpvOptions options;
+    options.validate = false;
+    glslang::GlslangToSpv(*program.getIntermediate(EShLangCompute), spirv, &logger, &options);
+    if (spirv.empty())
+    {
+        LL_WARNS("PalGpu") << "palette compute: no SPIR-V: " << logger.getAllMessages() << LL_ENDL;
+        return false;
+    }
+    VkDevice dev = Context::instance().getDevice();
+    VkShaderModuleCreateInfo mi = { VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    mi.codeSize = spirv.size() * sizeof(unsigned int);
+    mi.pCode = spirv.data();
+    VkPushConstantRange pcr = { VK_SHADER_STAGE_COMPUTE_BIT, 0, 64 };
+    VkPipelineLayoutCreateInfo li = { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    li.pushConstantRangeCount = 1;
+    li.pPushConstantRanges = &pcr;
+    if (vkCreateShaderModule(dev, &mi, nullptr, &sPalGpuPipe.mModule) != VK_SUCCESS || vkCreatePipelineLayout(dev, &li, nullptr, &sPalGpuPipe.mLayout) != VK_SUCCESS)
+    {
+        return false;
+    }
+    VkComputePipelineCreateInfo pi = { VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+    pi.stage = { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO };
+    pi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    pi.stage.module = sPalGpuPipe.mModule;
+    pi.stage.pName = "main";
+    pi.layout = sPalGpuPipe.mLayout;
+    if (vkCreateComputePipelines(dev, VK_NULL_HANDLE, 1, &pi, nullptr, &sPalGpuPipe.mPipe) != VK_SUCCESS)
+    {
+        sPalGpuPipe.mPipe = VK_NULL_HANDLE;
+        return false;
+    }
+    RK_DIAG("PalGpu") << "palette compute pipeline ready" << LL_ENDL;
+    return true;
+}
+
+struct PalGpuTableEntry     // the shader's E
+{
+    U64 mSkin;
+    U64 mPrev;
+    U32 mOut;
+    U32 mCount;
+    U32 mWorld;
+    U32 mFlags;                 // bit 1: relative
+    F32 mScale;
+    U32 mPad;
+};
+static_assert(sizeof(PalGpuTableEntry) == 40, "the shader's E");
+
+struct PalGpuPending
+{
+    U64 mFrame = 0;             // the renderer frame that records the pass
+    U32 mSlot = 0;              // its block of the stats buffer
+};
+constexpr U32 kPalGpuSlots = 8;
+constexpr U32 kPalGpuStatWords = 16;
+Buffer sPalGpuMirror;           // the palettes the pass makes (device memory, nothing reads them in stage 3b: 3c draws from them)
+Buffer sPalGpuStatsBuf;         // kPalGpuSlots x kPalGpuStatWords words, cached host memory: the counts of each pass
+bool sPalGpuBuffersMade = false;
+std::deque<PalGpuPending> sPalGpuPending;
+U32 sPalGpuNextMirror = 0;
+struct PalGpuDeferred       // a kind 45 record waiting for its frame: the main thread sends it before the render begins (no command buffer then), the first kind 39 record of the frame runs it
+{
+    RKVkBridge::ShadowPacketsHeader mHeader;
+    std::vector<U8> mBlob;
+};
+std::deque<PalGpuDeferred> sPalGpuDeferred;
+
+bool palette_gpu_compare_on()
+{
+    static const bool on = getenv("RK_VK_PALGPU") && atoi(getenv("RK_VK_PALGPU")) == 2;
+    return on;
+}
+}
+
+static void palette_gpu_dispatch(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob, const Renderer::ScratchAlloc& rec)
+{
+    using namespace RKVkPaletteGpu;
+    Context& ctx = Context::instance();
+    if (!palette_gpu_pipeline())
+    {
+        return;
+    }
+    if (!sPalGpuBuffersMade)
+    {
+        if (!ctx.createBuffer(4u * 1024 * 1024, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Device, sPalGpuMirror) || !sPalGpuMirror.mAddress
+            || !ctx.createBuffer(kPalGpuSlots * kPalGpuStatWords * 4, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Readback, sPalGpuStatsBuf) || !sPalGpuStatsBuf.mMapped || !sPalGpuStatsBuf.mAddress)
+        {
+            LL_WARNS("PalGpu") << "palette compute: the mirror or stats buffer could not be made" << LL_ENDL;
+            return;
+        }
+        sPalGpuBuffersMade = true;
+    }
+    if (sPalGpuPending.size() >= kPalGpuSlots)
+    {
+        ++sPalGpuStats.mRingFull;
+        return;
+    }
+    const FrameHeader* fh = (const FrameHeader*)blob;
+    const BuildEntry* entries = (const BuildEntry*)(blob + sizeof(FrameHeader));
+    const AvatarRec* avatars = (const AvatarRec*)(blob + sizeof(FrameHeader) + (size_t)h.mEntries * sizeof(BuildEntry));
+    const size_t world_offset = sizeof(FrameHeader) + (size_t)h.mEntries * sizeof(BuildEntry) + (size_t)h.mMatrices * sizeof(AvatarRec);
+    RKVkBridge::PaletteArena arena, prev_arena;
+    if (!RKVkBridge::paletteArenaInfo(fh->mArena, arena))
+    {
+        ++sPalGpuStats.mNoArena;
+        return;
+    }
+    const bool prev_ok = RKVkBridge::paletteArenaInfo(fh->mPrevArena, prev_arena);
+    Renderer& r = Renderer::instance();
+    Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(PalGpuTableEntry) * (size_t)h.mEntries);
+    if (!table.mPtr || !table.mAddress)
+    {
+        ++sPalGpuStats.mScratchFailed;
+        return;
+    }
+    PalGpuTableEntry* te = (PalGpuTableEntry*)table.mPtr;
+    U32 valid = 0;
+    for (U32 i = 0; i < h.mEntries; ++i)
+    {
+        const BuildEntry& e = entries[i];
+        PalGpuTableEntry t = {};
+        auto skin = sPalGpuSkins.find(((U64)e.mSkin << 32) | e.mSkinHash);
+        const U32 half = (e.mCount + 1) * 12;
+        const U32 world = e.mAvatar < h.mMatrices ? (e.mRelative ? avatars[e.mAvatar].mRelFloat : avatars[e.mAvatar].mWorldFloat) : kNone;
+        if (skin != sPalGpuSkins.end() && skin->second.mBuf.mAddress && e.mCount && e.mCount <= kJoints && skin->second.mCount == e.mCount && e.mOutFloat != kNone && world != kNone
+            && (U64)e.mOutFloat + 2ull * half <= arena.mFloats && (U64)e.mOutFloat + 2ull * half <= 4u * 1024 * 1024 / 4)
+        {
+            t.mSkin = (U64)skin->second.mBuf.mAddress;
+            t.mOut = e.mOutFloat;
+            t.mCount = e.mCount;
+            t.mWorld = world;
+            t.mFlags = e.mRelative ? 2u : 0u;
+            t.mScale = e.mScale;
+            U32 flags = e.mFlags;
+            if (e.mPrevFrame != kNone)
+            {
+                if (prev_ok && (U64)e.mPrevFloat + half <= prev_arena.mFloats)
+                {
+                    t.mPrev = (U64)prev_arena.mAddress + 4ull * e.mPrevFloat;
+                }
+                else
+                {
+                    flags |= kFlagSkipPrev;
+                    ++sPalGpuStats.mNoPrevGpu;
+                }
+            }
+            if (flags & kFlagSkipPrev)
+            {
+                t.mFlags |= 1u;
+                ++sPalGpuStats.mPrevSkipped;
+            }
+            ++valid;
+        }
+        else
+        {
+            ++sPalGpuStats.mInvalid;
+        }
+        te[i] = t;
+    }
+    if (!valid)
+    {
+        return;
+    }
+    PalGpuPending pending;
+    pending.mFrame = ctx.getFrameNumber();
+    pending.mSlot = sPalGpuNextMirror;
+    U32* stats = (U32*)sPalGpuStatsBuf.mMapped + pending.mSlot * kPalGpuStatWords;
+    memset(stats, 0, kPalGpuStatWords * 4);
+    vmaFlushAllocation(ctx.getAllocator(), sPalGpuStatsBuf.mAllocation, (VkDeviceSize)pending.mSlot * kPalGpuStatWords * 4, kPalGpuStatWords * 4);
+    const U64 ta = (U64)table.mAddress, wa = (U64)rec.mAddress + world_offset, oa = (U64)sPalGpuMirror.mAddress, aa = (U64)arena.mAddress,
+              sa = (U64)sPalGpuStatsBuf.mAddress + (U64)pending.mSlot * kPalGpuStatWords * 4;
+    F32 push[16];
+    memcpy(push + 0, &ta, 8);
+    memcpy(push + 2, &wa, 8);
+    memcpy(push + 4, &oa, 8);
+    memcpy(push + 6, &aa, 8);
+    memcpy(push + 8, &sa, 8);
+    push[10] = 0.f;
+    push[11] = 0.f;
+    push[12] = fh->mAnchor[0];
+    push[13] = fh->mAnchor[1];
+    push[14] = fh->mAnchor[2];
+    push[15] = 1.f;
+    const U32 n = h.mEntries;
+    const bool recorded = r.recordExternal({}, [&](VkCommandBuffer cmd) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, sPalGpuPipe.mPipe);
+        vkCmdPushConstants(cmd, sPalGpuPipe.mLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), push);
+        vkCmdDispatch(cmd, n, 1, 1);
+        VkMemoryBarrier2 mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        mb.srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        mb.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT;
+        mb.dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT;
+        mb.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+        VkDependencyInfo di = { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        di.memoryBarrierCount = 1;
+        di.pMemoryBarriers = &mb;
+        vkCmdPipelineBarrier2(cmd, &di);
+    });
+    if (!recorded)
+    {
+        ++sPalGpuStats.mNotRecorded;
+        return;
+    }
+    sPalGpuNextMirror = (sPalGpuNextMirror + 1) % kPalGpuSlots;
+    sPalGpuPending.push_back(pending);
+    ++sPalGpuStats.mDispatches;
+    sPalGpuStats.mDispatchEntries += valid;
+}
+
+// the first palette segment record of the viewer frame (kind 39, in the frame: there is a command buffer): the frame's palette build runs now. A record of an older frame is dropped (its frame never drew rigged items).
+static void palette_gpu_run_deferred(U32 frame)
+{
+    while (!sPalGpuDeferred.empty())
+    {
+        PalGpuDeferred& d = sPalGpuDeferred.front();
+        if (d.mHeader.mPass > frame)
+        {
+            break;
+        }
+        if (d.mHeader.mPass == frame)
+        {
+            Renderer::ScratchAlloc a = Renderer::instance().allocPaletteScratch((VkDeviceSize)d.mBlob.size());
+            if (a.mPtr && a.mAddress)
+            {
+                memcpy(a.mPtr, d.mBlob.data(), d.mBlob.size());
+                palette_gpu_dispatch(d.mHeader, d.mBlob.data(), a);
+            }
+            else
+            {
+                ++sPalGpuStats.mScratchFailed;
+            }
+        }
+        else
+        {
+            ++sPalGpuStats.mStale;
+        }
+        sPalGpuDeferred.pop_front();
+    }
+}
+
+// a finished pass: the counts the shader made while comparing its palettes with what the CPU wrote into the arena (the stats block: see the shader). No palette is read by the CPU.
+static void palette_gpu_compare(const PalGpuPending& p)
+{
+    Context& ctx = Context::instance();
+    vmaInvalidateAllocation(ctx.getAllocator(), sPalGpuStatsBuf.mAllocation, (VkDeviceSize)p.mSlot * kPalGpuStatWords * 4, kPalGpuStatWords * 4);
+    const U32* st = (const U32*)sPalGpuStatsBuf.mMapped + p.mSlot * kPalGpuStatWords;
+    ++sPalGpuStats.mCompares;
+    sPalGpuStats.mFloatsCompared += st[0];
+    sPalGpuStats.mFloatsDiffer += st[1];
+    F32 worst;
+    memcpy(&worst, &st[2], 4);
+    sPalGpuStats.mWorst = std::max(sPalGpuStats.mWorst, (double)worst);
+    sPalGpuStats.mMovingCompared += st[3];
+    sPalGpuStats.mMovingWrong += st[4];
+    sPalGpuStats.mCompared += st[5];
+    sPalGpuStats.mRelCompared += st[6];
+    sPalGpuStats.mPrevCompared += st[7];
+    sPalGpuStats.mMovingSet += st[8];
+    if (st[9])
+    {
+        ++sPalGpuStats.mEntriesDiffer;
+        if (sPalGpuStats.mLogged < 12)
+        {
+            ++sPalGpuStats.mLogged;
+            F32 cpu, gpu;
+            memcpy(&cpu, &st[12], 4);
+            memcpy(&gpu, &st[13], 4);
+            LL_WARNS("PalGpu") << "palette differs: first float of a pass at arena float " << st[10] << " + " << st[11] << ": cpu " << cpu << " gpu " << gpu << "; " << st[1] << " floats in that pass, " << st[4] << " moving flags" << LL_ENDL;
+        }
+    }
+}
+
 static void on_palette_gpu_build(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     using namespace RKVkPaletteGpu;
@@ -4983,14 +5432,24 @@ static void on_palette_gpu_build(const RKVkBridge::ShadowPacketsHeader& h, const
             ++sPalGpuStats.mNoArena;
         }
     }
-    Renderer::ScratchAlloc a = Renderer::instance().allocPaletteScratch((VkDeviceSize)bytes);
-    if (a.mPtr && a.mAddress)
+    if (palette_gpu_compare_on())
     {
-        memcpy(a.mPtr, blob, bytes);
+        PalGpuDeferred d;
+        d.mHeader = h;
+        d.mBlob.assign(blob, blob + bytes);
+        sPalGpuDeferred.push_back(std::move(d));
     }
     else
     {
-        ++sPalGpuStats.mScratchFailed;
+        Renderer::ScratchAlloc a = Renderer::instance().allocPaletteScratch((VkDeviceSize)bytes);
+        if (a.mPtr && a.mAddress)
+        {
+            memcpy(a.mPtr, blob, bytes);
+        }
+        else
+        {
+            ++sPalGpuStats.mScratchFailed;
+        }
     }
     ++sPalGpuStats.mBuilds;
     sPalGpuStats.mEntries += h.mEntries;
@@ -5002,12 +5461,24 @@ static void on_palette_gpu_build(const RKVkBridge::ShadowPacketsHeader& h, const
                           << " avatars, " << (double)sPalGpuStats.mBytes / sPalGpuStats.mBuilds / 1024.0 << " KB a frame; skin blocks made " << sPalGpuStats.mBlocksMade << ", retired " << sPalGpuStats.mBlocksRetired
                           << ", live " << sPalGpuSkins.size() << ", failed " << sPalGpuStats.mBlocksFailed << "; entries without a skin block " << sPalGpuStats.mMissingBlock << ", without an arena slot "
                           << sPalGpuStats.mNoArena << ", scratch full " << sPalGpuStats.mScratchFailed << LL_ENDL;
+        if (palette_gpu_compare_on())
+        {
+            RK_DIAG("PalGpu") << "palette compute: " << sPalGpuStats.mDispatches << " passes, " << sPalGpuStats.mDispatchEntries << " entries, not run: invalid " << sPalGpuStats.mInvalid << ", ring full " << sPalGpuStats.mRingFull << ", not recorded " << sPalGpuStats.mNotRecorded << ", frames dropped unplayed " << sPalGpuStats.mStale
+                              << "; compared " << sPalGpuStats.mCompared << " entries in " << sPalGpuStats.mCompares << " passes, " << sPalGpuStats.mFloatsCompared << " floats, " << sPalGpuStats.mFloatsDiffer << " differ, "
+                              << sPalGpuStats.mEntriesDiffer << " passes with a difference, worst " << sPalGpuStats.mWorst << "; moving flags compared " << sPalGpuStats.mMovingCompared << ", wrong " << sPalGpuStats.mMovingWrong
+                              << "; of the compared: avatar relative " << sPalGpuStats.mRelCompared << ", with a previous palette " << sPalGpuStats.mPrevCompared << ", moving flag set " << sPalGpuStats.mMovingSet << "; previous half not compared " << sPalGpuStats.mPrevSkipped << " (no previous slice for the GPU " << sPalGpuStats.mNoPrevGpu << ")" << LL_ENDL;
+        }
     }
 }
 
 // the blocks of skins that are gone: looked at about once a second (the handle no longer resolves)
 static void palette_gpu_pump(U64 frame)
 {
+    while (!sPalGpuPending.empty() && Context::instance().frameFinished(sPalGpuPending.front().mFrame))
+    {
+        palette_gpu_compare(sPalGpuPending.front());
+        sPalGpuPending.pop_front();
+    }
     static U64 last = 0;
     if (sPalGpuSkins.empty() || frame < last + 120)
     {

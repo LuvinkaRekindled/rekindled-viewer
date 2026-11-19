@@ -655,7 +655,8 @@ RKRigAnchor rk_rig_anchor(U32 frame)
     const F32 reach = std::max(fabsf(c.mV[0]), std::max(fabsf(c.mV[1]), fabsf(c.mV[2])));
     RKRigAnchor next;
     const bool was = sRigAnchorCurrent.mActive;
-    if (reach > (was ? 500.f : 700.f))
+    static const bool force = getenv("RK_VK_RIGFORCE") != nullptr;      // (a test switch: the anchor is always active, so a lap at ground level runs the relative palettes that are otherwise only made above 700 m)
+    if (force || reach > (was ? 500.f : 700.f))
     {
         next.mActive = true;
         F32 away = 1.0e9f;
@@ -908,9 +909,10 @@ void rk_frame_palette_prepare(U32 frame)
 // a palette job (any thread, no lock): the floats go into the prepared frame's arena at a slice of their own; false = not prepared for this frame, no arena, or it does not fit (the render's request appends it as before)
 // <FS> velocity fold (PLAN-velocity-fold-and-skin-once.md): every palette in the list is followed by the palette of the frame before (same size, same anchor: mPrevGLMp, equal to the current one when there is no history): the
 // rigged G-buffer vertex shaders read both and write the motion of the surface. prev_floats null: the current palette is written twice.
-F32 rk_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position)
+// (D3: the one definition of the scale, the palette arithmetic on the GPU takes it from here too) 0 = no flag for this avatar: no DLSS, nearer than 48 m only
+F32 rk_palette_moving_scale(const LLVector3& avatar_position)
 {
-    if (!LLPipeline::sDLSS || !prev || prev == cur || !gPipeline.mRT)
+    if (!LLPipeline::sDLSS || !gPipeline.mRT)
     {
         return 0.f;
     }
@@ -919,13 +921,27 @@ F32 rk_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVecto
     {
         return 0.f;
     }
+    const F32 focal_px = 0.5f * (F32)gPipeline.mRT->deferredScreen.getHeight() * LLViewerCamera::sJitteredProjection[1][1];
+    return 1.5f * focal_px / llmax(distance, 0.5f);
+}
+
+F32 rk_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position)
+{
+    if (!prev || prev == cur)
+    {
+        return 0.f;
+    }
+    const F32 scale = rk_palette_moving_scale(avatar_position);
+    if (scale <= 0.f)
+    {
+        return 0.f;
+    }
     F32 biggest = 0.f;
     for (U32 k = 0; k < floats; ++k)
     {
         biggest = llmax(biggest, fabsf(cur[k] - prev[k]));
     }
-    const F32 focal_px = 0.5f * (F32)gPipeline.mRT->deferredScreen.getHeight() * LLViewerCamera::sJitteredProjection[1][1];
-    return biggest * 1.5f * focal_px / llmax(distance, 0.5f) >= 0.3f ? 1.f : 0.f;
+    return biggest * scale >= 0.3f ? 1.f : 0.f;
 }
 
 bool rk_frame_palette_write(const F32* floats, const F32* prev_floats, F32 moving, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell)
