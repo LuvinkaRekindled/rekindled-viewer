@@ -83,6 +83,17 @@ The viewer fails to start with a message about Vulkan:
 The viewer picks the wrong graphics card:
    On a machine with two cards, check the 'pickDevice' lines in the log.
 
+The world is a flat colour, or something else looks wrong:
+   Start the viewer with './rekindled-debug' instead of './rekindled'.  It
+   adds diagnostic lines to the log and writes three files for a report
+   (see REPORTING PROBLEMS).
+
+A message that the media plugin failed:
+   The embedded browser needs system libraries that are not in the package
+   (for example libnspr4.so and libnss3.so; on Debian and Ubuntu install
+   the packages libnspr4 and libnss3).  The viewer works without it, but
+   web pages in-world and the built-in browser do not.
+
 Sound problems:
    Rekindled uses OpenAL Soft.  See README-linux-voice.txt for voice.
 
@@ -94,5 +105,9 @@ Spacenavigator or joystick problems:
 -=-=-=-=-=-=-=-=-=-=-
 
 Please do not report problems with Rekindled to the Firestorm project.
-Keep ~/.rekindled_x64/logs/Rekindled.log (and the file 'Rekindled.old', the
-previous run's log) from a run that shows the problem.
+Start the viewer with './rekindled-debug' and send these files from a run
+that shows the problem:
+   ~/.rekindled_x64/logs/Rekindled.log
+   ~/rekindled-debug-console.txt
+   ~/rekindled-debug-system.txt
+and, if the picture looks wrong, a screenshot of the viewer window.
