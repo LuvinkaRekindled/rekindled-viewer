@@ -10041,6 +10041,21 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 }
 
 // kind 22: one pass type, with the program the viewer bound
+// RK_VK_PROBE=1: the first time of each reason a scene table draw returns early, with the numbers that matter (found on Linux, where every opaque draw of the G-buffer pass was dropped)
+static void geo_why(const char* why, U32 type, U64 a = 0, U64 b = 0)
+{
+    static const bool on = getenv("RK_VK_PROBE") != nullptr;
+    if (!on)
+    {
+        return;
+    }
+    static std::set<std::string> told;
+    if (told.insert(why).second)
+    {
+        LL_INFOS("VkProbe") << "geo_draw returns early: " << why << " (type " << type << ", values " << a << " " << b << ")" << LL_ENDL;
+    }
+}
+
 void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
     GeoStats& s = sGeo.mS;
@@ -10048,12 +10063,14 @@ void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const bool rigged_draw = type >= kGeoTypes && type < 2 * kGeoTypes;       // S4 B: the rigged variants of the 13 types
     if (!sGeo.mReady || type >= 2 * kGeoTypes)
     {
+        geo_why(sGeo.mReady ? "type out of range" : "scene table not ready", type);
         return;
     }
     const U64 frame_now = Context::instance().getFrameNumber();
     if (sGeo.mPreparedFrame != frame_now)
     {
         ++s.mDrawStale;
+        geo_why("no prepare for this frame", type, sGeo.mPreparedFrame, frame_now);
         return;
     }
     U32 count = 0;
@@ -10074,13 +10091,16 @@ void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
         count = ds_draw ? sGeo.mDsCount[type] : sGeo.mCount[type];
         if (count == 0 || !sGeo.mCommands.mPtr)
         {
+            geo_why(count == 0 ? "static type has no commands" : "no command buffer", type, count, ds_draw);
             return;
         }
     }
     if (count == 0)
     {
+        geo_why("rigged type has no commands", type);
         return;
     }
+    geo_why("a type has commands and goes on to the program checks", type, count);
     const bool timed = geo_timed();
     const auto t_all = std::chrono::steady_clock::now();
     Renderer& r = Renderer::instance();
@@ -10088,12 +10108,29 @@ void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     if (!program || !program->isValid() || !r.bindlessAvailable())
     {
         ++s.mDrawNoProgram;
+        {
+            // the first time of each reason: why a draw of the scene table was dropped (found on Linux, where every opaque draw was)
+            static std::set<std::string> told;
+            const std::string why = !program ? std::string("no program bound") : program->getName() + (!program->isValid() ? ": program not valid" : ": bindless tables not available");
+            if (told.insert(why).second)
+            {
+                LL_WARNS("VkScene") << "geo_draw: a scene table draw (type " << type << ", " << count << " commands) is dropped: " << why << LL_ENDL;
+            }
+        }
         return;
     }
     const Program::PacketUniforms& pu = program->packetUniforms();
     if (pu.mTable == ~0u)
     {
         ++s.mDrawNoProgram;
+        {
+            static std::set<std::string> told;
+            const std::string why = program->getName() + ": no packet table uniform";
+            if (told.insert(why).second)
+            {
+                LL_WARNS("VkScene") << "geo_draw: a scene table draw (type " << type << ", " << count << " commands) is dropped: " << why << LL_ENDL;
+            }
+        }
         return;
     }
     // the pass's matrices for the region matrix slots of this frame: made once for a view and projection (the draw records of a frame, 26 of them, share them: they were made again for each, 7 us a record)
@@ -10236,6 +10273,7 @@ void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const U64 table_address = (rigged_draw && !persistent_rows) ? (U64)sGeo.mRTable.mAddress : (U64)sGeo.mRowsGpu.mAddress, models_address = (U64)models.mAddress;
     if (!table_address || (persistent_rows && (pu.mPalIds == ~0u || !sGeo.mPalIdTable.mAddress)))
     {
+        geo_why("no rows address for the frame's draws", type, table_address, persistent_rows);
         ++s.mScratchFail;       // (no rows for this frame's draws: nothing reads the scene table itself, so there is nothing to fall back to; a rigged program without the id table would read a row's id as an address)
         return;
     }
@@ -10273,8 +10311,18 @@ void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     if (!prepare_draw(vi, used_cache))
     {
+        unsigned long long refused[6] = {};
+        refusals(refused);
+        geo_why("prepare_draw refused (see the counters: no program, no target, no vertex input, no element, renderer refused, not in a frame)", type, refused[1], refused[5]);
+        static int logged = 0;
+        if (getenv("RK_VK_PROBE") && ++logged <= 20)
+        {
+            LL_INFOS("VkProbe") << "prepare_draw refusal counters: no program " << refused[0] << ", no target " << refused[1] << ", no vertex input " << refused[2] << ", no element "
+                                << refused[3] << ", renderer refused " << refused[4] << ", not in a frame " << refused[5] << LL_ENDL;
+        }
         return;
     }
+    geo_why("prepare_draw accepted: the type is drawn", type, count);
     if (rigged_draw && !sGeo.mRLodNames.empty())
     {
         ensure_buffers_current(sGeo.mRLodNames, 0);          // item E: the simplified lists' data written by the main thread is recorded before the draws read it

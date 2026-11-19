@@ -1513,6 +1513,16 @@ void RKShaderProgram::bind()
         LLVertexBuffer::forgetBoundBuffers();
         sCurBoundShader = mProgramObject;
         sCurBoundShaderPtr = this;
+        if (!mVkProgram)
+        {
+            // RK_VK_PROBE=1: a bind without a Vulkan program is ignored by the renderer (the previous program stays in force for the next draws and records)
+            static const bool probe = getenv("RK_VK_PROBE") != nullptr;
+            static std::set<std::string> told;
+            if (probe && told.insert(mName).second)
+            {
+                LL_INFOS("VkProbe") << "bind of a program with no Vulkan program (the renderer keeps the previous one): " << mName << LL_ENDL;
+            }
+        }
         RKVkAsync::shaderBind(mVkProgram);
         placeProfileQuery();
     }

@@ -3983,7 +3983,11 @@ bool LLAppViewer::initWindow()
         .ignore_pixel_depth(ignorePixelDepth)
         .first_run(mIsFirstRun);
 
-#if LL_WINDOWS
+#if !LL_WINDOWS
+    // <FS> the Windows name of setenv(name, value, overwrite): the translation below is the same on every platform (on Linux it was left out, so the render worker thread and the scene
+    // tables were never switched on there and no opaque draw of the world was drawn)
+    #define _putenv_s(name, value) setenv((name), (value), 1)
+#endif
     // <FS> The settings of the Vulkan renderer (DLSS, ray tracing, the worker thread) are translated to the environment variables the renderer reads, before the window exists.
     // RK_VK_MIRROR set by hand (the launchers do) means "configured by hand": the settings are not translated and the variables the launcher set are used as they are.
     if (!getenv("RK_VK_MIRROR"))
@@ -4020,7 +4024,6 @@ bool LLAppViewer::initWindow()
             _putenv_s("RK_VK_ASYNC", "1");      // the Vulkan work runs on its own thread
         }
     }
-#endif
     gViewerWindow = new LLViewerWindow(window_params);
 
     LL_INFOS("AppInit") << "gViewerwindow created." << LL_ENDL;

@@ -2308,6 +2308,18 @@ void Renderer::endRendering(PassEnd why)
     if (mRendering)
     {
         ++mPassEnds[why];
+        {
+            // <FS> RK_VK_PROBE=1: what each pass of one frame in 120 recorded (the draws, the colour targets, the size of the first one): finds a pass that draws nothing
+            static const bool probe = getenv("RK_VK_PROBE") != nullptr;
+            static U32 multi_logged = 0;
+            if (probe && ((Context::instance().getFrameNumber() % 120) == 0 || (mColorCount >= 3 && ++multi_logged <= 400)))
+            {
+                const Image* first = mColorCount > 0 && mColorTargets[0] ? mColorTargets[0] : nullptr;
+                LL_INFOS("VkProbe") << "pass ended (" << (why < PE_COUNT ? why : 0) << "): " << (mDrawCount - mPassDrawStart) << " draws, " << mColorCount << " colour target(s)"
+                                    << (first ? (std::string(", first ") + std::to_string(first->mExtent.width) + "x" + std::to_string(first->mExtent.height)) : std::string())
+                                    << (mDepthTarget ? ", with depth" : ", no depth") << LL_ENDL;
+            }
+        }
         mPassDrawsTotal += mDrawCount - mPassDrawStart;
         if (mDrawCount == mPassDrawStart)
         {

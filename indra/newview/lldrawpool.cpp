@@ -63,6 +63,7 @@
 #include "glm/gtc/type_ptr.hpp"
 #include <chrono>
 #include <map>
+#include <set>
 
 S32 LLDrawPool::sNumDrawPools = 0;
 
@@ -1499,6 +1500,16 @@ void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
         return;
     }
     RK_CPU_ZONE("packets: scene table draw record");
+    {
+        // RK_VK_PROBE=1: the program each kind of scene table record is pushed with (once per type): a wrong or missing one gets the record dropped by the worker
+        static const bool probe = getenv("RK_VK_PROBE") != nullptr;
+        static std::set<std::pair<int, std::string>> told;
+        RKShaderProgram* cur = RKShaderProgram::sCurBoundShaderPtr;
+        if (probe && told.insert({ tn, cur ? cur->mName : std::string("(none)") }).second)
+        {
+            LL_INFOS("VkProbe") << "scene table record of type " << tn << (rigged ? " (rigged)" : "") << " pushed with the bound program: " << (cur ? cur->mName : std::string("(none)")) << LL_ENDL;
+        }
+    }
     {
         // <FS> velocity fold: the programs that write motion (rigged, and the ones that read the motion table of a moving model matrix) take the camera matrices of this frame and the last from here (the bound program's loose block)
         extern bool rk_motion_fold_uniforms(RKShaderProgram* program);
