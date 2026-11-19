@@ -201,3 +201,13 @@ The whole batch 0.70 plus the serial update 0.24, minus what stays (the table, t
 - **D2d: readers of the record.** Name tag position, voice visualizer, footsteps, lip sync read the avatar's record instead of the joints (each 0.03 ms or less: small, structure only; last).
 
 Not decided: whether D2a to D2d are worth their risk against 0.5 to 0.8 ms. The lap shows the main thread's remaining time is mostly outside the avatars (`generateSunShadow` 1.19, `stateSort (early)` 1.01, `gObjectList.update` 1.17 (the batch 0.70 is most of it), `renderDeferredLighting` 0.79, `render_ui` 0.59). That is Adam's call.
+
+### D2a read, 2026-11-18: not worth doing as written
+
+What the two remaining op kinds do when the completion replays them (`LLPipeline::applyAvOpsRange`, `pipeline.cpp:2327`):
+- MOVED_LIST is `mMovedList.push_back(drawable)`: a vector push. Nothing to remove; the list is how `updateMove` later clears the drawable's move bits.
+- BRIDGE_MOVE is `LLSpatialBridge::moveInPartition()` = `updateSpatialExtents()` (`lldrawable.cpp:1574`): the bridge's own box, radius and position, then `RKCullShadow::touchBridge(this)`, a write to shared cull rows. That shared write is why it waits for the main thread.
+
+Counts: 0.81 ops a loop at about 57 loops a frame is about 46 ops a frame, of which about 21 are bridge moves. At well under a microsecond each that is **about 0.03 to 0.05 ms a frame**, not the 0.16 ms of the zone `av post: idleUpdateMisc (attachment replay, matrices)`. The rest of that zone is the sort deltas (`applySortDeltas`: marks, LOD updates, rebuilds), the texture stamps (`stampTextures` per moved face), the impostor checks of the same function and the zone's own cost (about 0.3 us a call over 57 calls). Estimated from counts, not measured: one zone around `replayAttachmentJob` would split it.
+
+So D2a as written removes at most about 0.05 ms. It stays a structural clean-up (the ledger concept), not a frame-time step. The frame time in D2 is in the overlap (D2b): the palette jobs launched after the completions and joined where the render side first reads the palettes (hides most of the 0.10 ms join; the render read comes after the rest of the frame's update), and the blend launched in chunks while the serial idle loop (0.24 ms) goes on, joined before the completions (up to about 0.24 ms). Together about 0.35 ms, 4 to 5 percent of the main loop. D2b needs the readers between launch and join read first, as said above.
