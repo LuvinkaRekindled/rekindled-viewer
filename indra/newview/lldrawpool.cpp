@@ -1333,6 +1333,44 @@ bool LLRenderPass::pbrAlphaEntry(const RKDrawBatch& params, RKVkBridge::GeoEntry
     return true;
 }
 
+// <FS> D4 stage 1b-1 (RK_VK_ROWCONST: 0 off, 1 a rigged draw whose vertices all have one colour carries it in its entry and the pull shader does not read the colour array, 2 the same and the shader also reads the
+// array and paints a vertex magenta where the two differ: a check that needs no pose). The test of the row path the shared store will use (the colour is one constant a face there). Entries are built when a fragment
+// is, not every frame; the scan reads the draw's range of the colour array.
+static int rk_rowconst_mode()
+{
+    static const int mode = getenv("RK_VK_ROWCONST") ? atoi(getenv("RK_VK_ROWCONST")) : 0;
+    return mode;
+}
+static void rk_rowconst_try(const LLVertexBuffer* vb, const RKDrawBatch& params, RKVkBridge::GeoEntry& e)
+{
+    static std::atomic<U64> considered{ 0 }, qualified{ 0 }, unreadable{ 0 };
+    static const bool diag = getenv("RK_VK_DIAG") != nullptr;
+    LLStrider<LLColor4U> col;
+    const S32 n = (S32)params.mEnd - (S32)params.mStart + 1;
+    if (n <= 0 || !vb->hasDataType(LLVertexBuffer::TYPE_COLOR) || !const_cast<LLVertexBuffer*>(vb)->getColorStrider(col, params.mStart, n))
+    {
+        ++unreadable;
+        return;
+    }
+    const U32 first = col[0].asRGBA();
+    bool same = true;
+    for (S32 i = 1; i < n && same; ++i)
+    {
+        same = col[i].asRGBA() == first;
+    }
+    const U64 c = ++considered;
+    if (same)
+    {
+        e.mFlags |= RKVkBridge::GEO_CONST_COLOR | (rk_rowconst_mode() == 2 ? RKVkBridge::GEO_VERIFY_COLOR : 0u);
+        e.mConstColor = rk_rowconst_mode() == 3 ? 0xFF00FF00u : first;      // (mode 3: every constant is bright green: proof that the flag, the row field and the shader's branch work)
+        ++qualified;
+    }
+    if (diag && c % 2000 == 0)
+    {
+        LL_INFOS("RowConst") << "rigged G-buffer draws looked at: " << c << ", with one colour for every vertex (carried in the entry) " << qualified.load() << ", colour array unreadable " << unreadable.load() << LL_ENDL;
+    }
+}
+
 // static. S3: the per-draw part of build_geometry, with the textures as pointers (the fragments of the scene tables keep them)
 bool LLRenderPass::geometryEntry(const RKDrawBatch& params, const RKGeometryPassInfo* materials, RKVkBridge::GeoEntry& e, LLViewerTexture* textures[6], bool rigged, bool texture_matrix, U32 arrays)
 {
@@ -1357,6 +1395,10 @@ bool LLRenderPass::geometryEntry(const RKDrawBatch& params, const RKGeometryPass
     e.mNormalOffset = vb->hasDataType(LLVertexBuffer::TYPE_NORMAL) ? vb->getOffset(LLVertexBuffer::TYPE_NORMAL) : 0;
     e.mTexcoordOffset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD0);
     e.mColorOffset = vb->getOffset(LLVertexBuffer::TYPE_COLOR);
+    if (rigged && rk_rowconst_mode() != 0)
+    {
+        rk_rowconst_try(vb, params, e);
+    }
     if ((texture_matrix || (arrays & RK_PASS_ARRAY_EMISSIVE)) && vb->hasDataType(LLVertexBuffer::TYPE_EMISSIVE))
     {
         e.mEmissiveOffset = vb->getOffset(LLVertexBuffer::TYPE_EMISSIVE);       // S5e: (the alpha items) the glow draw
