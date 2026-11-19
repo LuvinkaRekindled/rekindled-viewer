@@ -342,3 +342,27 @@ Adam's alternative to D3: do not move the palette arithmetic, move the join. Mea
 Result: palette zone 0.12 and 0.10 ms (synchronous) against 0.01, 0.00, 0.00 ms; 0 of 5400 joins waited; PhaseCheck totals 0. The batch zone 0.76 against 0.64, 0.72, 0.55 ms (the completions zone moves 0.26 to 0.38 ms between laps by itself). The thread phase check counted 133,677 main-thread writes of pipeline queues beside the open batch: a batch can now declare itself pipeline neutral and the six queue writers use `rk_phase_check_pipeline`. 10 to 16 launches a lap saw a joint touched in the window: a stack capture named the writer, a new avatar's `buildCharacter` from `process_object_update` (login and arrivals; its joints are in no job); flat after the first 600 launches.
 
 What is left of the joins (lap `zd`): blend 0.32 ms (0.23 of it the main thread's own share of 35 jobs), completions 0.34 ms serial on the main thread, `idleUpdateMisc` 0.17 ms, `idleUpdate` (avatars) 0.24 ms. None of them has independent main-thread work to overlap with; the completions are the next candidate, and the ledger's remaining op kinds wait for D4 and D5 (see D2).
+
+### The main thread's avatar cost, split (2026-11-18, lap `pz-def1`, exe 23:06:35, five zones added to `idleUpdate` and `idleUpdateMisc`)
+
+Zones lap, mode def, diagnostics on, 86 avatars (55.5 updated a frame), main loop 7.82 ms, PhaseCheck totals 0. Zones are inclusive and carry timer cost, so read the numbers as upper bounds; the zones of one lap are comparable with each other, not with an unzoned lap.
+
+| Part | ms a frame | calls | What it is |
+|---|---|---|---|
+| `idleUpdate` (avatars) | 0.31 | 86 | serial, before the batch |
+| of it `updateCharacter` (with the attachment loop gate) | 0.12 | 55.5 | root position, deferred motion begin |
+| of it texture check and pixel area | 0.01 | 55.5 | |
+| of it the rest (early outs, `updateMoveDampedAsync`, `LLViewerObject::idleUpdate`, `lazyAttach`) | about 0.18 | | not split |
+| avatar motion batch | 0.56 | 1 | |
+| of it blend, launch to join | 0.22 | 1 | the main thread has nothing to overlap with |
+| of it palette jobs, launch only | 0.00 | 1 | the join is off the main thread |
+| of it completions | 0.30 | 1 | serial per avatar |
+| of completions `idleUpdateMisc` | 0.19 | 55.5 | |
+| of that attachment replay | 0.09 | 30 | writes pipeline state |
+| of that `movePartition` | 0.08 | 55.5 | writes pipeline state |
+| of that impostor checks | under 0.01 | | |
+| of completions appearance animation | 0.05 | 55.5 | avatar-local |
+| of completions lipsync, loading, water, wind | 0.02 | 30 | avatar-local |
+| of completions name tag, name tag position, post motion | 0.01 each | | name tag: its own object |
+
+Where it stands: about 0.87 ms of the 7.82 ms loop is the main thread's avatar work (`idleUpdate` 0.31 plus the batch 0.56), against D2's gate of 0.5 ms. The pipeline-owned writes (attachment replay 0.09, `movePartition` 0.08, and part of the unsplit 0.18 of `idleUpdate`) are at least 0.17 ms and wait for the owners D4 and D5 create. The avatar-local pieces (appearance animation, lipsync, name tags, post motion) add up to about 0.10 ms; `updateCharacter` (0.12) is partly local. A pool job per avatar could take the local pieces, but the gain is about 0.1 ms, each piece is under 1 us a call, and they would sit under the T1 and T2 rules. Not built. Use this table as the baseline to re-measure after D4 and D5 (the five zones stay in the code).
