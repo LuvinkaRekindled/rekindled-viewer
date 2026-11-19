@@ -11,6 +11,7 @@
 #include "llviewerobject.h"
 #include "llmaterial.h"
 #include "llgltfmaterial.h"
+#include "llvovolume.h"
 #include "llvolume.h"
 #include "llvertexbuffer.h"
 #include "llmatrix4a.h"
@@ -524,9 +525,11 @@ struct CKey
     U64 mSkin = 0;
     U32 mFace = 0, mMask = 0, mColour = 0, mGlowAndFlags = 0;
     F32 mX[3][5] = {};          // the texture coordinate transforms: the texture entry's, the material's normal map and specular map: rotation, offset s and t, repeat s and t
+    F32 mScale[3] = {};         // D4 stage 4: the object scale a planar texgen multiplies the positions by (0 for a face that is not planar)
     bool operator==(const CKey& o) const
     {
-        return mAsset == o.mAsset && mDetail == o.mDetail && mSkin == o.mSkin && mFace == o.mFace && mMask == o.mMask && mColour == o.mColour && mGlowAndFlags == o.mGlowAndFlags && memcmp(mX, o.mX, sizeof(mX)) == 0;
+        return mAsset == o.mAsset && mDetail == o.mDetail && mSkin == o.mSkin && mFace == o.mFace && mMask == o.mMask && mColour == o.mColour && mGlowAndFlags == o.mGlowAndFlags && memcmp(mX, o.mX, sizeof(mX)) == 0
+            && memcmp(mScale, o.mScale, sizeof(mScale)) == 0;
     }
 };
 struct CKeyHash
@@ -549,6 +552,12 @@ struct CKeyHash
                 memcpy(&bits, &k.mX[a][b], 4);
                 mix(bits);
             }
+        }
+        for (int a = 0; a < 3; ++a)
+        {
+            U32 bits;
+            memcpy(&bits, &k.mScale[a], 4);
+            mix(bits);
         }
         return h;
     }
@@ -591,16 +600,33 @@ bool make_key(const LLFace* face, U32 mask, CKey& k)
     }
     flags |= face->isInAlphaPool() ? 8u : 0u;       // (the colour's alpha channel is baked by another rule in the alpha pool)
     flags |= gltf ? 16u : 0u;
+    // D4 stage 4: a face in the animated state, big enough, is baked raw (no transform on any channel); and on an object with a texture animation the normal and specular coordinates take the diffuse
+    // transform instead of the material's (getGeometryVolume: tex_anim), so the key says whether the object has one.
+    const bool raw = rk_rigcache_tex_anim_raw(const_cast<LLFace*>(face));
+    flags |= raw ? 32u : 0u;
+    flags |= static_cast<LLVOVolume*>(vobj)->mTextureAnimp ? 64u : 0u;
+    // D4 stage 4, planar texgen: the coordinates are projected from the positions multiplied by the object's scale (1 for a global volume), the normals and the face centre (the asset's), then transformed as always
+    if (te->getTexGen() != LLTextureEntry::TEX_GEN_DEFAULT)
+    {
+        flags |= 128u;
+        flags |= ((U32)te->getTexGen() & 0xffu) << 8;
+        const LLDrawable* drawable = face->getDrawable();
+        const bool global_volume = drawable && drawable->getVOVolume() && drawable->getVOVolume()->isVolumeGlobal();
+        const LLVector3 scale = global_volume ? LLVector3(1.f, 1.f, 1.f) : vobj->getScale();
+        k.mScale[0] = scale.mV[0];
+        k.mScale[1] = scale.mV[1];
+        k.mScale[2] = scale.mV[2];
+    }
     k.mGlowAndFlags = glow | (flags << 8);
     F32 os = 0.f, ot = 0.f, ms = 1.f, mt = 1.f;
-    if (!gltf)
+    if (!gltf && !raw)
     {
         te->getOffset(&os, &ot);
         te->getScale(&ms, &mt);
     }
-    const F32 tx[5] = { gltf ? 0.f : te->getRotation(), os, ot, ms, mt };
+    const F32 tx[5] = { (gltf || raw) ? 0.f : te->getRotation(), os, ot, ms, mt };
     memcpy(k.mX[0], tx, sizeof(tx));
-    if (mat)
+    if (mat && !raw)
     {
         F32 a = 0.f, b = 0.f, c = 1.f, d = 1.f;
         mat->getNormalOffset(a, b);
@@ -631,6 +657,12 @@ int rk_rigstore_mode()
     return mode;
 }
 
+bool rk_rigcache_tex_anim_raw(LLFace* face)
+{
+    LLViewerObject* vobj = face->getViewerObject();
+    return vobj && face->isState(LLFace::TEXTURE_ANIM) && static_cast<LLVOVolume*>(vobj)->mTexAnimMode != 0 && face->getVirtualSize() >= MIN_TEX_ANIM_SIZE;
+}
+
 bool rk_rigcache_eligible(LLFace* face, bool distance_sort)
 {
     if (!face->isState(LLFace::RIGGED) || face->mSkinInfo.isNull() || face->getGeomCount() == 0)
@@ -638,7 +670,7 @@ bool rk_rigcache_eligible(LLFace* face, bool distance_sort)
         return false;
     }
     const LLTextureEntry* te = face->getTextureEntry();
-    if (!te || te->getTexGen() != LLTextureEntry::TEX_GEN_DEFAULT || te->getBumpmap() != 0)
+    if (!te || te->getBumpmap() != 0)
     {
         return false;
     }
@@ -647,7 +679,13 @@ bool rk_rigcache_eligible(LLFace* face, bool distance_sort)
     {
         return false;       // (an opaque kind's face is not transparent; the alpha kind's faces are, and are cached too since stage 2)
     }
-    if (face->isState(LLFace::TEXTURE_ANIM) || face->mTextureMatrix || face->hasSelectionBuffer())
+    if (face->hasSelectionBuffer())
+    {
+        return false;
+    }
+    // D4 stage 4, texture animation (getGeometryVolume, tcoord): a face in the animated state whose virtual size is at least MIN_TEX_ANIM_SIZE is baked raw (the matrix is applied on the GPU); a smaller one has the
+    // matrix it has at that moment baked in (a value that changes with time and cannot be named by a key), and a face with a matrix and no animated state bakes it too: those two keep their own fill.
+    if ((face->isState(LLFace::TEXTURE_ANIM) || face->mTextureMatrix) && !rk_rigcache_tex_anim_raw(face))
     {
         return false;
     }
