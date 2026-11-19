@@ -691,7 +691,8 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
         SDL_SetHint( SDL_HINT_IME_INTERNAL_EDITING, "1");
     }
 
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO ) < 0 )
+    // <FS> no SDL_INIT_AUDIO: sound is OpenAL's, and a machine without a sound device (or with its sound server not running) could not open a window at all ("sdl_init() failed! dsp: No such audio device")
+    if (SDL_Init(SDL_INIT_VIDEO) < 0 )
     {
         LL_INFOS() << "sdl_init() failed! " << SDL_GetError() << LL_ENDL;
         setupFailure("sdl_init() failure,  window creation error", "error", OSMB_OK);

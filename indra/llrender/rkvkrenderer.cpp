@@ -5828,15 +5828,29 @@ bool Renderer::copyRegion(Image& src, S32 sx, S32 sy, Image& dst, U32 dst_mip, U
     const S32 h = std::min(height, std::min(max_h - sy, (S32)std::max<U32>(1, dst_root->mExtent.height >> dst_mip) - dy));
     if (w > 0 && h > 0 && sx >= 0 && sy >= 0 && dx >= 0 && dy >= 0)
     {
-        VkImageBlit blit = {};
-        blit.srcSubresource = { src_root->mAspect, src.mBaseMip, src.mBaseLayer, 1 };
-        blit.srcOffsets[0] = { sx, sy, 0 };
-        blit.srcOffsets[1] = { sx + w, sy + h, 1 };
-        blit.dstSubresource = { dst_root->mAspect, dst_mip, dst_layer, 1 };
-        blit.dstOffsets[0] = { dx, dy, 0 };
-        blit.dstOffsets[1] = { dx + w, dy + h, 1 };
-        vkCmdBlitImage(mCmd, src_root->mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst_root->mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
-                       &blit, VK_FILTER_NEAREST);
+        if (src_root->mFormat == dst_root->mFormat && src_root->mAspect == dst_root->mAspect)
+        {
+            // the same format and the same size: a plain copy. A blit would need the BLIT_DST feature of the format, which B10G11R11 (the reflection probe) does not have on Mesa (llvmpipe, RADV): the copy was refused and the probe was never filled
+            VkImageCopy copy = {};
+            copy.srcSubresource = { src_root->mAspect, src.mBaseMip, src.mBaseLayer, 1 };
+            copy.srcOffset = { sx, sy, 0 };
+            copy.dstSubresource = { dst_root->mAspect, dst_mip, dst_layer, 1 };
+            copy.dstOffset = { dx, dy, 0 };
+            copy.extent = { (U32)w, (U32)h, 1 };
+            vkCmdCopyImage(mCmd, src_root->mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst_root->mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        }
+        else
+        {
+            VkImageBlit blit = {};
+            blit.srcSubresource = { src_root->mAspect, src.mBaseMip, src.mBaseLayer, 1 };
+            blit.srcOffsets[0] = { sx, sy, 0 };
+            blit.srcOffsets[1] = { sx + w, sy + h, 1 };
+            blit.dstSubresource = { dst_root->mAspect, dst_mip, dst_layer, 1 };
+            blit.dstOffsets[0] = { dx, dy, 0 };
+            blit.dstOffsets[1] = { dx + w, dy + h, 1 };
+            vkCmdBlitImage(mCmd, src_root->mImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, dst_root->mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+                           &blit, VK_FILTER_NEAREST);
+        }
     }
     transition(mCmd, dst, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     return true;

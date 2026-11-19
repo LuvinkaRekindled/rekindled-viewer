@@ -20168,6 +20168,60 @@ void LLPipeline::generateLuminance(LLRenderTarget* src, LLRenderTarget* dst)
     }
 }
 
+// <FS> RK_VK_PROBE=1: a diagnostic for finding which stage of the frame goes black or magenta on a driver or platform. About every 2 seconds it reads the centre pixel of the main targets
+// (a GPU readback that waits, so never on by default) and logs it as VkProbe lines. rk_probe_frame() says whether this frame probes; rk_probe() reads one target, rk_probe_back_buffer() the screen.
+static bool sRkProbeNow = false;
+static void rk_probe_frame()
+{
+    static const bool on = getenv("RK_VK_PROBE") != nullptr;
+    static U32 last_frame = ~0u;
+    if (gFrameCount != last_frame)          // once per viewer frame: the lighting and the finalize both ask
+    {
+        last_frame = gFrameCount;
+        sRkProbeNow = on && (gFrameCount % 120) == 0;
+    }
+}
+static void rk_probe_log(const char* name, S32 w, S32 h, const F32* c)
+{
+    LL_INFOS("VkProbe") << name << " (" << w << "x" << h << ") RGBA " << c[0] << " " << c[1] << " " << c[2] << " " << c[3]
+                        << ((std::isnan(c[0]) || std::isnan(c[1]) || std::isnan(c[2]) || std::isnan(c[3])) ? "  NaN" : "")
+                        << ((std::isinf(c[0]) || std::isinf(c[1]) || std::isinf(c[2]) || std::isinf(c[3])) ? "  Inf" : "") << LL_ENDL;
+}
+static void rk_probe(const char* name, LLRenderTarget& t)
+{
+    if (!sRkProbeNow || !t.isComplete())
+    {
+        return;
+    }
+    // five points: the centre, then 15% / 85% of the height (the sky, the ground) and of the width at mid height
+    static const F32 spots[5][2] = { { 0.5f, 0.5f }, { 0.5f, 0.15f }, { 0.5f, 0.85f }, { 0.15f, 0.5f }, { 0.85f, 0.5f } };
+    static const char* const where[5] = { "centre", "top", "bottom", "left", "right" };
+    for (int i = 0; i < 5; ++i)
+    {
+        F32 c[4] = { -1.f, -1.f, -1.f, -1.f };
+        U8 u[4] = { 9, 9, 9, 9 };
+        {
+            RenderPassScope pass(t);
+            gRender.readPixels((S32)(t.getWidth() * spots[i][0]), (S32)(t.getHeight() * spots[i][1]), 1, 1, PixelFormat::RGBA, ComponentType::F32, c);
+            gRender.readPixels((S32)(t.getWidth() * spots[i][0]), (S32)(t.getHeight() * spots[i][1]), 1, 1, PixelFormat::RGBA, ComponentType::U8, u);
+        }
+        rk_probe_log((std::string(name) + " " + where[i]).c_str(), t.getWidth(), t.getHeight(), c);
+        LL_INFOS("VkProbe") << "   same pixel read as 8 bit: " << (S32)u[0] << " " << (S32)u[1] << " " << (S32)u[2] << " " << (S32)u[3] << LL_ENDL;
+    }
+}
+static void rk_probe_back_buffer(const char* name)
+{
+    if (!sRkProbeNow || !gViewerWindow)
+    {
+        return;
+    }
+    U8 px[4] = { 0, 0, 0, 0 };
+    const S32 w = gViewerWindow->getWindowWidthRaw(), h = gViewerWindow->getWindowHeightRaw();
+    gRender.readPixels(w / 2, h / 2, 1, 1, PixelFormat::RGBA, ComponentType::U8, px);
+    const F32 c[4] = { px[0] / 255.f, px[1] / 255.f, px[2] / 255.f, px[3] / 255.f };
+    rk_probe_log(name, w, h, c);
+}
+
 void LLPipeline::generateExposure(LLRenderTarget* src, LLRenderTarget* dst, bool use_history) {
     // exposure sample
     {
@@ -22180,6 +22234,24 @@ void LLPipeline::renderFinalize()
     LL_RECORD_BLOCK_TIME(FTM_RENDER_BLOOM);
     LL_PROFILE_GPU_ZONE("renderFinalize");
 
+    rk_probe_frame();
+    rk_probe("1 albedo (G-buffer)", mRT->deferredScreen);
+    rk_probe("2 lit scene (screen)", mRT->screen);
+    if (sRkProbeNow)
+    {
+        // what the sky says (a NaN or an Inf here would explain a flat colour in every sky shader)
+        LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
+        if (sky)
+        {
+            const LLColor3 sun = sky->getSunlightColor(), amb = sky->getAmbientColor(), bh = sky->getBlueHorizon(), bd = sky->getBlueDensity();
+            const LLVector3 sd = sky->getSunDirection();
+            LL_INFOS("VkProbe") << "sky: sunlight " << sun.mV[0] << " " << sun.mV[1] << " " << sun.mV[2] << ", ambient " << amb.mV[0] << " " << amb.mV[1] << " " << amb.mV[2]
+                                << ", blue horizon " << bh.mV[0] << " " << bh.mV[1] << " " << bh.mV[2] << ", blue density " << bd.mV[0] << " " << bd.mV[1] << " " << bd.mV[2]
+                                << ", haze density " << sky->getHazeDensity() << " horizon " << sky->getHazeHorizon() << ", density x " << sky->getDensityMultiplier()
+                                << ", distance x " << sky->getDistanceMultiplier() << ", gamma " << sky->getGamma() << ", sun dir " << sd.mV[0] << " " << sd.mV[1] << " " << sd.mV[2] << LL_ENDL;
+        }
+    }
+
     gRender.color4f(1, 1, 1, 1);
     RKRenderState::DepthScope depth(false);
     RKRenderState::BlendScope blend(false);
@@ -22225,8 +22297,10 @@ void LLPipeline::renderFinalize()
         copyScreenSpaceReflections(&mRT->screen, &mSceneMap);
 
         generateLuminance(&mRT->screen, &mLuminanceMap);
+        rk_probe("3 luminance", mLuminanceMap);
 
         generateExposure(&mLuminanceMap, &mExposureMap);
+        rk_probe("4 exposure", mExposureMap);
 
         static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
         // <FS> the upscaler sharpens by itself and the sharpening here ran BEFORE it, at the render size: with it on the CAS pass is skipped (the user 2026-11-09; the tonemap then does the gamma itself)
@@ -22442,6 +22516,7 @@ void LLPipeline::renderFinalize()
 
     LLVertexBuffer::unbind();
 
+    rk_probe_back_buffer("5 final picture (back buffer)");
 
     // flush calls made to "addTrianglesDrawn" so far to stats machinery
     recordTrianglesDrawn();
@@ -23393,6 +23468,12 @@ void LLPipeline::renderDeferredLighting()
     }
 
     llassert(!sRenderingHUDs);
+
+    if (!gCubeSnapshot)
+    {
+        rk_probe_frame();
+        rk_probe("0 albedo, geometry drawn and lighting not started", mRT->deferredScreen);
+    }
 
     F32 light_scale = 1.f;
 
