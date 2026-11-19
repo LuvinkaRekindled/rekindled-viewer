@@ -454,3 +454,5 @@ Where it stands: about 0.87 ms of the 7.82 ms loop is the main thread's avatar w
 **Cache lap, default settings (rk2s3, no RK_VK variable):** 16,179 faces attached (6.94M vertices not filled), 6,500 buffers made and filled (5.29M vertices), 0 writes blocked, 0 key mismatches, the no vertex buffer guard fired once (stage 2 lap: 2, first cache lap: 17). The known exit heap corruption (0xc0000374) is in the event log for each lap.
 
 **Not verified:** the picture (hair, transparent clothes, glTF clothes with the cache on; Adam saw the opaque class only), the planning cost on the main thread, arrival stall, glTF material edits live (a colour or transform change on a worn glTF mesh).
+
+**Adam's eye (2026-11-19):** "i looked at the last run. it was fine": the run after stage 3 (alpha and glTF cached, cache on by default). Which run (a lap or a live session) was not stated; no details on hair, transparent clothes or glTF clothes were given.
