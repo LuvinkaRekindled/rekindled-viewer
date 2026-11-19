@@ -366,3 +366,32 @@ Zones lap, mode def, diagnostics on, 86 avatars (55.5 updated a frame), main loo
 | of completions name tag, name tag position, post motion | 0.01 each | | name tag: its own object |
 
 Where it stands: about 0.87 ms of the 7.82 ms loop is the main thread's avatar work (`idleUpdate` 0.31 plus the batch 0.56), against D2's gate of 0.5 ms. The pipeline-owned writes (attachment replay 0.09, `movePartition` 0.08, and part of the unsplit 0.18 of `idleUpdate`) are at least 0.17 ms and wait for the owners D4 and D5 create. The avatar-local pieces (appearance animation, lipsync, name tags, post motion) add up to about 0.10 ms; `updateCharacter` (0.12) is partly local. A pool job per avatar could take the local pieces, but the gain is about 0.1 ms, each piece is under 1 us a call, and they would sit under the T1 and T2 rules. Not built. Use this table as the baseline to re-measure after D4 and D5 (the five zones stay in the code).
+
+### D4 stage 1a result, and the per-face data inventory (2026-11-18, commit 953a8e9fd8, laps `rs3` to `rs5`)
+
+**1a result.** `RK_VK_RIGSTORE=1` builds, with code of its own, the entry a shared store would hold for every rigged face the fill writes (key: mesh asset, detail, skin hash, face index) and compares it with the face's own vertex buffer. Over 8,000 compares (rs5): 0 differing floats in position (22.2M compared), normal (22.0M), weight (29.6M), index (34.4M), texcoord of all three channels (27.2M), colour (20.2M) and tangent (17.8M). So a rigged face's arrays are exactly a function of the key and the face's texture entry and material. A census of why a face is outside a plain opaque class (rs4, 12,000 compares): legacy material 83 percent (alone 78), alpha pool 7.6, glTF 2.5, texture animation 3.9 (always with another reason), bump and non default texgen 0. The class "a legacy material or none, default texgen, not alpha pool, no glTF, no bump, no texture animation" is 84 percent of compares (6,718 of 8,000), 6,000 of them with a material. Sharing by bytes was not measured (the distinct face count is approximate: face pointers are recycled and a face has an entry per detail level); 826 of 3,554 entries (23 percent) were used by two or more distinct face objects.
+
+**What a rigged face's vertex buffer holds, branch by branch (`LLFace::getGeometryVolume`, `fillBatch`), and where each part goes:**
+
+| Part | Source today | Goes to |
+|---|---|---|
+| positions (xyz) | bind shape matrix of the skin times the base position | store |
+| position w | the batch's texture index (per batch, per instance) | gone: the row names its own textures |
+| normals, tangents (w = handedness of the source) | normal matrix of the bind shape times the base | store |
+| weights, indices (plus the face's first vertex) | the mesh asset | store (indices are an index range into the store) |
+| base texcoords, texcoord extents | the mesh asset | store |
+| texcoord 0 | base through the TE's offset, repeat and rotation (a 2x3 matrix) | row: a texture matrix slot |
+| texcoord 1 and 2 (normal and specular maps) | base through the material's own offset, repeat and rotation | row: two more matrices |
+| colour | ONE RGBA repeated for every vertex: the TE colour; alpha = transparency in the alpha pool, else the shininess (0, 0.25, 0.5, 0.75 of 255) when there is no specular map; glTF: its base colour | row: a constant |
+| emissive (alpha items) | ONE glow value repeated | row: a constant |
+| material scalars | specular colour, exponent, environment intensity, alpha mode and cutoff | row (the worker's `GeoEntry` already has `mSpecular`, `mEnvIntensity`, `mCutoff`) |
+| diffuse, normal, specular textures | the face's textures | row (`mTextures`, `mNormalMap`, `mSpecularMap`) |
+| fullbright, no normals (a fullbright face has no normal array) | the face's state | row flag |
+| texture animation | `mTextureMatrix`, baked into texcoords only for small faces | row: the animated matrix slot (the GPU texture animation path has this table already) |
+| glTF | base colour, transforms per channel, PBR row | row: `mPbrRow` (later stage) |
+| planar texgen, legacy bump, selected faces | the position and face centre, the sun direction, an own buffer | stay on the old path (none of the first two occurred in 12,000 compares) |
+| texture extents, pixel area, priority | row().texExtents and the face | stay with the face (CPU state of the instance) |
+
+**Stages that follow from it.** Stage 1: the 84 percent class: the store, plus rows carrying the colour constant, the three texcoord matrices, the material scalars, the textures and the flags. Stage 2: the alpha pool (also needs the order inside one avatar, still not read) and glow. Stage 3: glTF and texture animation. Planar texgen, legacy bump and selected faces keep the old path.
+
+**Open before 1b:** which programs draw a rigged opaque face today and how their pull shaders read the arrays (offsets in one buffer per `GeoEntry`: a store entry plus per-row constants means a second address or the constants in the row).
