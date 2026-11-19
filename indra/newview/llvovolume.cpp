@@ -30,6 +30,7 @@
 #include "rkgpuzonetimer.h"
 
 #include "llvovolume.h"
+#include "rkrigstore.h"
 #include "rkmatrixtable.h"
 #include "rkdiag.h"        // <FS> RK_DIAG: the rigged fill counters
 
@@ -7204,6 +7205,10 @@ void LLVolumeGeometryManager::fillBatch(FillTask& task)
                     if (!geometry_ok)
                     {
                         LL_WARNS() << "Failed to get geometry for face!" << LL_ENDL;
+                    }
+                    else if (rk_rigstore_on() && facep->isState(LLFace::RIGGED))
+                    {
+                        rk_rigstore_compare(facep, *volume, te_idx);        // <FS> D4 stage 1a (RK_VK_RIGSTORE=1): what a shared store would hold for this face, compared with what the face just got
                     }
 
                     if (drawablep->isState(LLDrawable::ANIMATED_CHILD))
