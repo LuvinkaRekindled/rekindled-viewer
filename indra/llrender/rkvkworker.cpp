@@ -10551,7 +10551,26 @@ static void geo_alpha_resolve(GeoFrag& f, U32 first, U32 count)
             f.mPalAddr[item] = pal;
             f.mPalJoints[item] = joints;
             GeoGpuG& cpu_row = sGeo.mTCpu[f.mSlots[item]];
-            cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = joints;
+            if (sGeo.mRigRowsFrame)
+            {
+                // D5 step 4 (the alpha rows too): the row names its palette by id index, as the opaque rigged rows do; written to the persistent table only when it differs
+                const U32 index = id & 0xFFFFFFu;
+                if (cpu_row.mPalette[0] != index || cpu_row.mPalette[1] != 0xFFFFFFFFu || cpu_row.mJoints != joints)
+                {
+                    cpu_row.mPalette[0] = index; cpu_row.mPalette[1] = 0xFFFFFFFFu; cpu_row.mJoints = joints;
+                    GeoGpuG& gpu_row = sGeo.mRowsG[f.mSlots[item]];
+                    gpu_row.mPalette[0] = index; gpu_row.mPalette[1] = 0xFFFFFFFFu; gpu_row.mJoints = joints;
+                    ++sGeo.mRowsMarked;
+                }
+                else
+                {
+                    ++sGeo.mRowsKept;
+                }
+            }
+            else
+            {
+                cpu_row.mPalette[0] = (U32)pal; cpu_row.mPalette[1] = (U32)(pal >> 32); cpu_row.mJoints = joints;
+            }
             f.mARCmds[c].indexCount = f.mARCount0[c];
         }
         else
@@ -10726,6 +10745,7 @@ void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     static thread_local std::vector<U32> cmd_ib;
     static thread_local std::vector<VkBuffer> cmd_block;
     const bool merge_on = rig_merge_on();
+    const bool persistent_alpha_rows = rigged_run && sGeo.mRigRowsFrame;       // D5 step 4: the alpha rows of rigged items stay in the persistent table too (no copy per record)
     if (rigged_run)
     {
         VkDrawIndexedIndirectCommand* out = (VkDrawIndexedIndirectCommand*)cmds.mPtr;
@@ -10737,7 +10757,11 @@ void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
         // made in a local and stored once with its row's number; a read of it costs about a microsecond)
         U32 row_base = 0;
         GeoGpuG* rows = nullptr;
-        if (alpha_rows_reserve(r, (U32)total, row_base, alpha_rows))
+        if (persistent_alpha_rows)
+        {
+            // (nothing is copied: the commands name the items' rows in the persistent table)
+        }
+        else if (alpha_rows_reserve(r, (U32)total, row_base, alpha_rows))
         {
             rows = (GeoGpuG*)alpha_rows.mPtr + row_base;
         }
@@ -10778,11 +10802,14 @@ void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
                         cmd_block[at_cmd + k] = b->mVk.mBuffer;
                     }
                 }
-                if (rows)
+                if (!persistent_alpha_rows)
                 {
-                    rows[at_cmd + k] = sGeo.mTCpu[cmd.firstInstance];
+                    if (rows)
+                    {
+                        rows[at_cmd + k] = sGeo.mTCpu[cmd.firstInstance];
+                    }
+                    cmd.firstInstance = (U32)(row_base + at_cmd + k);
                 }
-                cmd.firstInstance = (U32)(row_base + at_cmd + k);
                 out[at_cmd + k] = cmd;
             }
             at_cmd += t.second.mCount;
@@ -10830,16 +10857,22 @@ void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     vi.mBindings.clear();
     vi.mAttributes.clear();
     used_cache.clear();
-    const U64 table_address = rigged_run ? (U64)alpha_rows.mAddress : (U64)sGeo.mRowsGpu.mAddress, models_address = (U64)pass.mModels.mAddress, texmats_address = (U64)pass.mTexmats.mAddress;
-    if (!table_address)
+    const U64 table_address = (rigged_run && !persistent_alpha_rows) ? (U64)alpha_rows.mAddress : (U64)sGeo.mRowsGpu.mAddress, models_address = (U64)pass.mModels.mAddress, texmats_address = (U64)pass.mTexmats.mAddress;
+    if (!table_address || (persistent_alpha_rows && (pu.mPalIds == ~0u || !sGeo.mPalIdTable.mAddress)))
     {
-        return;         // (no rows for this run: counted where the scratch failed)
+        return;         // (no rows for this run: counted where the scratch failed; a rigged program without the id table would read a row's id as an address)
     }
     Context::instance().flight(Context::FL_GEO_DRAW, 98ull, table_address, 1ull, (unsigned long long)total);       // (the alpha run: its rows, copied for this draw)
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
     program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
+    if (persistent_alpha_rows)
+    {
+        const U64 palids_address = (U64)sGeo.mPalIdTable.mAddress;
+        const S32 palids_words[2] = { (S32)(U32)palids_address, (S32)(U32)(palids_address >> 32) };
+        program->setFloatsAt(pu.mPalIds, reinterpret_cast<const F32*>(palids_words), 2, 1);
+    }
     program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
     if (pu.mTexmats != ~0u)
     {
