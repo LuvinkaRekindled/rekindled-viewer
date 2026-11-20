@@ -1919,7 +1919,7 @@ If you do not understand the distinction then leave this control alone."
        layout="topleft"
        left="10"
        name="RKVkDLSS"
-       tool_tip="Draws the world with the AMD FSR 3.1 upscaler (any graphics card). Performance, Balanced and Quality draw at a lower resolution and upscale it: a lot faster, with little visible difference. Native AA / 100% draws at the full window size and only smooths edges: the sharpest picture, for photos. Takes effect after a restart."
+       tool_tip="Draws the world with the AMD FSR 3.1 upscaler (any graphics card). Performance, Balanced and Quality draw at a lower resolution and upscale it: faster, with little visible difference, when the world is expensive to draw. The upscaling itself has a cost, so it works best on a dedicated graphics card; on an integrated GPU or in a light scene it can be slower than not using it. Native AA / 100% draws at the full window size and only smooths edges: the sharpest picture, for photos. Takes effect after a restart."
        top_pad="25"
        width="400"/>
       <text

@@ -2571,7 +2571,7 @@
     <key>RKVkDLSS</key>
     <map>
       <key>Comment</key>
-      <string>Experimental, needs an NVIDIA RTX card: render the world at RKVkDLSSScale of the window size and upscale it with DLSS. Takes effect after a restart.</string>
+      <string>Experimental: render the world at a lower resolution and upscale it with AMD FSR 3.1 (any Vulkan card). Best results on a dedicated graphics card: the upscaling has a fixed cost (about 5 ms at 1080p on an integrated GPU) that only pays off when the world is expensive to draw. Takes effect after a restart.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
