@@ -22,8 +22,8 @@
     save_visibility="true"
     show_title="false"
     single_instance="true"
-    width="155"
-    min_width="155">
+    width="170"
+    min_width="170">
   <floater.string name="rotate_tooltip">
         Rotate Camera Around Focus
   </floater.string>
