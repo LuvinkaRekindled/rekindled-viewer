@@ -11327,21 +11327,12 @@ void cull_fill_row(LLSpatialGroup* g, RKVkBridge::CullRow& row)
     }
     LLSpatialPartition* part = g->getSpatialPartition();
     U32 bridge_flag = 0u;
-    if (LLSpatialBridge* bridge = part ? part->asBridge() : nullptr)
+    if (part && part->asBridge())
     {
-        // a group of a bridge's octree: its own bounds are in the bridge's space. The row holds the bridge's world box instead: the extents LLSpatialBridge::updateSpatialExtents keeps (the box the walk culls the bridge
-        // by, the avatar's box for a conservative bridge), the same for every group of the bridge. It is a superset of the group's own box, and it is kept by one event (the bridge's extents), not by every change of the
-        // bridge object's matrix (the first version of this row made the world box from that matrix: 55 % of the rows were stale in a lap, the avatars' bridges move their matrix without making their extents again).
+        // a group of a bridge's octree: its own bounds are in the bridge's space. 2026-11-20: the row used to hold the bridge's world box instead (kept by a touch of every group of the bridge on every change of the
+        // bridge's extents), but no reader of the table looks at the box of a flag 64 row: the verdicts of such a group are the viewer's (the bridges the walk marked), its own flags, type and parents, and the map row's
+        // surface area and box size (rkvkworker.cpp cull_row_verdict, cull_late_pass, cull_kept_bits; the loops over the rows skip 32 | 64). The row keeps the group's own bounds (they are read by nothing either).
         bridge_flag = 64u;
-        const LLVector4a* be = static_cast<LLDrawable*>(bridge)->getSpatialExtents();
-        for (int k = 0; k < 3; ++k)
-        {
-            const F32 lo = be[0][k], hi = be[1][k];
-            row.mCenter[k] = 0.5f * (lo + hi);
-            row.mHalf[k] = 0.5f * (hi - lo);
-            row.mExtMin[k] = lo;
-            row.mExtMax[k] = hi;
-        }
     }
     const bool sphere = part && !(part->mInfiniteFarClip || (!LLPipeline::sUseFarClip && !gCubeSnapshot));       // as LLSpatialPartition::cull picks its culler
     OctreeNode* parent = node->getOctParent();
@@ -11371,14 +11362,9 @@ void cull_fill_map_row(LLSpatialGroup* g, CullMapRow& row)
     row.mObjectBoxSize = g->row().objectBoxSize;
     // stage 3: the object bounds the walk tests for a node that has children (a bridge's group: the bridge's world box, as the cull row; such a group counts as a leaf)
     OctreeNode* node = g->getOctreeNode();
-    if (LLSpatialBridge* bridge = part ? part->asBridge() : nullptr)
+    if (part && part->asBridge())
     {
-        const LLVector4a* be = static_cast<LLDrawable*>(bridge)->getSpatialExtents();
-        for (int k = 0; k < 3; ++k)
-        {
-            row.mObjCenter[k] = 0.5f * (be[0][k] + be[1][k]);
-            row.mObjHalf[k] = 0.5f * (be[1][k] - be[0][k]);
-        }
+        // (2026-11-20: a bridge's group is a leaf of the table and no reader looks at its object bounds: they stay zero, see cull_fill_row)
     }
     else if (node)
     {
@@ -11533,6 +11519,7 @@ void cull_extra_diag(LLCamera& camera, const std::vector<U32>& handles)
 // the new groups get slots, the touched rows are made again (a row whose group still waits for its rebound stays on the list)
 void cull_process()
 {
+    RK_CPU_ZONE("cull rows: refresh the dirty rows");       // 2026-11-20: what the touches of the moving bridges (RKCullShadow::touchBridge) cost to refresh, with the rows of every other dirty group
     std::lock_guard<std::mutex> lock(sCullMutex);
     for (LLViewerOctreeGroup* g : sNewGroups)
     {

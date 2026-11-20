@@ -1598,7 +1598,8 @@ void LLSpatialBridge::updateSpatialExtents()
     pos.setAdd(newMin,newMax);
     pos.mul(0.5f);
     updateBinRadius();
-    RKCullShadow::touchBridge(this);        // <FS> stage 2 of doc/vulkan/PLAN-visible-set-owner.md: the rows of the bridge's groups hold world boxes made with its matrix
+    // 2026-11-20: the rows of the bridge's groups no longer hold the bridge's world box (nothing read it), so a move of the bridge touches none of them. The render type of the bridge, which the rows do hold, only
+    // changes in LLViewerJointAttachment::setAttachmentVisibility, which refreshes the rows itself (RKCullShadow::touchBridge).
 }
 
 bool LLSpatialBridge::sphereInsideBox(const F32* boxMin, const F32* boxMax, F32 tolerance)
