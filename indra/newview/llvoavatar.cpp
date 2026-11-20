@@ -3889,26 +3889,6 @@ static void override_bbox(LLDrawable* drawable, LLVector4a* extents)
     drawable->movePartition();
 }
 
-bool LLVOAvatar::isLiveInstance(const LLVOAvatar* avatar)
-{
-    static U32 frame = ~0u;
-    static std::unordered_set<const LLVOAvatar*> live;
-    const U32 now = (U32)LLFrameTimer::getFrameCount();
-    if (frame != now)
-    {
-        frame = now;
-        live.clear();
-        for (const LLCharacter* c : LLCharacter::sInstances)
-        {
-            if (const LLVOAvatar* a = dynamic_cast<const LLVOAvatar*>(c))
-            {
-                live.insert(a);
-            }
-        }
-    }
-    return avatar && live.count(avatar) != 0;
-}
-
 // <FS> view rework A1: the writes of an avatar's attachment loop to shared state are recorded and replayed in order when the loop is over (the viewer's own avatar keeps the direct path)
 namespace
 {

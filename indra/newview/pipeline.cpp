@@ -6889,7 +6889,7 @@ struct AvBlinkState
 // reasons an avatar is not in the visible list on a frame, as bits (all that apply are set):
 enum : U32 { BLK_NO_GROUP = 1, BLK_GROUP_OCCLUDED = 2, BLK_GROUP_NOT_STAMPED = 4, BLK_GROUP_DEAD = 8, BLK_GROUP_DIRTY = 16, BLK_DRAWABLE_HIDDEN = 32, BLK_IMPOSTOR = 64, BLK_HIZ_ONCE = 128,
              BLK_AV_NOT_VISIBLE = 256, BLK_GROUP_CHANGED = 512, BLK_ANCESTOR_OCCLUDED = 1024 };
-std::unordered_map<const LLVOAvatar*, AvBlinkState> sAvBlink;
+std::unordered_map<U32, AvBlinkState> sAvBlink;     // by the avatar's render handle (RKAvatarHandles: resolves to nothing once the avatar is gone)
 }
 
 // the Pause key (while RK_VK_BLINK is set): the flight recorder of every avatar within RK_VK_BLINK_DUMP_M (30) metres, the last kRingFrames frames as runs of frames with the same flags. An avatar whose flags did not
@@ -6902,9 +6902,9 @@ static void rk_blink_dump(S32 frame)
         << "100 far tier heavy, 200 culled/not baked, 400 avatar visible, 800 drawable hidden, 1000 group changed since the frame before, 2000 not normal appearance, 4000 drawable visible stamp, 8000 fully loaded (hex)" << LL_ENDL;
     for (auto& kv : sAvBlink)
     {
-        const LLVOAvatar* av = kv.first;
+        const LLVOAvatar* av = RKAvatarHandles::resolve(kv.first);
         AvBlinkState& st = kv.second;
-        if (st.mTouched != frame || st.mRingN == 0 || !LLVOAvatar::isLiveInstance(av))
+        if (st.mTouched != frame || st.mRingN == 0 || !av)
         {
             continue;
         }
@@ -6975,7 +6975,7 @@ static void rk_blink_detect(LLCamera& camera, LLCullResult& cull)
         {
             continue;
         }
-        AvBlinkState& st = sAvBlink[av];
+        AvBlinkState& st = sAvBlink[av->getRenderHandle()];
         st.mTouched = frame;
         ++tracked;
         {
@@ -22931,7 +22931,7 @@ namespace
 struct PoseProbe
 {
     U64 mFrame = 0, mPrevFrame = 0;
-    LLVOAvatar* mAvatar = nullptr;
+    RKAvatarRef mAvatar;        // a handle: resolves to nothing once the avatar is gone
     const LLMeshSkinInfo* mSkin = nullptr;
     std::vector<F32> mPalette, mPrevPalette;
     LLVector3 mPos;
@@ -22970,12 +22970,13 @@ static void pose_probe_note(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, cons
 static void pose_probe_check()
 {
     PoseProbe& p = sPoseProbe;
-    if (p.mFrame != (U64)gFrameCount || !p.mSkin || p.mPalette.empty() || !p.mAvatar || !LLVOAvatar::isLiveInstance(p.mAvatar))
+    LLVOAvatar* probe_avatar = p.mAvatar.get();
+    if (p.mFrame != (U64)gFrameCount || !p.mSkin || p.mPalette.empty() || !probe_avatar)
     {
         return;
     }
     ++p.mChecks;
-    const LLVOAvatar::MatrixPaletteCache& mpc = p.mAvatar->updateSkinInfoMatrixPalette(p.mSkin);
+    const LLVOAvatar::MatrixPaletteCache& mpc = probe_avatar->updateSkinInfoMatrixPalette(p.mSkin);
     F32 worst = 0.f;
     size_t at = 0;
     const bool same_size = mpc.mGLMp.size() == p.mPalette.size();
@@ -22995,7 +22996,7 @@ static void pose_probe_check()
     {
         worst = 1.0e9f;
     }
-    const F32 pos_diff = (p.mAvatar->getRenderPosition() - p.mPos).length();
+    const F32 pos_diff = (probe_avatar->getRenderPosition() - p.mPos).length();
     F32 moved = -1.f;
     if (p.mPrevFrame + 1 == p.mFrame && p.mPrevPalette.size() == p.mPalette.size())
     {
