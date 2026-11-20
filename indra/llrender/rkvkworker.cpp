@@ -531,6 +531,7 @@ struct FrameState
     U32 mPalFrame = ~0u;
     std::vector<PalIdSlot> mPalIds[2];  // <FS> P1 step 3: by the index of a palette id (kind 40 fills it), valid for the frame in the slot; P3: one table for the even and one for the odd viewer frames, so the frame before is still there (the velocity pass reads last frame's palette by the same id)
     U32 mPalIdFrame = ~0u - 1;            // the frame whose records name their shared palettes by id (a kind 40 came for it); else by offset
+    U64 mPalIdsEpoch = 0;                 // <FS> counts the kind 40 records applied (any frame): a table of addresses made from mPalIds is out of date once this has moved (the rigged alpha pass of 2026-11-20, see geo_palid_table_refresh)
 };
 FrameState gFrameState;
 // What is left at file level is owned by the resource tables (sGL: textures, buffers, targets; the bindless table and pins; the arena; the resident and scene fragments; queries), which only the
@@ -4883,6 +4884,7 @@ static void on_palette_ids(const RKVkBridge::ShadowPacketsHeader& h, const U8* b
         gFrameState.mPalSegs.clear();
     }
     gFrameState.mPalIdFrame = h.mPass;
+    ++gFrameState.mPalIdsEpoch;
     for (U32 i = 0; i < h.mEntries; ++i)
     {
         U32 pair[2];
@@ -8612,6 +8614,7 @@ static struct GeoState
     Renderer::ScratchAlloc mRTable;         // the rows of the rigged items of this frame (copies of the table's rows with the frame's palette), the rigged commands index it
     // D5 step 4 (RK_VK_RIGROWS, default on): the rigged rows stay in the persistent table (their palette is an id index and all ones in the high word) and the frame carries a table of palette addresses by id index
     Renderer::ScratchAlloc mPalIdTable;     // this frame's: an address per id index (a palette this frame does not hold: the zero palette, so a stale row reads zeros, not freed memory)
+    U64 mPalIdTableEpoch = 0;               // <FS> gFrameState.mPalIdsEpoch when the table above was made: palettes stamped after that (a request made in the rigged alpha pass) are not in it, see geo_palid_table_refresh
     Buffer mZeroPalette;                    // a palette of zeros (64 KB: more than any mesh's joints): what an unresolved id index points at
     U64 mRowsMarked = 0, mRowsKept = 0;     // (rows whose palette marker was written, rows that already had it)
     bool mRigRowsFrame = false;             // this frame's rigged commands use the persistent rows (the table above was made)
@@ -9541,6 +9544,49 @@ void geo_stale_check(const std::vector<GeoFrag*>& listed)
     }
 }
 
+// <FS> 2026-11-20 (the shell that vanished while the avatar was paused or its palettes were made at the render's request): the frame's table of palette addresses by id index is made once, in geo_prepare, from the
+// pairs (kind 40) that have arrived by then. The rigged alpha pass asks for its palettes later in the frame (the pairs of those arrive after the prepare); with the persistent rows the alpha rows name their palette
+// by id index, so an id stamped after the table was made read the zero palette (all vertices at the origin: nothing on the screen), while the CPU side (geo_alpha_resolve) found the address and drew the item. This makes
+// the table again from the pairs the frame holds now, when more have arrived since it was made. True when the table is current.
+static bool geo_palid_table_refresh(Renderer& r)
+{
+    if (!sGeo.mRigRowsFrame)
+    {
+        return false;
+    }
+    if (sGeo.mPalIdTableEpoch == gFrameState.mPalIdsEpoch)
+    {
+        return true;
+    }
+    if (!(gFrameState.mPalFrame == sGeo.mViewerFrame && gFrameState.mPalIdFrame == sGeo.mViewerFrame) || !sGeo.mZeroPalette.mAddress)
+    {
+        return true;        // (as the prepare found it: no table of this frame, the old one stays)
+    }
+    const std::vector<PalIdSlot>& ids = gFrameState.mPalIds[gFrameState.mPalFrame & 1];
+    const size_t n = std::max<size_t>(ids.size(), 1);
+    Renderer::ScratchAlloc table = r.allocVertexScratch(sizeof(U64) * n);
+    if (!table.mPtr || !table.mAddress)
+    {
+        ++sGeo.mS.mScratchFail;
+        return false;
+    }
+    U64* out_ids = (U64*)table.mPtr;
+    const U64 zero = (U64)sGeo.mZeroPalette.mAddress;
+    for (size_t k = 0; k < n; ++k)
+    {
+        const bool held = k < ids.size() && ids[k].mFrame == gFrameState.mPalFrame && ids[k].mAddress;
+        out_ids[k] = held ? ids[k].mAddress : zero;
+    }
+    sGeo.mPalIdTable = table;
+    sGeo.mPalIdTableEpoch = gFrameState.mPalIdsEpoch;
+    static U64 refreshes = 0;
+    if (rk_diag_on() && (++refreshes <= 5 || refreshes % 1200 == 0))
+    {
+        LL_INFOS("VkPalIdTable") << "the frame's palette id table was made again for the rigged alpha pass: " << n << " ids, frame " << gFrameState.mPalFrame << " (" << refreshes << " so far)" << LL_ENDL;
+    }
+    return true;
+}
+
 // kind 21: once a frame, before the passes. Blob: mEntries handles (U32), then mMatrices x GeoSlotMatrix
 void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
 {
@@ -9718,6 +9764,7 @@ void geo_prepare(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
                 out_ids[k] = held ? ids[k].mAddress : zero;
             }
             sGeo.mPalIdTable = table;
+            sGeo.mPalIdTableEpoch = gFrameState.mPalIdsEpoch;
             sGeo.mRigRowsFrame = true;
         }
         else
@@ -10777,6 +10824,10 @@ void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     static thread_local std::vector<VkBuffer> cmd_block;
     const bool merge_on = rig_merge_on();
     const bool persistent_alpha_rows = rigged_run && sGeo.mRigRowsFrame;       // D5 step 4: the alpha rows of rigged items stay in the persistent table too (no copy per record)
+    if (persistent_alpha_rows && !geo_palid_table_refresh(r))
+    {
+        return;         // (no table for the palettes the alpha pass asked for: the run is not drawn)
+    }
     if (rigged_run)
     {
         VkDrawIndexedIndirectCommand* out = (VkDrawIndexedIndirectCommand*)cmds.mPtr;
