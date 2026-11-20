@@ -25,7 +25,6 @@
  */
 
 #include "llviewerprecompiledheaders.h"
-#include "rkcullshadow.h"
 #include "rkgpuzonetimer.h"
 
 #include "lldrawable.h"
@@ -1598,8 +1597,7 @@ void LLSpatialBridge::updateSpatialExtents()
     pos.setAdd(newMin,newMax);
     pos.mul(0.5f);
     updateBinRadius();
-    // 2026-11-20: the rows of the bridge's groups no longer hold the bridge's world box (nothing read it), so a move of the bridge touches none of them. The render type of the bridge, which the rows do hold, only
-    // changes in LLViewerJointAttachment::setAttachmentVisibility, which refreshes the rows itself (RKCullShadow::touchBridge).
+    // (2026-11-20: the rows of the bridge's groups no longer hold the bridge's world box: nothing read it, so a move of the bridge touches none of them)
 }
 
 bool LLSpatialBridge::sphereInsideBox(const F32* boxMin, const F32* boxMax, F32 tolerance)

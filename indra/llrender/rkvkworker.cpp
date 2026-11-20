@@ -12024,15 +12024,16 @@ int cull_row_verdict(const CullShadowState& s, const RKVkBridge::CullParams& P, 
     }
     U32 type;
     memcpy(&type, &row.mPad0, 4);
-    if (type < 160u && !((type_mask[type >> 5] >> (type & 31u)) & 1u))
+    if (!(flags & 64u) && type < 160u && !((type_mask[type >> 5] >> (type & 31u)) & 1u))
     {
         return CV_TYPE;
     }
     if (flags & 64u)
     {
-        // a group of a bridge's octree: whether the walk marked the bridge this frame (LLSpatialBridge::setVisible: the avatar gate, impostor and jelly doll rule, the bridge's box, its pixel area: CPU state of the moment) is the
-        // viewer's to say, the record names the roots of the bridges it marked; then every group of the octree is marked (no test of its own, no occlusion cut) and the render map drops it by its own occlusion state or
-        // the auto-hide limit
+        // a group of a bridge's octree: whether the walk marked the bridge this frame (LLSpatialBridge::setVisible: the render type of the bridge as it is NOW (hasRenderType(mDrawableType): 0 for hidden attachments), the avatar
+        // gate, impostor and jelly doll rule, the bridge's box, its pixel area: CPU state of the moment) is the viewer's to say, the record names the roots of the bridges it marked; then every group of the octree is marked (no
+        // test of its own, no occlusion cut) and the render map drops it by its own occlusion state or the auto-hide limit. (2026-11-20: so the type in the row of such a group is not tested here: the viewer's marking is
+        // the owner's verdict, with the type it has now, and a copy in each row would have to be refreshed whenever the bridge's type changes.)
         if (flags & 16u)
         {
             return CV_NOHANDLE;         // (an empty group is not marked)
@@ -12095,7 +12096,7 @@ bool cull_late_pass(const CullShadowState& s, const RKVkBridge::CullParams& P, U
     }
     U32 type;
     memcpy(&type, &row.mPad0, 4);
-    if (type < 160u && !((type_mask[type >> 5] >> (type & 31u)) & 1u))
+    if (!(flags & 64u) && type < 160u && !((type_mask[type >> 5] >> (type & 31u)) & 1u))       // (a bridge's group: the type is the viewer's marking's, see cull_row_verdict)
     {
         return false;
     }

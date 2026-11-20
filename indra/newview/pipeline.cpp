@@ -11519,7 +11519,7 @@ void cull_extra_diag(LLCamera& camera, const std::vector<U32>& handles)
 // the new groups get slots, the touched rows are made again (a row whose group still waits for its rebound stays on the list)
 void cull_process()
 {
-    RK_CPU_ZONE("cull rows: refresh the dirty rows");       // 2026-11-20: what the touches of the moving bridges (RKCullShadow::touchBridge) cost to refresh, with the rows of every other dirty group
+    RK_CPU_ZONE("cull rows: refresh the dirty rows");       // 2026-11-20: the refresh of the rows the groups touched since the last pass (RKCullShadow::touch, new groups)
     std::lock_guard<std::mutex> lock(sCullMutex);
     for (LLViewerOctreeGroup* g : sNewGroups)
     {
@@ -12443,30 +12443,6 @@ void RKCullShadow::touch(LLViewerOctreeGroup* group)
     }
 }
 
-void RKCullShadow::touchBridge(LLSpatialBridge* bridge)
-{
-    // stage 2 of doc/vulkan/PLAN-visible-set-owner.md: the groups of a bridge's octree are a handful (the census: 3.4 a bridge); each shows a world box made with the bridge's matrix, so a move of the bridge refreshes all of them
-    if (!bridge || !bridge->mOctree)
-    {
-        return;
-    }
-    static thread_local std::vector<const OctreeNode*> stack;
-    stack.clear();
-    stack.push_back(bridge->mOctree);
-    while (!stack.empty())
-    {
-        const OctreeNode* node = stack.back();
-        stack.pop_back();
-        if (LLViewerOctreeGroup* g = (LLViewerOctreeGroup*)node->getListener(0))
-        {
-            touch(g);
-        }
-        for (U32 k = 0; k < node->getChildCount(); ++k)
-        {
-            stack.push_back(node->getChild(k));
-        }
-    }
-}
 
 void RKCullShadow::poseLog(LLCamera& camera)
 {

@@ -23,7 +23,6 @@ namespace RKCullShadow
     void added(LLViewerOctreeGroup* group);         // a group was constructed: it gets a slot at the next processing if its partition is covered
     void forget(LLViewerOctreeGroup* group);        // the destructor: the slot is freed
     void touch(LLViewerOctreeGroup* group);         // something the row shows changed: refresh it at the next processing
-    void touchBridge(LLSpatialBridge* bridge);      // stage 2 of doc/vulkan/PLAN-visible-set-owner.md: the bridge's matrix or extents changed: every group of its octree shows another world box
 
     void build(LLCamera& camera);       // end of the main view's updateCull: the table, the CPU set, the verdicts that came back
     void send(LLCamera& camera);        // the occlusion point of the world pass: the table to the worker

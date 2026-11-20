@@ -44,7 +44,6 @@
 #include "llviewerobjectlist.h"
 #include "llface.h"
 #include "llvoavatar.h"
-#include "rkcullshadow.h"
 
 #include "rkrenderheaders.h"
 
@@ -371,7 +370,7 @@ void LLViewerJointAttachment::setAttachmentVisibility(bool visible)
         {
             attached_obj->mDrawable->getSpatialBridge()->mDrawableType = 0;
         }
-        RKCullShadow::touchBridge(attached_obj->mDrawable->getSpatialBridge());       // <FS> stage 3 of doc/vulkan/PLAN-visible-set-owner.md: the rows of the bridge's groups name its render type
+        // (2026-11-20: nothing else to tell: the cull rows of the bridge's groups do not hold its render type for anyone; the walk marks a bridge by the type it has now, LLSpatialBridge::setVisible)
     }
 }
 
