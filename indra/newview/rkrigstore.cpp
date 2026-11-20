@@ -712,9 +712,13 @@ int rk_rigcache_plan(LLFace* face, U32 mask, bool batch_textures, LLPointer<LLVe
             ++sCache.mMismatch;         // (the key does not name the geometry: the face goes the normal way)
             return 0;
         }
-        face->setVertexBuffer(vb);
+        // 2026-11-20 (the user: the hair's bottom layer is gone after a select and deselect, about half the time): LLFace::setGeomIndex and setIndicesIndex SET THE FACE'S VERTEX BUFFER TO NULL when the index changes, so
+        // the buffer is attached last (prepareBatch and fillBatch do the same). A face that had been through a normal batch (the rebuild at a selection puts all of an object's faces into one shared buffer, at
+        // offsets) has an index other than 0: attached first, its cached buffer was dropped again by the two calls, and the faces were skipped by fillBatch. A face that was already at 0 kept it: the check after
+        // the planning counted 53 of 56 hits without a buffer.
         face->setGeomIndex(0);
         face->setIndicesIndex(0);
+        face->setVertexBuffer(vb);
         face->setTextureIndex(batch_textures ? 0 : FACE_DO_NOT_BATCH_TEXTURES);
         face->mRigStore = true;
         ++sCache.mHits;
