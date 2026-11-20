@@ -150,6 +150,7 @@
 #include "llhudeffectresetskeleton.h"
 #include "llnetmap.h"
 #include "llsidepanelappearance.h"
+#include <unordered_map>
 #include "rkdiag.h"        // <FS> RK_DIAG: the statistics lines are off unless RK_VK_DIAG is set
 #include "llviewermenufile.h"
 #include "rkvkbridge.h"
@@ -8366,10 +8367,15 @@ void LLVOAvatar::updateVisibility()
     // avatar at 18 m lost to dancers at 30 m and played as a slideshow until the camera zoomed in (the user, 2026-11-05). Within RKImpostorNearDistance the rank is by distance ahead of everyone else:
     // nobody that near is an impostor unless more than the cap are that near, and then the farthest of them are. Beyond it the screen size decides as before.
     static LLCachedControl<F32> near_distance(gSavedSettings, "RKImpostorNearDistance", 25.f);
-    F32 preference = visible ? getPixelArea() : 0.f;
+    // <FS> hysteresis (the user 2026-11-20: avatars at the edge of the cap flipped between a live avatar and an impostor with every camera move or zoom: a snapshot pose some tenths of a second old, and no
+    // shadow, because impostors cast none). An avatar that was a full avatar in the last frame counts as 3 m nearer, or 25 percent larger on screen, so two near equal neighbours do not trade places
+    // each frame; a challenger has to be clearly better. RK_VK_IMPHYST=0 turns it off.
+    static const bool hysteresis = !getenv("RK_VK_IMPHYST") || atoi(getenv("RK_VK_IMPHYST")) != 0;
+    const bool was_full = hysteresis && sLimitNonImpostors && mVisibilityRank >= 1 && mVisibilityRank <= sMaxNonImpostors;
+    F32 preference = visible ? getPixelArea() * (was_full ? 1.25f : 1.f) : 0.f;
     if (visible && !isSelf() && near_distance > 0.f && mDrawable.notNull())
     {
-        const F32 distance = mDrawable->mDistanceWRTCamera * LLPipeline::farDistanceScale();
+        const F32 distance = mDrawable->mDistanceWRTCamera * LLPipeline::farDistanceScale() - (was_full ? 3.f : 0.f);
         if (distance < near_distance)
         {
             preference = 1.0e12f + (near_distance - distance) * 1.0e6f;      // above any pixel area, nearest first
@@ -15542,6 +15548,12 @@ void LLVOAvatar::cullAvatarsByPixelArea()
         });
 
     // Update the avatars that have changed status
+    // <FS> RK_VK_DIAG: how often a visible avatar changes between a full avatar (rank within the cap) and an impostor, over 10 s (the A/B of RK_VK_IMPHYST)
+    static std::unordered_map<const LLCharacter*, U8> was_full_map;       // bit 0: a full avatar (rank within the cap), bit 1: its drawable was visible
+    static U32 flips = 0, flips_rank = 0, ranked_sum = 0, rank_frames = 0;
+    static F64 flips_since = 0.0;
+    std::unordered_map<const LLCharacter*, U8> now_full_map;
+    static const bool impvis_mvisible = !getenv("RK_VK_IMPVIS") || atoi(getenv("RK_VK_IMPVIS")) != 0;
     U32 rank = 2; // Rank 1 is reserved for self.
     for (LLCharacter* character : LLCharacter::sInstances)
     {
@@ -15559,7 +15571,10 @@ void LLVOAvatar::cullAvatarsByPixelArea()
         {
             inst->setVisibilityRank(1);
         }
-        else if (inst->mDrawable.notNull() && inst->mDrawable->isVisible())
+        // <FS> the same visibility updateVisibility ranked it by (mVisible: recently visible, or listed by the owner): the strict isVisible() of the last cull was one frame behind and, in a still scene,
+        // toggled for some avatars from frame to frame; each toggle moved every avatar behind it by one rank and flipped the one at the cap between a full avatar and an impostor (100 flips a second
+        // in a still London crowd of 90, run imp-off 2026-11-20). RK_VK_IMPVIS=0 restores the strict test.
+        else if (inst->mDrawable.notNull() && (impvis_mvisible ? inst->mVisible : inst->mDrawable->isVisible()))
         {
             inst->setVisibilityRank(rank++);
         }
@@ -15567,6 +15582,37 @@ void LLVOAvatar::cullAvatarsByPixelArea()
         {
             inst->setVisibilityRank(sMaxNonImpostors * 5);
         }
+
+        if (!inst->isSelf() && sLimitNonImpostors)
+        {
+            const bool visible_now = inst->mDrawable.notNull() && (impvis_mvisible ? inst->mVisible : inst->mDrawable->isVisible());
+            const U8 state = (inst->mVisibilityRank <= sMaxNonImpostors ? 1 : 0) | (visible_now ? 2 : 0);
+            now_full_map[character] = state;
+            const auto before = was_full_map.find(character);
+            if (before != was_full_map.end() && (before->second & 1) != (state & 1))
+            {
+                ++flips;
+                if (((before->second ^ state) & 2) == 0)
+                {
+                    ++flips_rank;          // visible in both frames: the rank order itself changed
+                }
+            }
+        }
+    }
+    was_full_map.swap(now_full_map);
+    ++rank_frames;
+    ranked_sum += (U32)was_full_map.size();
+    if (rk_diag_on() && gFrameTimeSeconds - flips_since >= 10.0)
+    {
+        const F64 span = gFrameTimeSeconds - flips_since;
+        LL_INFOS("AvImpostor") << "avatar full/impostor flips in the last " << (S32)span << " s: " << flips << " (" << flips_rank << " with the avatar visible in both frames, the rest by a change of the visible flag), "
+                               << flips / span << " per s; avatars ranked per frame " << (rank_frames ? (F32)ranked_sum / rank_frames : 0.f) << ", cap " << sMaxNonImpostors << ", hysteresis "
+                               << ((!getenv("RK_VK_IMPHYST") || atoi(getenv("RK_VK_IMPHYST")) != 0) ? "on" : "off") << ", rank visibility test " << (impvis_mvisible ? "mVisible" : "strict isVisible") << LL_ENDL;
+        flips = 0;
+        flips_rank = 0;
+        ranked_sum = 0;
+        rank_frames = 0;
+        flips_since = gFrameTimeSeconds;
     }
 
     // runway - this doesn't really detect gray/grey state.
