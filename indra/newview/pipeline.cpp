@@ -21217,6 +21217,19 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
     a.mJitterY = LLViewerCamera::sJitterPixels.y;
     a.mCameraNear = LLViewerCamera::getInstance()->getNear();
     a.mCameraFar = LLViewerCamera::getInstance()->getFar();
+    // <FS> the depth buffer holds depth of the projection the world was drawn with (LLViewerWindow::setup3DRender: far MAX_FAR_CLIP * 2 = 1024), not of the culling camera's far (the draw distance:
+    // 256, 96 on a short one). The upscaler turns depth into distances with these two numbers; told the wrong far it reads a surface 300 m away as 155 m and tells far surfaces apart badly (far shimmer
+    // under FSR, the user 2026-11-20). Both come back from the GL projection matrix: c = -(f + n) / (f - n), d = -2 f n / (f - n)  =>  n = d / (c - 1), f = d / (c + 1). RK_VK_UPSCALE_CAMFAR=0 keeps the camera's.
+    static const bool use_projection_range = !getenv("RK_VK_UPSCALE_CAMFAR") || atoi(getenv("RK_VK_UPSCALE_CAMFAR")) != 0;
+    {
+        const F32 c = LLViewerCamera::sUnjitteredProjection[2][2], d = LLViewerCamera::sUnjitteredProjection[3][2];
+        const F32 near_p = d / (c - 1.f), far_p = d / (c + 1.f);
+        if (use_projection_range && near_p > 0.f && far_p > near_p && far_p < 100000.f)
+        {
+            a.mCameraNear = near_p;
+            a.mCameraFar = far_p;
+        }
+    }
     a.mCameraFovY = LLViewerCamera::getInstance()->getView();
     a.mFrameTimeMs = llclamp(gFrameIntervalSeconds.value() * 1000.f, 1.f, 100.f);
     // the history is useless after a pause in rendering or a resize
