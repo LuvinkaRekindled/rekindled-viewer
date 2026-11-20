@@ -141,6 +141,8 @@ public:
     static void addPickable(std::set<LLViewerObject*> &pick_list);
     static void reshape();
     static void setDisplayText(bool flag) { sDisplayText = flag ; }
+    // <FS> true while name tags are shown and there are some: the last pass before the screen then makes the depth they are tested against without the upscaler's jitter
+    static bool hasTextObjects() { return sDisplayText && !sTextObjects.empty(); }
 
 protected:
     LLHUDNameTag(const U8 type);

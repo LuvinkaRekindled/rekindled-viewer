@@ -22505,9 +22505,32 @@ void LLPipeline::renderFinalize()
         static const LLStaticHashedString depth_texel("depth_texel");
         static const LLStaticHashedString depth_radius("depth_radius");
         static LLCachedControl<S32> overlay_depth_mode(gSavedSettings, "RKOverlayDepthMode", 4);
-        const bool overlay = overlay_depth_mode() > 0 && LLViewerCamera::sJitterInEffect && !gCubeSnapshot && !LLSelectMgr::getInstance()->getSelection()->isEmpty();
+        // <FS> name tags are drawn after the upscale and tested against this depth too (the user 2026-11-20: a tag shimmers where an avatar or object is in front of it, also under DLSS): without the compensation the
+        // edge of the occluder moved with the jitter of the render-size depth, and the tag's pixels next to it passed or failed the test frame by frame. RK_VK_TAGDEPTH=0 keeps the selection as the only reason.
+        static const bool tag_depth = !getenv("RK_VK_TAGDEPTH") || atoi(getenv("RK_VK_TAGDEPTH")) != 0;
+        const bool selected = !LLSelectMgr::getInstance()->getSelection()->isEmpty();
+        // with a selection the outlines' mode (RKOverlayDepthMode); with name tags only RKTagDepthMode (default 2: the farthest of the 5x5 render pixels around: behind leaves and other alpha cut outs, whose
+        // holes change with the jitter, the tag then stays visible more steadily; the user 2026-11-20: better than the bilinear mode 4, not yet perfect)
+        static LLCachedControl<S32> tag_depth_mode(gSavedSettings, "RKTagDepthMode", 2);
+        const S32 depth_mode = selected ? (S32)overlay_depth_mode() : (S32)tag_depth_mode();
+        const bool overlay = depth_mode > 0 && LLViewerCamera::sJitterInEffect && !gCubeSnapshot && (selected || (tag_depth && LLHUDNameTag::hasTextObjects()));
+        if (rk_diag_on())
+        {
+            static U32 frames = 0, frames_overlay = 0, frames_tags_only = 0;
+            static F64 since = 0.0;
+            ++frames;
+            frames_overlay += overlay ? 1 : 0;
+            frames_tags_only += (overlay && !selected) ? 1 : 0;
+            if (gFrameTimeSeconds - since >= 10.0)
+            {
+                LL_INFOS("UiDepth") << "overlay depth (jitter compensated) in the last 10 s: " << frames_overlay << " of " << frames << " frames, " << frames_tags_only << " only for name tags (RK_VK_TAGDEPTH "
+                                    << (tag_depth ? "on" : "off") << ")" << LL_ENDL;
+                frames = frames_overlay = frames_tags_only = 0;
+                since = gFrameTimeSeconds;
+            }
+        }
         gDeferredPostNoDoFNoiseProgram.uniform2f(depth_texel, overlay ? 1.f / (F32)mRT->deferredScreen.getWidth() : 0.f, overlay ? 1.f / (F32)mRT->deferredScreen.getHeight() : 0.f);
-        gDeferredPostNoDoFNoiseProgram.uniform1f(depth_radius, overlay_depth_mode() == 3 ? -1.f : (overlay_depth_mode() == 2 ? 2.f : (overlay_depth_mode() >= 4 ? 0.f : 1.f)));
+        gDeferredPostNoDoFNoiseProgram.uniform1f(depth_radius, depth_mode == 3 ? -1.f : (depth_mode == 2 ? 2.f : (depth_mode >= 4 ? 0.f : 1.f)));
         static const LLStaticHashedString depth_jitter("depth_jitter");
         gDeferredPostNoDoFNoiseProgram.uniform2f(depth_jitter, LLViewerCamera::sJitterPixels.x / (F32)mRT->deferredScreen.getWidth(), LLViewerCamera::sJitterPixels.y / (F32)mRT->deferredScreen.getHeight());
     }

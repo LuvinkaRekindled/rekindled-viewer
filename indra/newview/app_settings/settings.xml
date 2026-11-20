@@ -2832,6 +2832,17 @@
       <key>Value</key>
       <integer>4</integer>
     </map>
+    <key>RKTagDepthMode</key>
+    <map>
+      <key>Comment</key>
+      <string>Depth that name tags (drawn after the upscale) are tested against while nothing is selected: 1 farthest of 3x3 render pixels plus margin, 2 the same with 5x5, 3 no depth test, 4 the bilinear unjittered depth, 0 the scene depth as it is (jittered). Behind leaves and other cut out alpha, 2 keeps the tag steadier.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>2</integer>
+    </map>
     <key>RKVkDLSSQuality</key>
     <map>
       <key>Comment</key>
