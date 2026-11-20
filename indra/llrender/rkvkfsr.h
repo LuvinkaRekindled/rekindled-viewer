@@ -21,6 +21,8 @@ namespace RKVkFsr
     // after the device exists: sets up the SDK backend; false (and a log line saying why) if FSR cannot be used here
     bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device);
     bool ready();
+    // true once a context could not be made on this device (the first upscale found out): the viewer then goes back to the window size
+    bool failed();
     void shutdown();
 
     // Records the upscale into 'cmd'. The images must be in the layouts inputLayout()/outputLayout() name. Makes the FSR context on first use and whenever the sizes change.

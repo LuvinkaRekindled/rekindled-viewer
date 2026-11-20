@@ -28,6 +28,7 @@ void RKVkBridge::holdFrame(bool) {}
 void RKVkBridge::setPresentPreference(S32, bool) {}
 void RKVkBridge::snapshotBoundary(S32) {}
 bool RKVkBridge::upscaleAvailable() { return false; }
+bool RKVkBridge::upscalerFailed() { return false; }
 S32 RKVkBridge::neuralRenderMode() { return 0; }
 bool RKVkBridge::neuralRenderAvailable() { return false; }
 void RKVkBridge::setUpscaleLodBias(float) {}
@@ -1244,6 +1245,11 @@ void RKVkBridge::setUpscaleLodBias(float bias)
 bool RKVkBridge::upscaleAvailable()
 {
     return sMirror.mReady && RKVkUpscale::ready();
+}
+
+bool RKVkBridge::upscalerFailed()
+{
+    return RKVkUpscale::failed();
 }
 
 bool RKVkBridge::denoiseAvailable()

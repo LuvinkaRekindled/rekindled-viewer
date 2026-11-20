@@ -1353,7 +1353,7 @@ void LLPipeline::refreshCachedSettings()
 // [/SL:KB]
     // DLSS can only run if the viewer started with it on (the upscaler and its Vulkan extensions are set up then; RK_VK_DLSS is set at start-up by RKVkDLSS)
     static const bool dlss_started = getenv("RK_VK_DLSS") != nullptr;
-    sDLSS = dlss_started && gSavedSettings.getBOOL("RKVkDLSS");
+    sDLSS = dlss_started && gSavedSettings.getBOOL("RKVkDLSS") && !RKVkBridge::upscalerFailed();
     if (sDLSS)
     {
         // the world is drawn smaller and the upscaler brings it back to the window size
@@ -22264,6 +22264,16 @@ void LLPipeline::renderFinalize()
 
     static LLCachedControl<bool> has_hdr(gSavedSettings, "RenderHDREnabled", true);
     bool hdr = gDeviceCaps.mApiVersionNumber > 4.05f && has_hdr();
+
+    if (sDLSS && RKVkBridge::upscalerFailed())
+    {
+        // <FS> the upscaler found out (on its first frame) that it cannot make its context on this device: the world goes back to the window size from the next frame (the screen buffers are made
+        // again), instead of a black picture that nothing upscales
+        LL_WARNS("VkUpscale") << "the upscaler failed: the world is drawn at the window size from now on" << LL_ENDL;
+        sDLSS = false;
+        refreshCachedSettings();
+        gResizeScreenTexture = true;
+    }
 
     const bool dlss = sDLSS && !gCubeSnapshot && mMotionMap.isComplete() && mUpscaledMap.isComplete() && RKVkBridge::upscaleAvailable()
                       && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;

@@ -43,6 +43,8 @@ namespace RKVkUpscale
     // after the device exists: starts the backend; false (and log lines saying why) if it cannot be used here
     bool init(VkInstance instance, VkPhysicalDevice physical, VkDevice device);
     bool ready();
+    // the upscaler was started but could not make its context on this device (see RKVkFsr::failed)
+    bool failed();
     void shutdown();
 
     // the active backend's name ("FSR", "none")

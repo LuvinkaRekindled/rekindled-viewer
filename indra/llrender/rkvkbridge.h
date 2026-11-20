@@ -142,6 +142,8 @@ namespace RKVkBridge
     void denoiseReflections(const DenoiseArgs& args);
     // DLSS is initialised and usable (decided when the Vulkan device was created)
     bool upscaleAvailable();
+    // <FS> the upscaler started but could not make its context on this device (a pipeline the driver refuses): the viewer goes back to drawing the world at the window size
+    bool upscalerFailed();
     // <FS> the value of RK_VK_DLSS_NR (0 unset, 1 probe, 2 evaluate, 3 show), and whether the feature can run (probe said yes, nothing failed since)
     S32 neuralRenderMode();
     bool neuralRenderAvailable();

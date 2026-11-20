@@ -66,6 +66,7 @@ bool init(VkInstance, VkPhysicalDevice, VkDevice)
     return false;
 }
 bool ready() { return false; }
+bool failed() { return false; }
 void shutdown() {}
 bool evaluate(VkCommandBuffer, const RKVkUpscale::Params&) { return false; }
 
@@ -75,6 +76,7 @@ namespace
 {
 
 bool gReady = false;
+bool gFailed = false;       // a context could not be made (a pipeline the driver refuses, ...): the viewer is told, it draws at the window size from then on
 VkInstance gInstance = VK_NULL_HANDLE;
 VkPhysicalDevice gPhysical = VK_NULL_HANDLE;
 VkDevice gDevice = VK_NULL_HANDLE;
@@ -229,7 +231,15 @@ Ctx* context_for(U32 flags, const RKVkUpscale::Params& p)
     create.fpMessage = [](FfxMsgType type, const wchar_t* message)
     {
         char text[512] = {};
+#if LL_WINDOWS
         WideCharToMultiByte(CP_UTF8, 0, message, -1, text, (int)sizeof(text) - 1, nullptr, nullptr);
+#else
+        // (the SDK's messages are ASCII: the characters of the 32 bit wchar_t below 128 as they are, the others as '?')
+        for (size_t i = 0; message && message[i] && i + 1 < sizeof(text); ++i)
+        {
+            text[i] = message[i] < 128 ? (char)message[i] : '?';
+        }
+#endif
         LL_INFOS("VkFsr") << "FSR " << (type == FFX_MESSAGE_TYPE_ERROR ? "error: " : "warning: ") << text << LL_ENDL;
     };
 
@@ -315,6 +325,11 @@ bool ready()
     return gReady;
 }
 
+bool failed()
+{
+    return gFailed;
+}
+
 void shutdown()
 {
     if (!gReady)
@@ -353,6 +368,11 @@ bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
     Ctx* context = context_for(flags, p);
     if (!context)
     {
+        if (!gFailed)
+        {
+            gFailed = true;
+            LL_WARNS("VkFsr") << "FSR cannot make its context on this device: the upscaler is given up, the world is drawn at the window size instead" << LL_ENDL;
+        }
         return false;
     }
     context->mLastFrame = Context::instance().getFrameNumber();

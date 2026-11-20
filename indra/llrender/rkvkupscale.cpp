@@ -85,6 +85,11 @@ bool ready()
     return gFsr;
 }
 
+bool failed()
+{
+    return RKVkFsr::failed();
+}
+
 void shutdown()
 {
     RKVkNgx::shutdown();
