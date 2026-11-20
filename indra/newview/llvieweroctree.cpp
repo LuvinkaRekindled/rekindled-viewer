@@ -1409,6 +1409,20 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
     {
         return;
     }
+    // <FS> 2026-11-20: the root of an octree is never occlusion culled (the walk's earlyFail says so, and the re-test of held groups skips it). A verdict for its box hid the whole partition behind a wall: two agreeing
+    // "occluded" verdicts marked the root and, through the subtree state, every group under it, and nobody asked again (the root is skipped, the groups under it are skipped because their parent is occluded): the Linden
+    // trees of the house's garden stayed gone after the camera came out, until an object was added (hizEntryMoved clears the ancestors). The root asks for no box and holds no occluded state.
+    if (!mOctreeNode || !mOctreeNode->getParent())
+    {
+        mHizSerial = 0;
+        mHizStale = false;
+        mHizOccludedOnce = false;
+        if (isOcclusionState(LLOcclusionCullingGroup::OCCLUDED))
+        {
+            clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+        }
+        return;
+    }
     //move row().bounds to the agent space if necessary
     LLVector4a bounds[2];
     bounds[0] = row().bounds[0];
@@ -1472,6 +1486,10 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
 {
     const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;        // the occlusion state arrays are per camera, the boxes were the world camera's
+    if (occluded && (!mOctreeNode || !mOctreeNode->getParent()))
+    {
+        occluded = false;       // (the root is never occlusion culled, see hizCollect: a verdict still in flight from before is read as visible)
+    }
     if (occluded)
     {
         // <FS> plan 8.38: occluded on two agreeing verdicts, so one wrong or stale answer never hides the group; visible on one
