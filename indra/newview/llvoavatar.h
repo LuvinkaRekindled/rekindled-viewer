@@ -370,7 +370,8 @@ public:
     bool            flatJoint(S32 joint_num, const LLVector3*& pos, const LLQuaternion*& rot, const LLVector3*& scale, bool& scale_child_offset) const;      // the joint's world position, rotation, own scale and scale-child-offset flag from the array the pass made this frame
     const F32*      flatWorld(S32 joint_num) const;     // the joint's world matrix (16 floats) from the array when it was filled this frame, else null
     // <FS> PLAN-avatars.md stage C: the plain rigid attachments of the avatar as a list of rows, built when the
-    // attachment set changes (LLViewerJointAttachment::sRevision) and swept every 32 frames, not found by walking the attachment points and testing each object every frame
+    // attachment set changes (LLViewerJointAttachment::sRevision), when the flexible or animated flag of an attachment or the children of its linkset change (markAttRowsStale) and when the rigged state of a drawable
+    // differs from the row's (the loop checks it each frame), not found by walking the attachment points and testing each object every frame
     struct AttRow
     {
         LLViewerObject* mObject = nullptr;
@@ -380,8 +381,10 @@ public:
         bool mRigged = false;       // stage C4: a rigged attachment (drawn with the avatar's joints, held at the avatar's box), moved by the rows with the rigged rule
     };
     std::vector<AttRow> mAttRows;
-    U32 mAttRowsRevision = ~0u;
+    std::atomic<U32> mAttRowsRevision{ ~0u };       // (~0: the rows are made again at the next visit; written by the loop and, for a change of an attachment, by markAttRowsStale on the main thread)
     void            rebuildAttRows();
+    void            markAttRowsStale() { mAttRowsRevision.store(~0u, std::memory_order_relaxed); }       // <FS> 2026-11-20: an attachment's flexible or animated flag, or its children, changed (LLViewerObject::parameterChanged, addChild, removeChild)
+
     static void     sPalGpuFlush(U32 frame);        // <FS> PLAN-avatars-100.md D3 stage 3a (RK_VK_PALGPU=1): after the palette jobs, the main thread sends what the GPU needs to make the palettes (skin blocks, the frame's entries and world arrays)
     static void     sPalJobsJoin();                 // <FS> the palette jobs of the last batch run beside the rest of the idle (RK_VK_PALJOIN=0: the old joined launch): the main thread joins them here, before the frame count advances
     static void     sPalJobDone();                  // (the palette jobs of a batch are done: remember the joint touch serial; a joint touched after it makes the job's palettes suspect)

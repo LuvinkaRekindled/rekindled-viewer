@@ -4131,7 +4131,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         const bool rows_cons = getOverallAppearance() == AOA_NORMAL;        // (a jellydolled or otherwise reduced avatar keeps the exact boxes of its attachments' bridges)
         if (rows_run)
         {
-            if (mAttRowsRevision != LLViewerJointAttachment::sRevision || ((rigid_frame + mID.mData[0]) & 31) == 0)
+            if (mAttRowsRevision != LLViewerJointAttachment::sRevision)
             {
                 rebuildAttRows();
             }
@@ -4144,7 +4144,9 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                 LLViewerObject* obj = row.mObject;
                 LLDrawable* drawable = row.mDrawable;
                 LLSpatialBridge* bridge = row.mBridge;
-                if (obj->isDead() || obj->mDrawable.get() != drawable || drawable->getSpatialBridge() != bridge || !row.mPoint->getValid() || obj->isSelected())
+                // (2026-11-20: also when the drawable's rigged state is not the one the row was made with: a mesh whose skin came after the rows were made. This was found by the sweep every 32 frames before)
+                if (obj->isDead() || obj->mDrawable.get() != drawable || drawable->getSpatialBridge() != bridge || !row.mPoint->getValid() || obj->isSelected()
+                    || row.mRigged != drawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
                 {
                     mAttRowsRevision = ~0u;     // (the set changed under the rows, or the object was selected: the walk below does this frame's, the rows are made again at the next visit)
                     continue;

@@ -982,6 +982,11 @@ void LLViewerObject::addChild(LLViewerObject *childp)
         {
             mSeatCount++;
         }
+        // <FS> 2026-11-20: a child of an attachment: the rows of the avatar's attachments (LLVOAvatar::AttRow) say whether a linkset is plain, children included
+        if (LLVOAvatar* avatar = getAvatarAncestor())
+        {
+            avatar->markAttRowsStale();
+        }
     }
 
     mExtrap.changedlink(*this); // <FS:JN> if linking update, check for sitters
@@ -1016,6 +1021,11 @@ void LLViewerObject::removeChild(LLViewerObject *childp)
             if (childp->isAvatar())
             {
                 mSeatCount--;
+            }
+            // <FS> 2026-11-20: see addChild
+            if (LLVOAvatar* avatar = getAvatarAncestor())
+            {
+                avatar->markAttRowsStale();
             }
             break;
         }
@@ -6966,6 +6976,15 @@ void LLViewerObject::parameterChanged(U16 param_type, bool local_origin)
 
 void LLViewerObject::parameterChanged(U16 param_type, LLNetworkData* data, bool in_use, bool local_origin)
 {
+    // <FS> 2026-11-20: whether an attachment is plain (LLVOAvatar::AttRow, att_rowable) depends on its flexible and animated flags: every change of an extra parameter, from the simulator or from the viewer, comes
+    // through here, so the avatar's rows are made again when one of those two changes (they were looked at again every 32 frames before)
+    if (param_type == LLNetworkData::PARAMS_FLEXIBLE || param_type == LLNetworkData::PARAMS_EXTENDED_MESH)
+    {
+        if (LLVOAvatar* avatar = getAvatarAncestor())
+        {
+            avatar->markAttRowsStale();
+        }
+    }
     if (local_origin)
     {
         // *NOTE: Do not send the render material ID in this way as it will get
