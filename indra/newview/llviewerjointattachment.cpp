@@ -54,8 +54,6 @@ extern LLPipeline gPipeline;
 //-----------------------------------------------------------------------------
 // LLViewerJointAttachment()
 //-----------------------------------------------------------------------------
-U32 LLViewerJointAttachment::sRevision = 0;
-
 LLViewerJointAttachment::LLViewerJointAttachment() :
     mVisibleInFirst(false),
     mGroup(0),
@@ -65,7 +63,6 @@ LLViewerJointAttachment::LLViewerJointAttachment() :
     mValid = false;
     mUpdateXform = false;
     mAttachedObjects.clear();
-    ++sRevision;
 }
 
 //-----------------------------------------------------------------------------
@@ -217,7 +214,6 @@ bool LLViewerJointAttachment::addObject(LLViewerObject* object)
 //  }
 
     mAttachedObjects.push_back(object);
-    ++sRevision;
     setupDrawable(object);
 
     if (mIsHUDAttachment)
@@ -269,7 +265,6 @@ void LLViewerJointAttachment::removeObject(LLViewerObject *object)
     setAttachmentVisibility(true);
 
     mAttachedObjects.erase(iter);
-    ++sRevision;
     if (object->mDrawable.notNull())
     {
         //if object is active, make it static

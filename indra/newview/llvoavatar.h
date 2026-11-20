@@ -384,7 +384,7 @@ public:
     bool            flatJoint(S32 joint_num, const LLVector3*& pos, const LLQuaternion*& rot, const LLVector3*& scale, bool& scale_child_offset) const;      // the joint's world position, rotation, own scale and scale-child-offset flag from the array the pass made this frame
     const F32*      flatWorld(S32 joint_num) const;     // the joint's world matrix (16 floats) from the array when it was filled this frame, else null
     // <FS> PLAN-avatars.md stage C: the plain rigid attachments of the avatar as a list of rows, built when the
-    // attachment set changes (LLViewerJointAttachment::sRevision), when the flexible or animated flag of an attachment or the children of its linkset change (markAttRowsStale) and when the rigged state of a drawable
+    // attachment set changes (mAttachmentRevision), when the flexible or animated flag of an attachment or the children of its linkset change (markAttRowsStale) and when the rigged state of a drawable
     // differs from the row's (the loop checks it each frame), not found by walking the attachment points and testing each object every frame
     struct AttRow
     {
@@ -395,6 +395,7 @@ public:
         bool mRigged = false;       // stage C4: a rigged attachment (drawn with the avatar's joints, held at the avatar's box), moved by the rows with the rigged rule
     };
     std::vector<AttRow> mAttRows;
+    std::atomic<U32> mAttachmentRevision{ 0 };      // <FS> 2026-11-20: one more each time an object is attached to or detached from THIS avatar (LLVOAvatar::attachObject, detachObject); it was one counter (LLViewerJointAttachment::sRevision) bumped for every avatar's changes. Read by the rows, the static skip check and the own avatar's HUD reset
     std::atomic<U32> mAttRowsRevision{ ~0u };       // (~0: the rows are made again at the next visit; written by the loop and, for a change of an attachment, by markAttRowsStale on the main thread)
     void            rebuildAttRows();
     void            markAttRowsStale() { mAttRowsRevision.store(~0u, std::memory_order_relaxed); }       // <FS> 2026-11-20: an attachment's flexible or animated flag, or its children, changed (LLViewerObject::parameterChanged, addChild, removeChild)

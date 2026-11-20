@@ -1004,13 +1004,13 @@ bool LLVOAvatarSelf::updateCharacter(LLAgent &agent)
         static const bool hud_event = !getenv("RK_VK_HUDEVENT") || atoi(getenv("RK_VK_HUDEVENT")) != 0;
         static U64 hud_moved = 0, hud_kept = 0;
         const U32 frame = (U32)LLFrameTimer::getFrameCount();
-        if (!hud_event || aspect != mHudAspect || LLViewerJointAttachment::sRevision != mHudRevision || frame - mHudResetFrame >= 240)
+        if (!hud_event || aspect != mHudAspect || mAttachmentRevision.load(std::memory_order_relaxed) != mHudRevision || frame - mHudResetFrame >= 240)
         {
             mScreenp->setScale(scale);
             mScreenp->updateWorldMatrixChildren();
             resetHUDAttachments();
             mHudAspect = aspect;
-            mHudRevision = LLViewerJointAttachment::sRevision;
+            mHudRevision = mAttachmentRevision.load(std::memory_order_relaxed);
             mHudResetFrame = frame;
             ++hud_moved;
         }

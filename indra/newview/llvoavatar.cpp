@@ -3986,7 +3986,7 @@ struct AvJobLedger
 void LLVOAvatar::rebuildAttRows()
 {
     mAttRows.clear();
-    mAttRowsRevision = LLViewerJointAttachment::sRevision;
+    mAttRowsRevision = mAttachmentRevision.load(std::memory_order_relaxed);
     U32 rigged_order = 0;
     for (const auto& [attachment_point_id, attachment] : mAttachmentPoints)
     {
@@ -4008,7 +4008,7 @@ void LLVOAvatar::rebuildAttRows()
                 // <FS> stage C4: every rigged attachment of the avatar, in the order the attachment loop visits them, gets its place in the draw order of the avatar's rigged groups here, once for this attachment set
                 // (the walk used to count them again every frame); the rows and the walk both stamp the groups with it
                 drawable->mAttOrder = rigged_order++;
-                drawable->mAttOrderRev = LLViewerJointAttachment::sRevision;
+                drawable->mAttOrderRev = mAttRowsRevision.load(std::memory_order_relaxed);        // (the revision the rows were made at, set at the top of this function)
             }
             if (!bridge || !att_rowable(attached_object.get()))
             {
@@ -4093,7 +4093,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         bool skip_rigged_this_frame = false;
         if (skip_static_rigged && !isSelf() && !attachment_selected && mDrawable.notNull())
         {
-            const U32 attachment_count = LLViewerJointAttachment::sRevision;      // (was: the sum of the sizes of the lists of all 55 points, every frame)
+            const U32 attachment_count = mAttachmentRevision.load(std::memory_order_relaxed);      // (was: the sum of the sizes of the lists of all 55 points, every frame; then one counter for every avatar)
             const LLVector4a* box = mDrawable->getSpatialExtents();
             const F32* box_min = box[0].getF32ptr();
             const F32* box_max = box[1].getF32ptr();
@@ -4148,7 +4148,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         const bool rows_cons = getOverallAppearance() == AOA_NORMAL;        // (a jellydolled or otherwise reduced avatar keeps the exact boxes of its attachments' bridges)
         if (rows_run)
         {
-            if (mAttRowsRevision != LLViewerJointAttachment::sRevision)
+            if (mAttRowsRevision != mAttachmentRevision.load(std::memory_order_relaxed))
             {
                 rebuildAttRows();
             }
@@ -4656,7 +4656,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
 
                             // <FS> the place of this attachment in the draw order of the avatar's rigged groups is numbered with the rows (rebuildAttRows, mAttOrder) and read from the owner of a group when the lists
                             // are made (rk_rigged_group_owner): nothing is written on the groups. An attachment that is not numbered yet gets the rows made again.
-                            if (rows_run && attached_object->mDrawable->mAttOrderRev != LLViewerJointAttachment::sRevision)
+                            if (rows_run && attached_object->mDrawable->mAttOrderRev != mAttachmentRevision.load(std::memory_order_relaxed))
                             {
                                 mAttRowsRevision = ~0u;
                             }
@@ -10919,6 +10919,7 @@ const LLViewerJointAttachment *LLVOAvatar::attachObject(LLViewerObject *viewer_o
                            << (item ? item->getName() : "UNKNOWN") << " id " << item_id << LL_ENDL;
         return 0;
     }
+    mAttachmentRevision.fetch_add(1, std::memory_order_relaxed);        // <FS> 2026-11-20: this avatar's attachment set changed (it was one counter for every avatar)
 
     if (!viewer_object->isAnimatedObject())
     {
@@ -11281,6 +11282,7 @@ bool LLVOAvatar::detachObject(LLViewerObject *viewer_object)
             cleanupAttachedMesh(viewer_object);
 
             attachment->removeObject(viewer_object);
+            mAttachmentRevision.fetch_add(1, std::memory_order_relaxed);        // <FS> 2026-11-20: see attachObject
             if (!is_animated_object)
             {
                 updateAttachmentOverrides();
