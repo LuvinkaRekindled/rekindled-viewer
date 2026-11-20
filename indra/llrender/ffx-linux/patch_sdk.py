@@ -67,11 +67,34 @@ if "(Linux build patch) aligned array" not in text:
 else:
     print("already patched: ffx_vk.cpp (aligned arrays)")
 
+# 3b. a pipeline whose shader blob is empty is refused with an error instead of being handed to the driver (RADV crashes on a zero size shader module; the FSR fallback only works on an error).
+patch(
+    vk,
+    "    backendInterface->fpGetPermutationBlobByIndex(effect, pass, FFX_BIND_COMPUTE_SHADER_STAGE, permutationOptions, &shaderBlob);\n"
+    "    FFX_ASSERT(shaderBlob.data && shaderBlob.size);\n",
+    "    backendInterface->fpGetPermutationBlobByIndex(effect, pass, FFX_BIND_COMPUTE_SHADER_STAGE, permutationOptions, &shaderBlob);\n"
+    "    FFX_ASSERT(shaderBlob.data && shaderBlob.size);\n"
+    "    if (!shaderBlob.data || !shaderBlob.size)  // (Linux build patch) empty blob\n"
+    "        return FFX_ERROR_BACKEND_API_ERROR;\n",
+)
+
 # 4. (only with the argument "trace") every "return FFX_ERROR_BACKEND_API_ERROR;" of the Vulkan backend prints its line to stderr: a diagnostic for a device on which an FSR context cannot be made.
 if len(sys.argv) > 2 and sys.argv[2] == "trace":
     with open(vk, "r", newline="") as f:
         text = f.read()
     if "RK_FFX_TRACE_ERR" not in text:
+        # the Vulkan result, the effect, the pass and the permutation of a shader module or compute pipeline the driver refuses
+        shader_old = "if (backendContext->vkFunctionTable.vkCreateShaderModule(backendContext->device, &shaderModuleCreateInfo, nullptr, &shaderModule) != VK_SUCCESS) {"
+        shader_new = ("VkResult rkShaderRes = backendContext->vkFunctionTable.vkCreateShaderModule(backendContext->device, &shaderModuleCreateInfo, nullptr, &shaderModule);\n"
+                      "    if (rkShaderRes != VK_SUCCESS) {\n"
+                      "        fprintf(stderr, \"FFX_VK_SHADER_MODULE_RESULT %d size %u effect %d pass %d permutation 0x%x\\n\", (int)rkShaderRes, (unsigned)shaderBlob.size, (int)effect, (int)pass, (unsigned)permutationOptions);")
+        pipe_old = "if (backendContext->vkFunctionTable.vkCreateComputePipelines(backendContext->device, nullptr, 1, &pipelineCreateInfo, nullptr, &computePipeline) != VK_SUCCESS) {"
+        pipe_new = ("fprintf(stderr, \"FFX_VK_CREATE_PIPELINE effect %d pass %d permutation 0x%x wave64 %d shader bytes %u\\n\", (int)effect, (int)pass, (unsigned)permutationOptions, (int)isWave64, (unsigned)shaderBlob.size); fflush(stderr);\n"
+                    "    VkResult rkPipeRes = backendContext->vkFunctionTable.vkCreateComputePipelines(backendContext->device, nullptr, 1, &pipelineCreateInfo, nullptr, &computePipeline);\n"
+                    "    if (rkPipeRes != VK_SUCCESS) {\n"
+                    "        fprintf(stderr, \"FFX_VK_PIPELINE_RESULT %d effect %d pass %d permutation 0x%x\\n\", (int)rkPipeRes, (int)effect, (int)pass, (unsigned)permutationOptions);")
+        assert text.count(shader_old) == 1 and text.count(pipe_old) == 1, "the shader module / compute pipeline calls: %d / %d" % (text.count(shader_old), text.count(pipe_old))
+        text = text.replace(shader_old, shader_new).replace(pipe_old, pipe_new)
         text, n = re.subn(r"return FFX_ERROR_BACKEND_API_ERROR;", "return RK_FFX_TRACE_ERR;", text)
         text = "#include <cstdio>\n#define RK_FFX_TRACE_ERR (fprintf(stderr, \"FFX_VK_ERROR line %d\\n\", __LINE__), FFX_ERROR_BACKEND_API_ERROR)\n" + text
         with open(vk, "w", newline="") as f:

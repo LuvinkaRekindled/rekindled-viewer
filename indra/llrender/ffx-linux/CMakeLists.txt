@@ -53,6 +53,8 @@ ffx_lib(ffx_backend_vk_x64
   "${FFX_SDK_DIR}/src/backends/shared/blob_accessors/ffx_denoiser_shaderblobs.cpp"
   "${FFX_SDK_DIR}/src/backends/vk/ffx_vk.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/ffx_linux_stubs.cpp")
+# ffx_shader_blobs.cpp has one case per effect behind these macros; without them every effect gets an empty shader blob (NVIDIA refuses the empty module: FSR does nothing; RADV crashes on it)
+target_compile_definitions(ffx_backend_vk_x64 PRIVATE FFX_FSR3UPSCALER FFX_DENOISER)
 
 ffx_lib(ffx_fsr3upscaler_x64
   ${FFX_SHARED_SOURCES}
