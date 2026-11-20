@@ -4026,6 +4026,43 @@ static void rk_stamp_rigged_group(LLVOAvatar* avatar, LLDrawable* drawable, LLSp
     }
 }
 
+// <FS> 2026-11-20 (the user: the hair's outline cut into the pink shell on a first load, gone after it was attached again): an attachment is not one spatial group. A rigged linkset (the hair of 89 prims) is spread over
+// the groups of its bridge's octree, and only the group of the root drawable was stamped. The group with the hair's 85 drawables and its 29 rigged alpha faces had no avatar and the order 0, so the sort of the rigged
+// alpha groups (LLSpatialGroup::CompareRenderOrder: the avatar first, null before every other) drew it before the shell, and its depth cut the shell; the far avatar budget and the fringe pass distance skip, which read
+// the same stamp, did not see it either. Every group of the bridge's octree that holds a drawable gets the attachment's number now (a drawable of the group stands for it in the ledger: the op stamps that drawable's group).
+static void rk_stamp_bridge_groups(LLVOAvatar* avatar, LLSpatialBridge* bridge, const LLSpatialGroup* root_group, U32 order)
+{
+    if (!bridge || !bridge->mOctree)
+    {
+        return;
+    }
+    static thread_local std::vector<const OctreeNode*> stack;
+    stack.clear();
+    stack.push_back(bridge->mOctree);
+    while (!stack.empty())
+    {
+        const OctreeNode* node = stack.back();
+        stack.pop_back();
+        LLSpatialGroup* g = (LLSpatialGroup*)node->getListener(0);
+        if (g && g != root_group && !g->isDead() && g->getElementCount() > 0)
+        {
+            LLDrawable* d = nullptr;
+            for (LLSpatialGroup::element_iter it = g->getDataBegin(); it != g->getDataEnd() && !d; ++it)
+            {
+                d = (LLDrawable*)(*it)->getDrawable();
+            }
+            if (d)
+            {
+                rk_stamp_rigged_group(avatar, d, g, order);
+            }
+        }
+        for (U32 k = 0; k < node->getChildCount(); ++k)
+        {
+            stack.push_back(node->getChild(k));
+        }
+    }
+}
+
 void LLVOAvatar::idleUpdateAttachments(bool visible)
 {
         RK_CPU_ZONE("att: attachment loop (per avatar)");
@@ -4262,6 +4299,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                         if (group && drawable->mAttOrderRev == LLViewerJointAttachment::sRevision)
                         {
                             rk_stamp_rigged_group(this, drawable, group, drawable->mAttOrder);
+                            rk_stamp_bridge_groups(this, bridge, group, drawable->mAttOrder);
                         }
                     }
                     obj->updateText();
@@ -4654,6 +4692,10 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                                         group->mAvatarp = this;
                                         group->mRenderOrder = this_order;
                                     }
+                                }
+                                if (this_order != ~0u)
+                                {
+                                    rk_stamp_bridge_groups(this, bridge, group, this_order);        // (the other groups of the attachment's bridge octree: a linkset is spread over several)
                                 }
                             }
                         }
