@@ -15574,7 +15574,9 @@ void LLVOAvatar::cullAvatarsByPixelArea()
         // <FS> the same visibility updateVisibility ranked it by (mVisible: recently visible, or listed by the owner): the strict isVisible() of the last cull was one frame behind and, in a still scene,
         // toggled for some avatars from frame to frame; each toggle moved every avatar behind it by one rank and flipped the one at the cap between a full avatar and an impostor (100 flips a second
         // in a still London crowd of 90, run imp-off 2026-11-20). RK_VK_IMPVIS=0 restores the strict test.
-        else if (inst->mDrawable.notNull() && (impvis_mvisible ? inst->mVisible : inst->mDrawable->isVisible()))
+        // an animated object (control avatar) never gets an appearance message, so its mVisible is always false: it ranks by the recently visible rule updateVisibility starts from (otherwise it took the impostor rank
+        // and a translucent one blinked as its snapshot refreshed: the user 2026-11-20, home)
+        else if (inst->mDrawable.notNull() && (impvis_mvisible ? (inst->mVisible || (inst->isControlAvatar() && (inst->mDrawable->isRecentlyVisible() || inst->ownerListedRecently()))) : inst->mDrawable->isVisible()))
         {
             inst->setVisibilityRank(rank++);
         }
@@ -15585,7 +15587,7 @@ void LLVOAvatar::cullAvatarsByPixelArea()
 
         if (!inst->isSelf() && sLimitNonImpostors)
         {
-            const bool visible_now = inst->mDrawable.notNull() && (impvis_mvisible ? inst->mVisible : inst->mDrawable->isVisible());
+            const bool visible_now = inst->mDrawable.notNull() && (impvis_mvisible ? (inst->mVisible || (inst->isControlAvatar() && (inst->mDrawable->isRecentlyVisible() || inst->ownerListedRecently()))) : inst->mDrawable->isVisible());
             const U8 state = (inst->mVisibilityRank <= sMaxNonImpostors ? 1 : 0) | (visible_now ? 2 : 0);
             now_full_map[character] = state;
             const auto before = was_full_map.find(character);
