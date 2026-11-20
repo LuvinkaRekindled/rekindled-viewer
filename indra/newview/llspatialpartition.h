@@ -655,6 +655,7 @@ public:
 
     bool mMainView = false;     // <FS> T3: this is the main view's cull result (set by updateCull each time it clears it): pushVisibleGroup notes the group's table slot as listed by this build (rk_main_listed_note)
     U32 mListSerial = 1;        // <FS> T3: one more each time the visible group list is cleared (clear, clearLists): a group stamped with the current value was listed since the last clear
+    static std::atomic<U32> sOccListEpoch;      // <FS> 2026-11-20: one more each time ANY cull result's lists are cleared (clear, clearLists); LLOcclusionCullingGroup::mOccQueuedEpoch says a group was queued for a Hi-Z box since the last clear
 
     typedef std::vector<LLSpatialGroup*> sg_list_t;
     typedef std::vector<LLDrawable*> drawable_list_t;

@@ -4048,20 +4048,26 @@ void LLPipeline::replayMemberShadow(LLSpatialGroup* group, U8 kind)
 
 void LLPipeline::markOccluder(LLSpatialGroup* group)
 {
-    if (LLPipeline::useOcclusion() > 1 && group && !group->isOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION))
+    // <FS> 2026-11-20: "already queued" is the group's stamp against the epoch of the cull result lists (LLCullResult::sOccListEpoch, one more each time any result is cleared), not the flag ACTIVE_OCCLUSION: the flag
+    // was cleared only by doOcclusion (and dropOcclusionMarks for a result the early sort redoes), so a result thrown away on another way left it on and the group was skipped here for good. The flag is still set and
+    // cleared as before for what reads it.
+    const U32 occ_epoch = LLCullResult::sOccListEpoch.load(std::memory_order_relaxed);
+    if (LLPipeline::useOcclusion() > 1 && group && group->mOccQueuedEpoch != occ_epoch)
     {
         LLSpatialGroup* parent = group->getParent();
 
         if (!parent || !parent->isOcclusionState(LLSpatialGroup::OCCLUDED))
         { //only mark top most occluders as active occlusion
             sCull->pushOcclusionGroup(group);
+            group->mOccQueuedEpoch = occ_epoch;
             group->setOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
 
             if (parent &&
-                !parent->isOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION) &&
+                parent->mOccQueuedEpoch != occ_epoch &&
                 parent->getElementCount() == 0 &&
                 parent->needsUpdate())
             {
+                parent->mOccQueuedEpoch = occ_epoch;
                 sCull->pushOcclusionGroup(parent);      // (2026-11-17: this pushed `group` a second time and flagged the parent: a parent that is flagged and listed nowhere is never cleared, so markOccluder skipped it for good)
                 parent->setOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
             }

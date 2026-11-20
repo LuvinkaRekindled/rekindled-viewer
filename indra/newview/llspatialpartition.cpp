@@ -4416,9 +4416,12 @@ void LLCullResult::pushBack(T& head, U32& count, V* val)
 }
 
 // <FS> the lists a cull fills (groups, drawables, bridges), without the render maps and the scene table fields that a cull never touches: the results of the pieces of a split cull (RK_VK_SC_SPLIT)
+std::atomic<U32> LLCullResult::sOccListEpoch{ 1 };
+
 void LLCullResult::clearLists()
 {
     ++mListSerial;
+    sOccListEpoch.fetch_add(1, std::memory_order_relaxed);
     mVisibleGroupsSize = 0;
     mVisibleGroupsEnd = &mVisibleGroups[0];
     mAlphaGroupsSize = 0;
@@ -4439,6 +4442,7 @@ void LLCullResult::clearLists()
 void LLCullResult::clear()
 {
     ++mListSerial;
+    sOccListEpoch.fetch_add(1, std::memory_order_relaxed);
     mVisibleGroupsSize = 0;
     mVisibleGroupsEnd = &mVisibleGroups[0];
 

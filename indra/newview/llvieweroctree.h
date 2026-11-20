@@ -360,6 +360,11 @@ public:
     bool isRecentlyVisible() const;
     bool isAnyRecentlyVisible() const;
 
+    // <FS> 2026-11-20: the value of LLCullResult::sOccListEpoch when markOccluder last queued this group for a Hi-Z box. It stands for "already in the occlusion list of the cull result in hand": any list reset makes it
+    // stale on its own. (The flag ACTIVE_OCCLUSION did this job, and a result thrown away before doOcclusion cleared it left the flag on for good: markOccluder skipped the group, nothing asked for its verdict again,
+    // and it stayed occluded.)
+    U32 mOccQueuedEpoch = 0;
+
 private:
     bool earlyFail(LLCamera* camera, const LLVector4a* bounds);
 
