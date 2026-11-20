@@ -369,19 +369,6 @@ public:
         }
     };
 
-    struct CompareRenderOrder
-    {
-        bool operator()(const LLSpatialGroup* const& lhs, const LLSpatialGroup* const& rhs)
-        {
-            if (lhs->mAvatarp != rhs->mAvatarp)
-            {
-                return lhs->mAvatarp < rhs->mAvatarp;
-            }
-
-            return lhs->mRenderOrder > rhs->mRenderOrder;
-        }
-    };
-
     typedef enum
     {
         GEOM_DIRTY              = LLViewerOctreeGroup::INVALID_STATE,
@@ -493,9 +480,7 @@ public:
 
     // <FS> C1b.2: distance, depth, lastUpdateDistance, lastUpdateTime, radius, objectBoxSize, viewAngle and lastUpdateViewAngle are in this group's row (row().distance ...)
 
-    //used by LLVOAVatar to set render order in alpha draw pool to preserve legacy render order behavior
-    LLVOAvatar* mAvatarp = nullptr;
-    U32 mRenderOrder = 0;
+    // <FS> 2026-11-20: the avatar and the render order of a rigged attachment's group were two fields written here by the avatar's attachment loop; they are read from the group's owner now (rk_rigged_group_owner, llvoavatar.cpp)
     // Reflection Probe associated with this node (if any)
     LLPointer<LLReflectionMap> mReflectionProbe = nullptr;
 } LL_ALIGN_POSTFIX(16);

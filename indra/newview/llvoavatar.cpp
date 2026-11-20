@@ -4008,59 +4008,33 @@ void LLVOAvatar::rebuildAttRows()
     }
 }
 
-// <FS> stage C4: the stamp of a rigged attachment's spatial group (the avatar and the place among the avatar's rigged groups, read by the alpha sort): written only when the group does not hold it
-static void rk_stamp_rigged_group(LLVOAvatar* avatar, LLDrawable* drawable, LLSpatialGroup* group, U32 order)
+// <FS> 2026-11-20 (the user: the hair's outline cut into the pink shell on a first load, gone after it was attached again; "nothing should be walking lists"): the avatar a rigged attachment's group is worn by, and the place of
+// the attachment among the avatar's rigged attachments, come from the group's OWNER: an attachment is not one spatial group (a rigged linkset, the hair of 89 prims, is spread over the groups of its bridge's octree), but
+// every one of those groups belongs to the attachment's bridge, and the bridge to the attachment's root drawable (mAttOrder: numbered in rebuildAttRows). Nothing is written on the groups, so no group can miss it, hold a
+// stale one or name an avatar that is gone. False for a group that is not a rigged attachment's: no avatar, the place 0 (those sort before every avatar's groups, as an unstamped group did).
+bool rk_rigged_group_owner(const LLSpatialGroup* group, LLVOAvatar*& avatar, U32& order)
 {
-    if (group->mAvatarp == avatar && group->mRenderOrder == order)
+    avatar = nullptr;
+    order = 0;
+    LLSpatialPartition* partition = group ? const_cast<LLSpatialGroup*>(group)->getSpatialPartition() : nullptr;
+    LLSpatialBridge* bridge = partition ? partition->asBridge() : nullptr;
+    LLDrawable* root = bridge ? bridge->mDrawable : nullptr;
+    if (!root || root->isDead() || !root->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
     {
-        return;
+        return false;
     }
-    if (LLPipeline::sAvSink)
+    LLViewerObject* object = root->getVObj();
+    if (!object || object->isDead() || !object->isAttachment())
     {
-        LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::RENDER_ORDER, drawable, avatar, group, order });
+        return false;
     }
-    else
+    avatar = object->getAvatar();
+    if (!avatar)
     {
-        group->mAvatarp = avatar;
-        group->mRenderOrder = order;
+        return false;
     }
-}
-
-// <FS> 2026-11-20 (the user: the hair's outline cut into the pink shell on a first load, gone after it was attached again): an attachment is not one spatial group. A rigged linkset (the hair of 89 prims) is spread over
-// the groups of its bridge's octree, and only the group of the root drawable was stamped. The group with the hair's 85 drawables and its 29 rigged alpha faces had no avatar and the order 0, so the sort of the rigged
-// alpha groups (LLSpatialGroup::CompareRenderOrder: the avatar first, null before every other) drew it before the shell, and its depth cut the shell; the far avatar budget and the fringe pass distance skip, which read
-// the same stamp, did not see it either. Every group of the bridge's octree that holds a drawable gets the attachment's number now (a drawable of the group stands for it in the ledger: the op stamps that drawable's group).
-static void rk_stamp_bridge_groups(LLVOAvatar* avatar, LLSpatialBridge* bridge, const LLSpatialGroup* root_group, U32 order)
-{
-    if (!bridge || !bridge->mOctree)
-    {
-        return;
-    }
-    static thread_local std::vector<const OctreeNode*> stack;
-    stack.clear();
-    stack.push_back(bridge->mOctree);
-    while (!stack.empty())
-    {
-        const OctreeNode* node = stack.back();
-        stack.pop_back();
-        LLSpatialGroup* g = (LLSpatialGroup*)node->getListener(0);
-        if (g && g != root_group && !g->isDead() && g->getElementCount() > 0)
-        {
-            LLDrawable* d = nullptr;
-            for (LLSpatialGroup::element_iter it = g->getDataBegin(); it != g->getDataEnd() && !d; ++it)
-            {
-                d = (LLDrawable*)(*it)->getDrawable();
-            }
-            if (d)
-            {
-                rk_stamp_rigged_group(avatar, d, g, order);
-            }
-        }
-        for (U32 k = 0; k < node->getChildCount(); ++k)
-        {
-            stack.push_back(node->getChild(k));
-        }
-    }
+    order = root->mAttOrder;
+    return true;
 }
 
 void LLVOAvatar::idleUpdateAttachments(bool visible)
@@ -4070,7 +4044,6 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
         const auto att_loop_t0 = att_now();
         ++gAttStats.avatars;
         RKAttCensus::sAvatarsLooped += RKAttCensus::sOn;
-        U32 draw_order = 0;
         S32 selection_on = sAttachmentSelectedForJobs;
         LLVOAvatar* selection_avatar = sAttachmentSelectedAvatar;
         if (selection_on < 0)
@@ -4294,12 +4267,6 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                             bridge->setState(LLDrawable::MOVE_UNDAMPED);
                             bridge->updateMove();
                             bridge->setState(LLDrawable::EARLY_MOVE);
-                        }
-                        LLSpatialGroup* group = drawable->getSpatialGroup();
-                        if (group && drawable->mAttOrderRev == LLViewerJointAttachment::sRevision)
-                        {
-                            rk_stamp_rigged_group(this, drawable, group, drawable->mAttOrder);
-                            rk_stamp_bridge_groups(this, bridge, group, drawable->mAttOrder);
                         }
                     }
                     obj->updateText();
@@ -4668,35 +4635,11 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
                                 gAttStats.nsBridge += att_ns(t);
                             }
 
-                            LLSpatialGroup* group = attached_object->mDrawable->getSpatialGroup();
-                            if (group)
-                            { //set draw order of group
-                                // <FS> PLAN-avatars.md stage C4: the stamp (the avatar and the order of the group among this avatar's rigged attachments) is the same every frame
-                                // while the attachment list and the groups stay: it is written only when the group does not hold it already. The group's two fields are only written for this avatar's own groups.
-                                // (with the rows running, the place in the draw order is the one the rows were numbered with, so that the rows' stamps and this walk's agree; not numbered yet: no stamp this frame, the rows are made again)
-                                const bool numbered = attached_object->mDrawable->mAttOrderRev == LLViewerJointAttachment::sRevision;
-                                if (rows_run && !numbered)
-                                {
-                                    mAttRowsRevision = ~0u;
-                                }
-                                const U32 this_order = rows_run ? (numbered ? attached_object->mDrawable->mAttOrder : ~0u) : draw_order++;
-                                const bool holds = group->mAvatarp == this && group->mRenderOrder == this_order;
-                                if (!holds && this_order != ~0u)
-                                {
-                                    if (LLPipeline::sAvSink)
-                                    {
-                                        LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::RENDER_ORDER, attached_object->mDrawable, this, group, this_order });
-                                    }
-                                    else
-                                    {
-                                        group->mAvatarp = this;
-                                        group->mRenderOrder = this_order;
-                                    }
-                                }
-                                if (this_order != ~0u)
-                                {
-                                    rk_stamp_bridge_groups(this, bridge, group, this_order);        // (the other groups of the attachment's bridge octree: a linkset is spread over several)
-                                }
+                            // <FS> the place of this attachment in the draw order of the avatar's rigged groups is numbered with the rows (rebuildAttRows, mAttOrder) and read from the owner of a group when the lists
+                            // are made (rk_rigged_group_owner): nothing is written on the groups. An attachment that is not numbered yet gets the rows made again.
+                            if (rows_run && attached_object->mDrawable->mAttOrderRev != LLViewerJointAttachment::sRevision)
+                            {
+                                mAttRowsRevision = ~0u;
                             }
                         }
                     }

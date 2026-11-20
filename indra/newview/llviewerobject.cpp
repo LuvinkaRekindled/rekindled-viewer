@@ -6401,7 +6401,7 @@ void LLViewerObject::updateText()
     if (LLPipeline::sAvSink && mText.notNull())
     {
         // <FS> view rework A2: the HUD text of an attachment is updated when the avatar's writes are replayed
-        LLPipeline::AvOp op = { LLPipeline::AvOp::UPDATE_TEXT, nullptr, nullptr, nullptr, 0 };
+        LLPipeline::AvOp op = { LLPipeline::AvOp::UPDATE_TEXT, nullptr };
         op.mObject = this;
         LLPipeline::sAvSink->push_back(op);
         return;
@@ -7518,7 +7518,7 @@ void LLViewerObject::dirtySpatialGroup() const
     if (LLPipeline::sAvSink)
     {
         // <FS> view rework O1: the group's flags and rebuild mark are written when the job's writes are made
-        LLPipeline::AvOp op = { LLPipeline::AvOp::DIRTY_GROUP, nullptr, nullptr, nullptr, 0 };
+        LLPipeline::AvOp op = { LLPipeline::AvOp::DIRTY_GROUP, nullptr };
         op.mObject = const_cast<LLViewerObject*>(this);
         LLPipeline::sAvSink->push_back(op);
         return;

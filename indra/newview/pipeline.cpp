@@ -2327,7 +2327,7 @@ void LLPipeline::applyAvOps(std::vector<AvOp>& ops)
 void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
 {
     sAvSink = nullptr;
-    static U64 calls = 0, total_ops = 0, by_kind[12] = {}, stale_group = 0, orders = 0;
+    static U64 calls = 0, total_ops = 0, by_kind[12] = {};
     for (const AvOp* op_ptr = begin; op_ptr != end; ++op_ptr)
     {
         const AvOp& op = *op_ptr;
@@ -2386,28 +2386,13 @@ void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
                 op.mObject->dirtySpatialGroup();
             }
             break;
-        case AvOp::RENDER_ORDER:
-        {
-            ++orders;
-            LLSpatialGroup* group = op.mDrawable->getSpatialGroup();
-            if (group != op.mSeenGroup)
-            {
-                ++stale_group;      // the loop saw another group than the one the drawable is in once the moves before this request were made
-            }
-            if (group)
-            {
-                group->mAvatarp = op.mAvatar;
-                group->mRenderOrder = op.mOrder;
-            }
-            break;
-        }
         }
     }
     total_ops += (U64)(end - begin);
     if (++calls % 6000 == 0)
     {
         RK_DIAG("AvLedger") << "avatar attachment ledger: " << calls << " avatar loops, " << (double)total_ops / calls << " writes each (moved list " << by_kind[AvOp::MOVED_LIST] << ", moved bridge " << by_kind[AvOp::MOVED_BRIDGE]
-                             << ", partition moves " << by_kind[AvOp::MOVE_PARTITION] << ", render orders " << orders << "); render orders whose group differed from the one the loop saw: " << stale_group << LL_ENDL;
+                             << ", partition moves " << by_kind[AvOp::MOVE_PARTITION] << ")" << LL_ENDL;
     }
 }
 
@@ -2440,7 +2425,7 @@ void LLPipeline::updateMoveDampedAsync(LLDrawable* drawablep)
     {
         if (sAvSink)
         {
-            sAvSink->push_back({ AvOp::MOVED_LIST, drawablep, nullptr, nullptr, 0 });      // <FS> A1: the push is replayed, the bit is set at once
+            sAvSink->push_back({ AvOp::MOVED_LIST, drawablep });      // <FS> A1: the push is replayed, the bit is set at once
         }
         else
         {
@@ -2479,7 +2464,7 @@ void LLPipeline::updateMoveNormalAsync(LLDrawable* drawablep)
     {
         if (sAvSink)
         {
-            sAvSink->push_back({ AvOp::MOVED_LIST, drawablep, nullptr, nullptr, 0 });      // <FS> A1: the push is replayed, the bit is set at once
+            sAvSink->push_back({ AvOp::MOVED_LIST, drawablep });      // <FS> A1: the push is replayed, the bit is set at once
         }
         else
         {
@@ -4973,12 +4958,12 @@ void LLPipeline::markMoved(LLDrawable *drawablep, bool damped_motion)
     {
         if (drawablep->isSpatialBridge())
         {
-            if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_BRIDGE, drawablep, nullptr, nullptr, 0 }); }
+            if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_BRIDGE, drawablep }); }
             else { rk_phase_check_pipeline("markMoved: mMovedBridge"); mMovedBridge.push_back(drawablep); }
         }
         else
         {
-            if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_LIST, drawablep, nullptr, nullptr, 0 }); }
+            if (sAvSink) { sAvSink->push_back({ AvOp::MOVED_LIST, drawablep }); }
             else { rk_phase_check_pipeline("markMoved: mMovedList"); mMovedList.push_back(drawablep); }
         }
         drawablep->setState(LLDrawable::ON_MOVE_LIST);
@@ -6776,6 +6761,35 @@ static U64 sGeoElideGroups = 0, sGeoElideTypes = 0, sGeoElideTris = 0;       // 
 
 static U32 rk_group_draw_tris(const LLSpatialGroup* group);        // the triangles of the group's draws, from its current fragment (below, after RKSceneFragment)
 
+// <FS> 2026-11-20: the rigged alpha groups of a view in their draw order: by avatar (the groups of no avatar first), then by the place of the attachment among the avatar's rigged attachments, the highest first (what
+// LLSpatialGroup::CompareRenderOrder did with the two fields the avatar's loop wrote on each group). The avatar and the place are asked of the group's owner (rk_rigged_group_owner), once for each group here; the
+// sort is stable, so the groups of one attachment keep the order of the list. Main thread (postSort).
+static void rk_sort_rigged_alpha_groups(LLCullResult* cull)
+{
+    struct Key { LLVOAvatar* mAvatar; U32 mOrder; LLSpatialGroup* mGroup; };
+    static thread_local std::vector<Key> keys;
+    keys.clear();
+    for (LLCullResult::sg_iterator i = cull->beginRiggedAlphaGroups(); i != cull->endRiggedAlphaGroups(); ++i)
+    {
+        Key key = { nullptr, 0, *i };
+        rk_rigged_group_owner(*i, key.mAvatar, key.mOrder);
+        keys.push_back(key);
+    }
+    std::stable_sort(keys.begin(), keys.end(), [](const Key& a, const Key& b)
+    {
+        if (a.mAvatar != b.mAvatar)
+        {
+            return a.mAvatar < b.mAvatar;
+        }
+        return a.mOrder > b.mOrder;
+    });
+    size_t at = 0;
+    for (LLCullResult::sg_iterator i = cull->beginRiggedAlphaGroups(); i != cull->endRiggedAlphaGroups(); ++i, ++at)
+    {
+        *i = keys[at].mGroup;
+    }
+}
+
 // <FS> far avatar tier of the main view. An avatar that is far away (beyond RenderFarAvatarDistance, then RenderFarAvatarDistance2) and whose rigged attachments add up to more than the triangle
 // budget of its tier (RenderFarAvatarTriangles / RenderFarAvatarTriangles2, 0 = off) is drawn as an impostor (LLVOAvatar::shouldImpostor reads mFarTierHeavy): the picture of the whole avatar. The first
 // version dropped attachment groups that did not fit the budget, and a group is an octree node of the avatar's attachments, not one attachment: it cut avatars apart (a body missing in chunks, 2026-10-27). The avatar is a few dozen pixels tall there. The groups left out are not listed (no render map, no fragment handle, no alpha list), so the G-buffer, the alpha
@@ -6797,12 +6811,13 @@ static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpati
     for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
     {
         LLSpatialGroup* group = *i;
-        if (!group || group->isDead() || !group->mAvatarp)
+        LLVOAvatar* avatar = nullptr;
+        U32 place = 0;
+        if (!group || group->isDead() || !rk_rigged_group_owner(group, avatar, place))
         {
             continue;
         }
-        LLVOAvatar* avatar = group->mAvatarp;
-        if (!LLVOAvatar::isLiveInstance(avatar) || avatar->isSelf() || avatar->mDrawable.isNull())
+        if (avatar->isSelf() || avatar->mDrawable.isNull())
         {
             continue;
         }
@@ -7605,7 +7620,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
             std::sort(sCull->beginAlphaGroups(), sCull->endAlphaGroups(), LLSpatialGroup::CompareDepthGreater());
 
             // order rigged alpha groups by avatar attachment order
-            std::sort(sCull->beginRiggedAlphaGroups(), sCull->endRiggedAlphaGroups(), LLSpatialGroup::CompareRenderOrder());
+            rk_sort_rigged_alpha_groups(sCull);
         }
     }
     }
@@ -12428,7 +12443,7 @@ void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unorder
         }
     }
     std::sort(cull->beginAlphaGroups(), cull->endAlphaGroups(), LLSpatialGroup::CompareDepthGreater());
-    std::sort(cull->beginRiggedAlphaGroups(), cull->endRiggedAlphaGroups(), LLSpatialGroup::CompareRenderOrder());
+    rk_sort_rigged_alpha_groups(cull);
 }
 
 void RKCullShadow::touch(LLViewerOctreeGroup* group)

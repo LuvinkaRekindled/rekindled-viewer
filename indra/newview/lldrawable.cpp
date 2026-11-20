@@ -664,7 +664,7 @@ void LLDrawable::makeActive()
         if (LLPipeline::sAvSink)
         {
             // <FS> view rework A2: the bit is set at once (the rest of the loop sees an active drawable), the shared half is made when the avatar's writes are replayed
-            LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::MAKE_ACTIVE_SHARED, this, nullptr, nullptr, 0 });
+            LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::MAKE_ACTIVE_SHARED, this });
             return;
         }
         makeActiveShared();
@@ -939,7 +939,7 @@ void LLDrawable::movePartition()
         // was its extents
         if (LLPipeline::sAvSink)
         {
-            LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::MOVE_PARTITION, this, nullptr, nullptr, 0 });
+            LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::MOVE_PARTITION, this });
             return;
         }
         updateSpatialExtents();
@@ -948,7 +948,7 @@ void LLDrawable::movePartition()
 
     if (LLPipeline::sAvSink)
     {
-        LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::MOVE_PARTITION, this, nullptr, nullptr, 0 });      // <FS> view rework A1: made when the avatar's loop is over
+        LLPipeline::sAvSink->push_back({ LLPipeline::AvOp::MOVE_PARTITION, this });      // <FS> view rework A1: made when the avatar's loop is over
         return;
     }
 

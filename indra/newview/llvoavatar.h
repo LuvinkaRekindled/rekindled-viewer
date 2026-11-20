@@ -92,6 +92,10 @@ extern U32 gFrameCount;
 //
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class LLVOAvatar;
+class LLSpatialGroup;
+// <FS> 2026-11-20: the avatar a rigged attachment's spatial group is worn by and the place of its attachment in the avatar's draw order of rigged groups, from the group's owner (its bridge's attachment): see llvoavatar.cpp.
+// False (no avatar, place 0) for a group that is not a rigged attachment's.
+bool rk_rigged_group_owner(const LLSpatialGroup* group, LLVOAvatar*& avatar, U32& order);
 struct RKFlatSkeleton;      // <FS> stage B0 (llvoavatar.cpp): the avatar's world matrices as a flat array by joint number
 using RKAvatarHandles = RKHandleTable<LLVOAvatar>;       // <FS> C2.4d: the handles of avatars (rkhandletable.h)
 
@@ -728,7 +732,7 @@ public:
     bool        mFarTierHeavy = false;          // the avatar's rigged attachments are over the budget of its far tier: it is drawn as an impostor (shouldImpostor), never cut apart
     U8          mFarTierMain = 0;               // the far avatar tier of the main view (pipeline.cpp far_avatar_tier): 0 full, 1 beyond RenderFarAvatarDistance, 2 beyond RenderFarAvatarDistance2 (hysteresis)
     U32         farUpdatePeriod();              // 1 near, or 2 / 3 for a visible avatar beyond RKAvatarFarUpdateDistance (see llvoavatar.cpp)
-    static bool isLiveInstance(const LLVOAvatar* avatar);     // a pointer a spatial group kept (LLSpatialGroup::mAvatarp) may name an avatar that is gone: true when it is one of the characters alive now (a set made once a frame)
+    static bool isLiveInstance(const LLVOAvatar* avatar);     // a pointer kept across frames may name an avatar that is gone: true when it is one of the characters alive now (a set made once a frame)
     std::vector<F32> mRtPosePrev;           // census (RK_VK_ITEMCENSUS): the palette of its biggest skin when the main view last named it to the ray scene
     U64         mRtNameLast = 0;                // the frame the main view last named this avatar's rigged draws to the ray scene (pipeline.cpp rt_name_rigged_main_view)
     U64         mRtNameChecked = ~0ull;         // the frame mRtNameDue was decided in
