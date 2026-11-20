@@ -3557,20 +3557,6 @@ bool LLPipeline::isWaterClip()
     return (gPipeline.mHeroProbeManager.isMirrorPass()) ? false : (!sRenderTransparentWater || gCubeSnapshot) && !sRenderingHUDs;
 }
 
-// <FS> The occlusion groups of a cull result were flagged ACTIVE_OCCLUSION by markOccluder(); doOcclusion() clears the flag when it queries them. A result thrown away before that (the early
-// sort redoes the cull of a frame) leaves the flag on: markOccluder() skips a flagged group, so it would never be queried again and would stay occluded. Called with the result of this frame.
-void LLPipeline::dropOcclusionMarks(LLCullResult& result)
-{
-    for (LLCullResult::sg_iterator iter = result.beginOcclusionGroups(); iter != result.endOcclusionGroups(); ++iter)
-    {
-        LLSpatialGroup* group = *iter;
-        if (!group->isDead())
-        {
-            group->clearOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
-        }
-    }
-}
-
 // <FS> native-vk diagnostic (RK_VK_AVLOG=1, RK_VK_AVLOG_NAME=part of a name, any case): every 5 seconds one line per avatar (all of the nearest twelve, or those whose name contains the text): what kind of avatar it is
 // (self, animesh control avatar, fully loaded, impostor, sitting, distance) and its attachments with their faces: rigged or not, mesh, fullbright, glow, blended (alpha below 1), shiny, glTF material. Tag VkAvLog.
 static void vk_avatar_log()
@@ -4034,8 +4020,8 @@ void LLPipeline::replayMemberShadow(LLSpatialGroup* group, U8 kind)
 void LLPipeline::markOccluder(LLSpatialGroup* group)
 {
     // <FS> 2026-11-20: "already queued" is the group's stamp against the epoch of the cull result lists (LLCullResult::sOccListEpoch, one more each time any result is cleared), not the flag ACTIVE_OCCLUSION: the flag
-    // was cleared only by doOcclusion (and dropOcclusionMarks for a result the early sort redoes), so a result thrown away on another way left it on and the group was skipped here for good. The flag is still set and
-    // cleared as before for what reads it.
+    // was cleared only by doOcclusion (and by a walk of the result's occlusion groups for a result the early sort redoes), so a result thrown away on another way left it on and the group was skipped here for good.
+    // The flag is not set for these groups any more (nothing read it); the object cache partition keeps its own use of it.
     const U32 occ_epoch = LLCullResult::sOccListEpoch.load(std::memory_order_relaxed);
     if (LLPipeline::useOcclusion() > 1 && group && group->mOccQueuedEpoch != occ_epoch)
     {
@@ -4045,7 +4031,6 @@ void LLPipeline::markOccluder(LLSpatialGroup* group)
         { //only mark top most occluders as active occlusion
             sCull->pushOcclusionGroup(group);
             group->mOccQueuedEpoch = occ_epoch;
-            group->setOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
 
             if (parent &&
                 parent->mOccQueuedEpoch != occ_epoch &&
@@ -4054,7 +4039,6 @@ void LLPipeline::markOccluder(LLSpatialGroup* group)
             {
                 parent->mOccQueuedEpoch = occ_epoch;
                 sCull->pushOcclusionGroup(parent);      // (2026-11-17: this pushed `group` a second time and flagged the parent: a parent that is flagged and listed nowhere is never cleared, so markOccluder skipped it for good)
-                parent->setOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
             }
         }
     }
@@ -4095,7 +4079,6 @@ void LLPipeline::doOcclusion(LLCamera& camera)
             if (!group->isDead())
             {
                 group->hizCollect(&camera);
-                group->clearOcclusionState(LLSpatialGroup::ACTIVE_OCCLUSION);
             }
         }
 

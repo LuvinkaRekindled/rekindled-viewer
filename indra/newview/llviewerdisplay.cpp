@@ -1104,7 +1104,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                     LL_INFOS("VkBuilder") << "early sort: a group of the main view changed after the sort (" << gEarlySortResorts << " frames so far): sorting again" << LL_ENDL;
                 }
                 RKBuilderGuard::sMainMapLive = false;
-                gPipeline.dropOcclusionMarks(result);       // the groups marked for a query by the first cull would never be queried again
                 RK_CPU_ZONE("display: cull + stateSort (again)");
                 LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
                 gPipeline.updateCull(camera, result);       // the sort pushes into the cull result as well (bridges, drawables): it starts from a clean one
