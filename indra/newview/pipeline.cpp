@@ -9584,7 +9584,11 @@ static bool geo_persist_on()
     static const bool on = (getenv("RK_VK_GEOPERSIST") ? atoi(getenv("RK_VK_GEOPERSIST")) != 0 : true);
     return on;
 }
-bool rk_geo_persist() { return geo_persist_on(); }          // (the rigged alpha runs, lldrawpoolalpha.cpp)
+// <FS> 2026-11-20 (the user: the pink shell, a rigged glTF blend layer, is missing from snapshots and shows with RK_VK_GEOPERSIST=0): a snapshot renders through frames of its own (the snapshot boundaries close and open the
+// off-screen frame, many of them), and the bindings the viewer counted as sent in the world frames are not what the worker holds for those frames, so the rigged alpha items of the snapshot drew nothing. A snapshot does not
+// use persistent bindings: every binding goes with its run, as with RK_VK_GEOPERSIST=0, and the world frame after it sends all of them again (sRebindEpoch).
+static bool geo_persist_now() { return geo_persist_on() && !gSnapshot; }
+bool rk_geo_persist() { return geo_persist_now(); }          // (the rigged alpha runs, lldrawpoolalpha.cpp)
 U32 rk_geo_rebind_epoch() { return sRebindEpoch; }
 // S4 B: a palette binding of the frame record (the worker patches the row of item mItem of fragment mHandle), and the job that makes them on the pool
 struct GeoBinding { U32 mHandle, mItem, mOffset, mJoints, mLodIb, mLodCount; };       // (mLodIb, mLodCount: the simplified index list the viewer chose for the item this frame, 0 = its own; made on the main thread, scene_geo_rigged_lod)
@@ -13255,7 +13259,15 @@ void rk_scene_geo_frame(LLCullResult* cull)
     // <FS> P2: with persistent bindings only the ones that changed since the worker was told go in the record (updates); else all of them, every frame
     static std::vector<Binding> updates;
     updates.clear();
-    const bool persist = geo_persist_on();
+    const bool persist = geo_persist_now();
+    {
+        static bool persist_was = persist;
+        if (persist != persist_was)
+        {
+            persist_was = persist;      // a snapshot started or ended: the bindings the worker holds are not the ones counted as sent
+            ++sRebindEpoch;
+        }
+    }
     if (RKVkBridge::sGeoPrepareDropped.load(std::memory_order_relaxed) != sGeoDroppedSeen)
     {
         sGeoDroppedSeen = RKVkBridge::sGeoPrepareDropped.load(std::memory_order_relaxed);
