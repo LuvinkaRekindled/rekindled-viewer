@@ -132,3 +132,6 @@ checks.json
 
 # crash investigation evidence and blobs: kept locally, not tracked (J1 branding clean-up, 2026-11-07)
 doc/vulkan/crash-brief/
+
+# working notes and plans stay on this machine
+doc/vulkan/
