@@ -29,6 +29,7 @@
 #define LL_VOAVATAR_H
 
 #include "rkhandletable.h"
+#include "rkhiz.h"
 #include <atomic>
 #include <mutex>
 #include <shared_mutex>
@@ -93,6 +94,19 @@ extern U32 gFrameCount;
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 class LLVOAvatar;
 class LLSpatialGroup;
+class LLDrawable;
+// <FS> 2026-11-20 stage 9 (avatars): an avatar's own Hi-Z verdict, as a bridge has (LLSpatialBridge::hizResult / hizHides). Its drawable's extents are a box of the occlusion pass (pipeline.cpp rk_bridge_hiz_collect),
+// the verdict follows the groups' rule (occluded on two agreeing verdicts, visible on one), and the avatar is hidden by it while the verdict is recent and its extents still lie inside the box it was made for. The avatar
+// holds it (it was a map by the avatar's pointer, pruned when the avatar was gone); an RKHizTarget takes itself out of the Hi-Z registry when it is destroyed, so a batch in flight finds nothing of a gone avatar.
+struct RKAvatarHiz : public RKHizTarget
+{
+    F32 mSentBox[6] = {};
+    F32 mVerdictBox[6] = {};
+    bool mOccluded = false;
+    U32 mVerdictFrame = 0;
+    void hizResult(bool occluded) override;
+    bool hides(const LLDrawable* drawable) const;
+};
 // <FS> 2026-11-20: the avatar a rigged attachment's spatial group is worn by and the place of its attachment in the avatar's draw order of rigged groups, from the group's owner (its bridge's attachment): see llvoavatar.cpp.
 // False (no avatar, place 0) for a group that is not a rigged attachment's.
 bool rk_rigged_group_owner(const LLSpatialGroup* group, LLVOAvatar*& avatar, U32& order);
@@ -734,6 +748,7 @@ private:
 public:
     bool        mFarTierHeavy = false;          // the avatar's rigged attachments are over the budget of its far tier: it is drawn as an impostor (shouldImpostor), never cut apart
     U8          mFarTierMain = 0;               // the far avatar tier of the main view (pipeline.cpp far_avatar_tier): 0 full, 1 beyond RenderFarAvatarDistance, 2 beyond RenderFarAvatarDistance2 (hysteresis)
+    RKAvatarHiz mHiz;                           // the avatar's own Hi-Z verdict (pipeline.cpp ownersCollect, rk_bridge_hiz_collect)
     U32         farUpdatePeriod();              // 1 near, or 2 / 3 for a visible avatar beyond RKAvatarFarUpdateDistance (see llvoavatar.cpp)
     std::vector<F32> mRtPosePrev;           // census (RK_VK_ITEMCENSUS): the palette of its biggest skin when the main view last named it to the ray scene
     U64         mRtNameLast = 0;                // the frame the main view last named this avatar's rigged draws to the ray scene (pipeline.cpp rt_name_rigged_main_view)

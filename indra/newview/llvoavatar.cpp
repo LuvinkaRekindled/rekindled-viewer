@@ -3889,6 +3889,43 @@ static void override_bbox(LLDrawable* drawable, LLVector4a* extents)
     drawable->movePartition();
 }
 
+void RKAvatarHiz::hizResult(bool occluded)
+{
+    if (occluded)
+    {
+        if (mHizOccludedOnce)
+        {
+            mOccluded = true;
+        }
+        mHizOccludedOnce = true;
+        memcpy(mVerdictBox, mSentBox, sizeof(mVerdictBox));
+    }
+    else
+    {
+        mHizOccludedOnce = false;
+        mOccluded = false;
+    }
+    mVerdictFrame = (U32)LLFrameTimer::getFrameCount();
+}
+
+bool RKAvatarHiz::hides(const LLDrawable* drawable) const
+{
+    if (!mOccluded || !drawable || (U32)LLFrameTimer::getFrameCount() - mVerdictFrame > 8u)
+    {
+        return false;
+    }
+    const LLVector4a* exts = drawable->getSpatialExtents();
+    for (int k = 0; k < 3; ++k)
+    {
+        const F32 c = 0.5f * (exts[0][k] + exts[1][k]), h = 0.5f * (exts[1][k] - exts[0][k]);
+        if (fabsf(c - mVerdictBox[k]) + h > mVerdictBox[3 + k])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 // <FS> view rework A1: the writes of an avatar's attachment loop to shared state are recorded and replayed in order when the loop is over (the viewer's own avatar keeps the direct path)
 namespace
 {

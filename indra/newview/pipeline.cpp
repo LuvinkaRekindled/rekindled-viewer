@@ -4549,56 +4549,10 @@ void LLPipeline::markVisible(LLDrawable *drawablep, LLCamera& camera)
 // bridges inside bridges in waves, until no new one qualifies. The region groups loop (a) skipped that are occluded get their markOccluder in ownersCollect, once.
 namespace
 {
-// stage 9 (avatars): an avatar's own Hi-Z verdict, as a bridge has (LLSpatialBridge::hizResult / hizHides): its drawable's extents are a box of the occlusion pass, the verdict follows the groups' rule (occluded on two agreeing
-// verdicts, visible on one), and the avatar is hidden by it while the verdict is recent and its extents still lie inside the box it was made for. Kept by the avatar's pointer, pruned when the avatar is gone
-struct AvHiz : public RKHizTarget
-{
-    LLDrawable* mDrawable = nullptr;
-    F32 mSentBox[6] = {};
-    F32 mVerdictBox[6] = {};
-    bool mOccluded = false;
-    U32 mVerdictFrame = 0;
-    void hizResult(bool occluded) override
-    {
-        if (occluded)
-        {
-            if (mHizOccludedOnce)
-            {
-                mOccluded = true;
-            }
-            mHizOccludedOnce = true;
-            memcpy(mVerdictBox, mSentBox, sizeof(mVerdictBox));
-        }
-        else
-        {
-            mHizOccludedOnce = false;
-            mOccluded = false;
-        }
-        mVerdictFrame = (U32)LLFrameTimer::getFrameCount();
-    }
-    bool hides() const
-    {
-        if (!mOccluded || !mDrawable || (U32)LLFrameTimer::getFrameCount() - mVerdictFrame > 8u)
-        {
-            return false;
-        }
-        const LLVector4a* exts = mDrawable->getSpatialExtents();
-        for (int k = 0; k < 3; ++k)
-        {
-            const F32 c = 0.5f * (exts[0][k] + exts[1][k]), h = 0.5f * (exts[1][k] - exts[0][k]);
-            if (fabsf(c - mVerdictBox[k]) + h > mVerdictBox[3 + k])
-            {
-                return false;
-            }
-        }
-        return true;
-    }
-};
-std::unordered_map<const LLVOAvatar*, std::unique_ptr<AvHiz>> sAvHiz;
-
+// (stage 9, avatars: an avatar's own Hi-Z verdict is the avatar's: LLVOAvatar::mHiz, RKAvatarHiz in llvoavatar.h)
 struct OwnerPass
 {
-    std::vector<AvHiz*> mBoxAv;                     // the avatars in view by their own test this sort: their extents are boxes of this frame's Hi-Z pass
+    std::vector<RKAvatarRef> mBoxAv;                // the avatars in view by their own test this sort: their extents are boxes of this frame's Hi-Z pass
     std::vector<LLDrawable*> mFirst;                // the avatars' drawables, then the bridges whose group the cull listed, by group
     std::vector<LLSpatialBridge*> mBoxBridges;      // the bridges in view by their own test this sort: their extents are boxes of this frame's Hi-Z pass (rk_bridge_hiz_collect)
     size_t mAddedFrom = 0;                          // the drawable groups from here on were added by the marking
@@ -4640,56 +4594,37 @@ void LLPipeline::ownersCollect(LLCamera& camera)
     o.mFirst.clear();
     o.mBoxBridges.clear();
     o.mAddedFrom = sCull->getDrawableGroupsSize();
-    // stage 9 (avatars): an avatar's drawable is listed by its own test (its extents against the frustum and the far sphere: what the group walk gave the avatar's group) and its own Hi-Z verdict (AvHiz), not by its group in a
-    // region octree; the boxes of the avatars in view join the Hi-Z pass (rk_bridge_hiz_collect). The compare over 34,800 sorts (100.8 avatars with a drawable a sort): both rules said visible for 35.23, the group's only 0.20,
-    // the own rule's only 0.14; the verdict hid 2.33 a sort, of which the groups listed 0.11
+    // stage 9 (avatars): an avatar's drawable is listed by its own test (its extents against the frustum and the far sphere: what the group walk gave the avatar's group) and its own Hi-Z verdict (LLVOAvatar::mHiz), not by its
+    // group in a region octree; the boxes of the avatars in view join the Hi-Z pass (rk_bridge_hiz_collect). The compare over 34,800 sorts (100.8 avatars with a drawable a sort): both rules said visible for 35.23, the
+    // group's only 0.20, the own rule's only 0.14; the verdict hid 2.33 a sort, of which the groups listed 0.11
     o.mBoxAv.clear();
+    for (LLCharacter* c : LLCharacter::sInstances)
     {
-        static std::vector<const LLVOAvatar*> alive;
-        alive.clear();
-        for (LLCharacter* c : LLCharacter::sInstances)
+        LLVOAvatar* av = dynamic_cast<LLVOAvatar*>(c);
+        LLDrawable* d = av && !av->isDead() ? av->mDrawable.get() : nullptr;
+        if (!d || d->isDead())
         {
-            LLVOAvatar* av = dynamic_cast<LLVOAvatar*>(c);
-            LLDrawable* d = av && !av->isDead() ? av->mDrawable.get() : nullptr;
-            if (!d || d->isDead())
-            {
-                continue;
-            }
-            alive.push_back(av);
-            std::unique_ptr<AvHiz>& slot = sAvHiz[av];
-            if (!slot)
-            {
-                slot = std::make_unique<AvHiz>();
-            }
-            AvHiz& h = *slot;
-            h.mDrawable = d;
-            const LLVector4a* exts = d->getSpatialExtents();
-            LLVector4a center, size;
-            center.setAdd(exts[0], exts[1]);
-            center.mul(0.5f);
-            size.setSub(exts[1], exts[0]);
-            size.mul(0.5f);
-            if (!camera.AABBInFrustumNoFarClip(center, size) || !AABBSphereIntersect(exts[0], exts[1], camera.getOrigin(), camera.mFrustumCornerDist))
-            {
-                continue;
-            }
-            if (!h.isHizAwaiting())
-            {
-                o.mBoxAv.push_back(&h);         // (the box of the next pass: an avatar hidden now is tested again)
-            }
-            if (!h.hides())
-            {
-                o.mFirst.push_back(d);
-                av->mOwnerListedFrame = (U32)LLFrameTimer::getFrameCount();
-            }
+            continue;
         }
-        if (sAvHiz.size() > alive.size())
+        RKAvatarHiz& h = av->mHiz;
+        const LLVector4a* exts = d->getSpatialExtents();
+        LLVector4a center, size;
+        center.setAdd(exts[0], exts[1]);
+        center.mul(0.5f);
+        size.setSub(exts[1], exts[0]);
+        size.mul(0.5f);
+        if (!camera.AABBInFrustumNoFarClip(center, size) || !AABBSphereIntersect(exts[0], exts[1], camera.getOrigin(), camera.mFrustumCornerDist))
         {
-            std::sort(alive.begin(), alive.end());
-            for (auto it = sAvHiz.begin(); it != sAvHiz.end();)
-            {
-                it = std::binary_search(alive.begin(), alive.end(), it->first) ? std::next(it) : sAvHiz.erase(it);
-            }
+            continue;
+        }
+        if (!h.isHizAwaiting())
+        {
+            o.mBoxAv.push_back(av);         // (the box of the next pass: an avatar hidden now is tested again)
+        }
+        if (!h.hides(d))
+        {
+            o.mFirst.push_back(d);
+            av->mOwnerListedFrame = (U32)LLFrameTimer::getFrameCount();
         }
     }
     o.mAvatars = (U32)o.mFirst.size();
@@ -4828,13 +4763,16 @@ void rk_bridge_hiz_collect()
         }
         RKHiz::add(b, center, half[0] + fudge, half[1] + fudge, half[2] + fudge, false);
     }
-    for (AvHiz* h : sOwner.mBoxAv)
+    for (const RKAvatarRef& ref : sOwner.mBoxAv)
     {
-        if (!h->mDrawable || h->mDrawable->isDead() || h->isHizAwaiting())
+        LLVOAvatar* av = ref.get();         // (nothing for an avatar that went since the sort)
+        LLDrawable* d = av && !av->isDead() ? av->mDrawable.get() : nullptr;
+        if (!d || d->isDead() || av->mHiz.isHizAwaiting())
         {
             continue;
         }
-        const LLVector4a* exts = h->mDrawable->getSpatialExtents();
+        RKAvatarHiz& h = av->mHiz;
+        const LLVector4a* exts = d->getSpatialExtents();
         LLVector4a center, half;
         center.setAdd(exts[0], exts[1]);
         center.mul(0.5f);
@@ -4843,10 +4781,10 @@ void rk_bridge_hiz_collect()
         const F32 fudge = 0.25f;
         for (int k = 0; k < 3; ++k)
         {
-            h->mSentBox[k] = center[k];
-            h->mSentBox[3 + k] = half[k] + fudge;
+            h.mSentBox[k] = center[k];
+            h.mSentBox[3 + k] = half[k] + fudge;
         }
-        RKHiz::add(h, center, half[0] + fudge, half[1] + fudge, half[2] + fudge, false);
+        RKHiz::add(&h, center, half[0] + fudge, half[1] + fudge, half[2] + fudge, false);
     }
 }
 
