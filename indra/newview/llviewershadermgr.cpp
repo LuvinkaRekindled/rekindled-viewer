@@ -234,6 +234,7 @@ RKShaderProgram            gExposureProgram;
 RKShaderProgram            gExposureProgramNoFade;
 RKShaderProgram            gLuminanceProgram;
 RKShaderProgram            gMotionVectorProgram;
+RKShaderProgram            gWorldDepthSnapProgram;         // <FS> the world pass's depth as a colour texture, for the motion pass (native/depth_snap.frag)
 RKShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra of the ray traced sun shadow from the blocker distance (PLAN-rt-shadow-penumbra.md)
 RKShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
 RKShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
@@ -2012,6 +2013,14 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gMotionVectorProgram.mName = "Motion Vectors";       // <FS> native only (native/manifest.txt, family post): no stock files
         gMotionVectorProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gMotionVectorProgram.createShader();
+        llassert(success);
+    }
+
+    if (success)
+    {
+        gWorldDepthSnapProgram.mName = "World Depth Snapshot";       // <FS> native only (native/manifest.txt, family post)
+        gWorldDepthSnapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = gWorldDepthSnapProgram.createShader();
         llassert(success);
     }
 

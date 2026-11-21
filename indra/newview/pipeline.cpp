@@ -1148,6 +1148,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         {
             // motion vectors at the render size; the upscaled picture at the window size
             if (!mMotionMap.allocate(resX, resY, TexelFormat::RG16F)) return false;
+            if (!mWorldDepthMap.allocate(resX, resY, TexelFormat::R32F)) return false;     // <FS> the world pass's depth for the motion pass (snapshotWorldDepth)
             if (!mUpscaledMap.allocate(window_res_x, window_res_y, TexelFormat::RGBA8)) return false;
             // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the neural renderer's output, window size
             if (neuralRenderMode() != 0 && RKVkBridge::neuralRenderAvailable())
@@ -1168,6 +1169,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         else
         {
             mMotionMap.release();
+            mWorldDepthMap.release();
+            mWorldDepthValid = false;
             mUpscaledMap.release();
             mNROutput.release();
             mNROutputRender.release();
@@ -1552,6 +1555,8 @@ void LLPipeline::releaseScreenBuffers()
     mLightMapHalf.release();
     mLightMapHalf2.release();
     mMotionMap.release();
+    mWorldDepthMap.release();
+    mWorldDepthValid = false;
     mRtBlocker.release();
     mRtShadowTemp.release();
     mRtSunHard.release();
@@ -20679,6 +20684,24 @@ void LLPipeline::visualizeRtMaterials(LLRenderTarget* dst)
 S32 rrDebugMode();      // the test switch of ray reconstruction (below)
 S32 rrBlurForce();
 
+void LLPipeline::snapshotWorldDepth()
+{
+    mWorldDepthValid = false;
+    if (!motion_fold_active() || !mWorldDepthMap.isComplete() || !gWorldDepthSnapProgram.isComplete())
+    {
+        return;
+    }
+    LL_PROFILE_GPU_ZONE("world depth snapshot");
+    RenderPassScope pass(mWorldDepthMap);
+    RKRenderState::DepthScope depth(false, false);
+    gWorldDepthSnapProgram.bind();
+    gWorldDepthSnapProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
+    mScreenTriangleVB->setBuffer();
+    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    gWorldDepthSnapProgram.unbind();
+    mWorldDepthValid = true;
+}
+
 void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
 {
     LL_PROFILE_GPU_ZONE("motion vectors");
@@ -20701,6 +20724,16 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     }
     static LLStaticHashedString use_avatar_s("use_avatar");
     gMotionVectorProgram.uniform1f(use_avatar_s, fold ? 2.f : 0.f);
+    // <FS> the world pass's depth, when it was kept this frame: where the final depth is nearer something drew over the pixel after the world pass (fullbright writes no motion)
+    static const bool snapshot_on = !getenv("RK_VK_MOTIONSNAP") || atoi(getenv("RK_VK_MOTIONSNAP")) != 0;
+    const bool snapshot = fold && snapshot_on && mWorldDepthValid && mWorldDepthMap.isComplete();
+    if (snapshot)
+    {
+        gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mWorldDepthMap, false, LLTexUnit::TFO_POINT);
+    }
+    static LLStaticHashedString use_snapshot_s("use_snapshot");
+    gMotionVectorProgram.uniform1f(use_snapshot_s, snapshot ? 1.f : 0.f);
+    mWorldDepthValid = false;
     static LLStaticHashedString to_cur_s("to_cur"), to_prev_s("to_prev"), res_s("render_res");
     gMotionVectorProgram.uniformMatrix4fv(to_cur_s, 1, false, glm::value_ptr(to_cur));
     gMotionVectorProgram.uniformMatrix4fv(to_prev_s, 1, false, glm::value_ptr(to_prev));

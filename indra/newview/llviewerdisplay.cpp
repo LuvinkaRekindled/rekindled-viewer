@@ -1415,6 +1415,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         (void)rt;
         { RK_CPU_ZONE("display: deferredScreen flush"); world_pass.end(); }
         gPipeline.rtSceneEarly(2);      // <FS> RK_VK_RT_EARLY=2: after the G-buffer (diagnostic)
+        gPipeline.snapshotWorldDepth(); // <FS> before the post-deferred geometry (fullbright) draws over the depth: the motion pass compares it with the final depth
 
         if (LLPipeline::sRenderDeferred)
         {

@@ -171,6 +171,9 @@ public:
     void updateJitter();                                // call right before the main scene's setup3DRender
     void noteSceneMatrices();                           // call at the end of the main scene render
     void generateMotionVectors(LLRenderTarget* dst);    // camera motion from depth and the last two view-projection matrices, in render pixels
+    // <FS> the depth of the world pass kept as a texture (R32F) before the post-deferred geometry draws over it: the motion pass drops the world pass's motion where the final depth is nearer (a fullbright wall in
+    // front of a dancer; fullbright writes no motion). Call right after the main view's world pass.
+    void snapshotWorldDepth();
     // <FS> resolved_input: the source is ray reconstruction's one-to-one output (PLAN-dlss-nr.md section 8, "denoise first"): the super resolution call gets a jitter of zero
     bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst);
     bool applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst);    // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): src (window size, finished) -> dst; false: nothing was done
@@ -208,6 +211,8 @@ public:
     LLRenderTarget          mLightMapHalf;                      // <FS> shaders from scratch (PLAN-shaders-rewrite.md): the sun lightmap at half resolution (native sun program, upsampled by the native upsample program), key lightmap_half
     LLRenderTarget          mRtBlocker;                         // <FS> PLAN-rt-shadow-penumbra.md step 1: the blocker distance of the sun lightmap's centre ray (R16F, copied from the lightmap's attachment 1 right after the sun pass)
     LLRenderTarget          mMotionMap;
+    LLRenderTarget          mWorldDepthMap;                     // <FS> R32F, render size: the world pass's depth (snapshotWorldDepth)
+    bool                    mWorldDepthValid = false;           // <FS> the snapshot was made this frame
     LLRenderTarget          mUpscaledMap;
     LLRenderTarget          mNROutput;      // <FS> DLSS-NR: window size RGBA16F, only with RK_VK_DLSS_NR >= 2 (the position after the upscale)
     LLRenderTarget          mNROutputRender;    // <FS> DLSS-NR: render size RGBA16F (the position before the upscale)

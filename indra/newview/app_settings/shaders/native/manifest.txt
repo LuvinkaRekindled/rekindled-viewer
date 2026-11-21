@@ -101,6 +101,7 @@ override | Deferred PBR Terrain Shader -4 paintmap flat pull | pbrterrain.vert |
 override | Deferred PBR Terrain Shader -4 paintmap triplanar pull | pbrterrain.vert | pbrterrain.frag | gbuffer | define PBR_TERRAIN_PASS=1 | define TERRAIN_PAINT_TYPE=1 | default on
 override | Luminance | fullscreen.vert | luminance.frag | post | default on
 override | Motion Vectors | fullscreen.vert | motionvectors.frag | post | default on
+override | World Depth Snapshot | fullscreen.vert | depth_snap.frag | post | default on
 override | Deferred Tonemap Post Process | fullscreen.vert | tonemap.frag | post | default on
 override | No Post Tonemap Post Process | fullscreen.vert | tonemap.frag | post | define NO_POST=1 | default on
 override | Deferred Tonemap Gamma Post Process | fullscreen.vert | tonemap.frag | post | define GAMMA_CORRECT=1 | default on
