@@ -14799,6 +14799,14 @@ static bool shadow_lod_one(const GeoRange& r, U32 lvl, F32 error, int& snapshots
 // The caller decides.
 bool rk_rigged_lod_lookup(const GeoRange& r, F32 error_m, U32& ib_name, U32& count)
 {
+    // RK_VK_RIGLODMIN (triangles, default 5000): the main view takes a simplified list only for a draw of at least that many triangles. The lists of the draws below it made ragged holes in far clothes from about 6 m (2026-11-22,
+    // a default avatar in a leather outfit; clean at 5000 and 10000, some holes back at 2500, all of them at 500, none with RK_VK_RIGLOD=0 or in stock, which has no such lists). The big draws, hair cards of tens of
+    // thousands of triangles, carry most of the saving. The shadow casters are not asked here. 0 = every draw the cache takes (500 and more).
+    static const U32 min_indices = []() { const char* v = getenv("RK_VK_RIGLODMIN"); return (v ? (U32)llmax(atoi(v), 0) : 5000u) * 3u; }();
+    if (r.mCount < min_indices)
+    {
+        return false;
+    }
     const int level = (int)floorf(log2f(error_m * 1000.f));
     if (level < 1)
     {

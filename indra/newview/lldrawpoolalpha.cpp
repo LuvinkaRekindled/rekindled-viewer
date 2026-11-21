@@ -707,6 +707,12 @@ static bool rigged_lod_for(const GeoRange& range, LLVOAvatar* avatar, U32& ib_na
 {
     ib_name = 0;
     count = 0;
+    // RK_VK_RIGLOD=0 keeps every rigged draw's own index list in the main view (a switch for the far clothes: see RK_VK_RIGLODMIN in pipeline.cpp)
+    static const bool lod_on = []() { const char* v = getenv("RK_VK_RIGLOD"); return !v || atoi(v) != 0; }();
+    if (!lod_on)
+    {
+        return false;
+    }
     extern bool gSnapshot;
     if (gSnapshot || LLPipeline::sRenderingHUDs || LLPipeline::sImpostorRender || LLViewerCamera::sCurCameraID != LLViewerCamera::CAMERA_WORLD)
     {
