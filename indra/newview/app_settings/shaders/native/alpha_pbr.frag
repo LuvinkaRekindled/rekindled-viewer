@@ -38,6 +38,11 @@ void main()
     water_clip(vary_position);
 
     const vec4 base = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slots.x))], vary_tc_base);
+    // the draw's alpha cutoff, as the lit and fullbright alpha shaders have it (this one had none: see lib/material.glsl)
+    if (base.a * vertex_color.a < minimum_alpha)
+    {
+        discard;
+    }
     const vec3 color_factor = vertex_color.rgb * srgb_to_linear(base.rgb);      // (the vertex colour is not converted: the viewer's glTF blend does not either)
 
     // the normal map (a draw without one has slot 0: the flat normal)

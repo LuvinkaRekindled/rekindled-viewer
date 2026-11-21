@@ -238,5 +238,11 @@ vec4 shade_material(vec3 pos, vec4 texel, vec4 vcolor, vec3 vnorm, vec3 vtangent
 
     glare = min(glare * (1.0 - emissive), 1.0);
     const float alpha = max(diffcol.a, glare) * vcolor.a;
+    // the draw's alpha cutoff, as shade_lit and shade_fullbright have it (the material path had none: a rigged hair with a normal or specular map ignored RenderRiggedAlphaDepthCutoff, and every texel of its
+    // cards, the transparent ones too, wrote depth and cut a ring out of the alpha layers behind it: the user 2026-11-21)
+    if (alpha < minimum_alpha)
+    {
+        discard;
+    }
     return max(vec4(color * (classic_mode > 0 ? 1.1 : 1.0), alpha), vec4(0.0));
 }
