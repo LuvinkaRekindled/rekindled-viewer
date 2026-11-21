@@ -703,6 +703,7 @@ const Program::PacketUniforms& Program::packetUniforms()
         mPacketU.mImpostors = find("rk_impostor_table");
         mPacketU.mMotion = find("rk_packet_motion");
         mPacketU.mPalIds = find("rk_packet_palids");        // D5 step 4: the frame's palette table of a rigged program
+        mPacketU.mProj = find("rk_packet_proj");            // the pass's projection of a rigged program (a rigged vertex is projected from its eye space position, as the stock programs do)
         mPacketU.mResolved = true;
     }
     return mPacketU;

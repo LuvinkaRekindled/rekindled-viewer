@@ -75,7 +75,13 @@ void main()
 #endif
 
     const vec4 eye = rig_transform(model.mv, vertex, rig_anchor);
+#ifdef HAS_SKIN
+    // A rigged vertex is a world coordinate (130 and more on a region): one combined matrix applied to it gives clip z and w rounding errors that do not agree (about 1e-5 each, 1e-6 of depth, half a millimetre
+    // at 7 m), and a hair layer lying on the head tied with it in patches. As the stock programs and avatar.vert do: the eye space position first (its errors move z and w together), then the projection.
+    gl_Position = rk_packet_proj[0][0] != 0.0 ? rk_packet_proj * eye : rig_transform(model.mvp, vertex, rig_anchor);       // (all zeros: no projection was set for this draw)
+#else
     gl_Position = rig_transform(model.mvp, vertex, rig_anchor);
+#endif
     // the matrices of the scene table are in GL clip space (z in [-w, w], what the viewer's own shaders compute); Vulkan's is [0, w]. Every viewer vertex shader gets this line from the translator; a program
     // that takes its matrix from the table has to do it itself, or its depth is wrong (the first native alpha test drew a sign over the tree in front of it).
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;

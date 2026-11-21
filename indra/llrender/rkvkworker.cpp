@@ -10328,6 +10328,10 @@ void geo_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const S32 table_words[2] = { (S32)(U32)table_address, (S32)(U32)(table_address >> 32) };
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
+    if (pu.mProj != ~0u)
+    {   // a rigged program projects its eye space position with the projection of this pass (the matrices of the models table were made from the same one)
+        program->setFloatsAt(pu.mProj, proj, 16, 1);
+    }
     if (persistent_rows)
     {
         const U64 palids_address = (U64)sGeo.mPalIdTable.mAddress;
@@ -10949,6 +10953,10 @@ void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     const S32 models_words[2] = { (S32)(U32)models_address, (S32)(U32)(models_address >> 32) };
     const S32 texmats_words[2] = { (S32)(U32)texmats_address, (S32)(U32)(texmats_address >> 32) };
     program->setFloatsAt(pu.mTable, reinterpret_cast<const F32*>(table_words), 2, 1);
+    if (pu.mProj != ~0u)
+    {   // the projection of the pass (its begin record's view and projection, from which the models table was made)
+        program->setFloatsAt(pu.mProj, pass.mVP + 16, 16, 1);
+    }
     if (persistent_alpha_rows)
     {
         const U64 palids_address = (U64)sGeo.mPalIdTable.mAddress;

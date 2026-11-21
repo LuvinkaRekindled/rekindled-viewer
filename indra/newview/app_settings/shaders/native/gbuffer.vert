@@ -71,8 +71,14 @@ void main()
     const vec3 rig_anchor = vec3(0.0);
     vary_normal = normalize(mat3(model.n0.xyz, model.n1.xyz, model.n2.xyz) * normal);
 #endif
-    vary_position = rig_transform(model.mv, vertex, rig_anchor).xyz;
+    const vec4 eye = rig_transform(model.mv, vertex, rig_anchor);
+    vary_position = eye.xyz;
+#ifdef HAS_SKIN
+    // a rigged vertex: the eye space position first, then the projection, as the stock programs do (a combined matrix on a world coordinate gives clip z and w errors that do not agree: see alpha.vert)
+    gl_Position = rk_packet_proj[0][0] != 0.0 ? rk_packet_proj * eye : rig_transform(model.mvp, vertex, rig_anchor);       // (all zeros: no projection was set for this draw)
+#else
     gl_Position = rig_transform(model.mvp, vertex, rig_anchor);
+#endif
     // (the table's matrices are GL clip space: see alpha.vert)
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
 #if defined(GB_MOTION) && !defined(HAS_SKIN)

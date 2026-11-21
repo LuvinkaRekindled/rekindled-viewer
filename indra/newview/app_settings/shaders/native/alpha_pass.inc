@@ -19,6 +19,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
     uvec2 rk_packet_texmats;
 #ifdef HAS_SKIN
     uvec2 rk_packet_palids;     // D5 step 4: the frame's palette table by palette id index (an address each, rows.glsl row_palette): a persistent rigged row names its palette by id, so it is not copied every frame
+    mat4 rk_packet_proj;        // the pass's projection (GL clip space), set by the worker for a rigged draw (rkvkworker.cpp geo_draw / geo_alpha_draw); all zeros where nothing set it (rows.glsl rig_clip_position)
 #endif
 #ifdef ALPHA_PBR
     uvec2 rk_packet_pbr;        // the glTF material rows of the record (10 vec4 a row: four texture transforms, roughness / metallic / emissive, the cutoff)

@@ -75,7 +75,11 @@ void main()
     const vec3 rig_anchor = vec3(0.0);
 #endif
     const vec4 eye = rig_transform(model.mv, vertex, rig_anchor);
+#ifdef HAS_SKIN
+    gl_Position = rk_packet_proj[0][0] != 0.0 ? rk_packet_proj * eye : rig_transform(model.mvp, vertex, rig_anchor);       // (a rigged vertex: the eye space position first, then the projection: see alpha.vert)
+#else
     gl_Position = rig_transform(model.mvp, vertex, rig_anchor);
+#endif
     // (the table's matrices are GL clip space: see alpha.vert)
     gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
 #if defined(GB_MOTION) && !defined(HAS_SKIN)
