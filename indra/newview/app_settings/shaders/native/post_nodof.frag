@@ -105,7 +105,10 @@ void main()
                     }
                 }
             }
-            depth = min(1.0, hi + (hi - lo) + 1.0e-6);
+            // the margin is for the slope of a surface, as in the bilinear mode: at a depth edge (an avatar in front of a wall) hi - lo is the whole step between the two surfaces, and hi + (hi - lo)
+            // lay behind the wall or past the far plane in the band around every silhouette: tags and hover texts behind the wall showed through there (the user 2026-11-21, along the outline of his avatar)
+            const bool edge = (1.0 - lo) > 1.03 * max(1.0 - hi, 1.0e-7);
+            depth = min(1.0, hi + (edge ? 0.0 : (hi - lo)) + 1.0e-6);
         }
     }
     gl_FragDepth = depth;
