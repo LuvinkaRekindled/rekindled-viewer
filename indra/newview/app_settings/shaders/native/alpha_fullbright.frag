@@ -14,10 +14,12 @@ layout(location = 2) in vec2 vary_texcoord0;
 layout(location = 3) flat in uint vary_slot;
 
 layout(location = 0) out vec4 frag_color;
+#include "lib/cover.glsl"
 
 void main()
 {
     mirror_clip(vary_position);
     water_clip(vary_position);
     frag_color = shade_fullbright(vary_position, texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slot))], vary_texcoord0), vertex_color);
+    rk_write_cover(frag_color.a);
 }

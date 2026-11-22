@@ -1039,6 +1039,12 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     TexelFormat screenFormat = hdr ? TexelFormat::RGBA16F : TexelFormat::RGBA8;
 
     if (!mRT->screen.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
+    // <FS> the blended pass's coverage (lib/cover.glsl): attachment 1 of the screen target, R8, written by the post-deferred pass only (setPassColorCount: every other pass on the target uses attachment 0 alone)
+    if (sDLSS && !gCubeSnapshot && !mRT->screen.addColorAttachment(TexelFormat::R8))
+    {
+        LL_WARNS("VkMotion") << "the coverage attachment of the screen target could not be added" << LL_ENDL;
+        return false;
+    }
 
     mRT->deferredScreen.shareDepthBuffer(mRT->screen);
 
@@ -20575,6 +20581,11 @@ F32 rk_fsr_mask_raw() { return sFsrMask; }
 // rt-debug.txt fsrtc=1 (the same mask is also given to FSR as its transparency and composition mask: it only widens the colour clamp, it does not throw the history away) and fsrgain=G (a factor on the mask
 // as written; with fsrreact=0 the composition mask alone at strength G): the rig's A/B of FSR's second mask input
 static F32 sFsrTc = -1000.f, sFsrGain = -1000.f, sFsrHairMv = -1000.f;
+// rt-debug.txt fsrcover=0 (the reactive mask from the colour difference against a copy of the opaque picture, the old way) / =1 or no line (from the blended pass's own coverage, attachment 1 of the screen target)
+static F32 sFsrCover = -1000.f;
+static bool sCoverageThisFrame = false;       // the post-deferred pass of this frame ran with the coverage attachment (generateReactiveMask reads it)
+bool rk_fsr_cover_on() { return sFsrCover < -999.f || sFsrCover > 0.5f; }
+F32 rk_fsr_cover_raw() { return sFsrCover; }
 F32 rk_fsr_hairmv_raw() { return sFsrHairMv; }
 F32 rk_fsr_tc_raw() { return sFsrTc; }
 F32 rk_fsr_gain_raw() { return sFsrGain; }
@@ -20595,7 +20606,7 @@ static bool pollDlssqOverride()
     S32 v = -1;
     F32 sharp = -1.f;
     F32 tune[4] = { -1000.f, -1000.f, -1000.f, -1000.f };
-    F32 own = -1000.f, lod = -1000.f, move_react = -1000.f, react = -1000.f, mask = -1000.f, tc = -1000.f, gain = -1000.f, hairmv = -1000.f;
+    F32 own = -1000.f, lod = -1000.f, move_react = -1000.f, react = -1000.f, mask = -1000.f, tc = -1000.f, gain = -1000.f, hairmv = -1000.f, cover = -1000.f;
     S32 phases = -1000;
     std::ifstream in("D:/claude/rt-debug.txt");
     std::string line;
@@ -20661,8 +20672,13 @@ static bool pollDlssqOverride()
         {
             hairmv = (F32)atof(line.c_str() + 10);
         }
+        else if (line.compare(0, 9, "fsrcover=") == 0)
+        {
+            cover = (F32)atof(line.c_str() + 9);
+        }
     }
     sFsrHairMv = hairmv;
+    sFsrCover = cover;
     sFsrReact = react;
     sFsrMask = mask;
     sFsrTc = tc;
@@ -20848,9 +20864,12 @@ void LLPipeline::snapshotWorldDepth()
 bool LLPipeline::reactiveMaskWanted() const
 {
     static const bool on = !getenv("RK_VK_FSR_REACTIVE") || atoi(getenv("RK_VK_FSR_REACTIVE")) != 0;
+    // <FS> from the blended pass's own coverage (the screen target's attachment 1) or, with fsrcover=0 or without that attachment, from the colour difference against a copy of the opaque picture
+    const bool coverage = rk_fsr_cover_on() && mRT && mRT->screen.getNumTextures() == 2 && gCoverageClearProgram.isComplete();
     return on && rk_fsr_mask_raw() != 0.f && sDLSS && sRenderDeferred && !gCubeSnapshot && RKVkBridge::upscaleAvailable() && RKVkBridge::upscalerIsFsr()
-           && mOpaqueColorMap.isComplete() && mReactiveMap.isComplete() && gOpaqueSnapProgram.isComplete() && gReactiveMaskProgram.isComplete()
-           && mRT && mRT->screen.getWidth() == mOpaqueColorMap.getWidth() && mRT->screen.getHeight() == mOpaqueColorMap.getHeight()
+           && mReactiveMap.isComplete() && gReactiveMaskProgram.isComplete()
+           && (coverage ? (mRT->screen.getWidth() == mReactiveMap.getWidth() && mRT->screen.getHeight() == mReactiveMap.getHeight())
+                        : (mOpaqueColorMap.isComplete() && gOpaqueSnapProgram.isComplete() && mRT && mRT->screen.getWidth() == mOpaqueColorMap.getWidth() && mRT->screen.getHeight() == mOpaqueColorMap.getHeight()))
            && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
 }
 
@@ -20876,9 +20895,11 @@ void LLPipeline::snapshotOpaqueColor()
 void LLPipeline::generateReactiveMask()
 {
     mReactiveValid = false;
+    const bool have_cover = sCoverageThisFrame;      // (the post-deferred pass of this frame wrote the coverage attachment)
+    sCoverageThisFrame = false;
     const bool have_opaque = mOpaqueColorValid;
     mOpaqueColorValid = false;
-    if (!have_opaque || !reactiveMaskWanted())
+    if (!(have_opaque || have_cover) || !reactiveMaskWanted())
     {
         return;
     }
@@ -20891,7 +20912,14 @@ void LLPipeline::generateReactiveMask()
     RKRenderState::BlendScope blend(false);
     gReactiveMaskProgram.bind();
     gReactiveMaskProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &mRT->screen, false, LLTexUnit::TFO_POINT);
-    gReactiveMaskProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mOpaqueColorMap, false, LLTexUnit::TFO_POINT);
+    if (have_cover)
+    {
+        gReactiveMaskProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mRT->screen, false, LLTexUnit::TFO_POINT, 1);       // (the coverage: attachment 1)
+    }
+    else
+    {
+        gReactiveMaskProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mOpaqueColorMap, false, LLTexUnit::TFO_POINT);
+    }
     // rt-debug.txt fsrmovreact=R (the upscaler rig): every pixel that has motion of its own in the world pass's target gets at least this reactive value (a direction test: does FSR trust its history too much on moving surfaces?)
     const F32 move_react = rk_fsr_movereact_raw() > 0.f ? llclamp(rk_fsr_movereact_raw(), 0.f, 1.f) : 0.f;
     const bool use_move = move_react > 0.f && motion_fold_active();
@@ -20905,7 +20933,9 @@ void LLPipeline::generateReactiveMask()
     gReactiveMaskProgram.uniform1f(use_move_s, use_move ? 1.f : 0.f);
     gReactiveMaskProgram.uniform1f(move_react_s, move_react);
     static LLStaticHashedString gain_s("gain");
-    gReactiveMaskProgram.uniform1f(gain_s, rk_fsr_gain_raw() > -999.f ? rk_fsr_gain_raw() : 1.f);
+    static LLStaticHashedString use_cover_s("use_cover");
+    gReactiveMaskProgram.uniform1f(gain_s, rk_fsr_gain_raw() > -999.f ? rk_fsr_gain_raw() : (have_cover ? 2.f : 1.f));      // (a surface that covers half the pixel counts fully)
+    gReactiveMaskProgram.uniform1f(use_cover_s, have_cover ? 1.f : 0.f);
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     gReactiveMaskProgram.unbind();
@@ -24784,11 +24814,32 @@ void LLPipeline::renderDeferredLighting()
     // <FS> the lit colour before the blended surfaces: the upscaler's reactive mask is where the post-deferred draws changed it (see snapshotOpaqueColor). The pass on the screen is closed for the
     // copy and opened again on the same target with its content kept
     mOpaqueColorValid = false;
+    sCoverageThisFrame = false;
+    bool coverage_pass = false;
     if (reactiveMaskWanted() && screen_target == &mRT->screen)
     {
+        coverage_pass = rk_fsr_cover_on() && mRT->screen.getNumTextures() == 2 && gCoverageClearProgram.isComplete();
         screen_pass.end();
-        snapshotOpaqueColor();
-        screen_pass.begin(*screen_target, RenderPass::LoadOp::Load);
+        if (coverage_pass)
+        {
+            // <FS> the blended draws of this pass write the screen target's attachment 1 too (lib/cover.glsl): it starts at 0, and the pass uses both attachments from here to its end
+            mRT->screen.setPassColorCount(2);
+            screen_pass.begin(*screen_target, RenderPass::LoadOp::Load);
+            {
+                RKRenderState::DepthScope depth(false, false);
+                RKRenderState::BlendScope blend(false);
+                gCoverageClearProgram.bind();
+                mScreenTriangleVB->setBuffer();
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+                gCoverageClearProgram.unbind();
+            }
+            sCoverageThisFrame = true;
+        }
+        else
+        {
+            snapshotOpaqueColor();
+            screen_pass.begin(*screen_target, RenderPass::LoadOp::Load);
+        }
     }
 
     {  // render non-deferred geometry (alpha, fullbright, glow)
@@ -24832,6 +24883,7 @@ void LLPipeline::renderDeferredLighting()
     gRender.setAlphaLights(nullptr, -1);       // (the list is in the view space of this view only)
 
     screen_pass.end();
+    mRT->screen.setPassColorCount(0);       // (the coverage attachment is the blended pass's alone)
 
     if (!gCubeSnapshot)
     {

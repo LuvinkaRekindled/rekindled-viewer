@@ -103,6 +103,7 @@ override | Luminance | fullscreen.vert | luminance.frag | post | default on
 override | Motion Vectors | fullscreen.vert | motionvectors.frag | post | default on
 override | World Depth Snapshot | fullscreen.vert | depth_snap.frag | post | default on
 override | Opaque Colour Snapshot | fullscreen.vert | opaque_snap.frag | post | default on
+override | Coverage Clear | fullscreen.vert | coverage_clear.frag | post | default on
 override | Reactive Mask | fullscreen.vert | reactive_mask.frag | post | default on
 override | Deferred Tonemap Post Process | fullscreen.vert | tonemap.frag | post | default on
 override | No Post Tonemap Post Process | fullscreen.vert | tonemap.frag | post | define NO_POST=1 | default on

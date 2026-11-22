@@ -36,6 +36,7 @@ F32 rk_fsr_mask_raw();          // pipeline.cpp: 0 = no reactive mask (fsrmask),
 bool rk_rig_read_blend(std::vector<U8>& out, S32 w, S32 h);     // pipeline.cpp: this frame's reactive mask as bytes (the blended pixels), false when there is none
 F32 rk_fsr_tc_raw();            // pipeline.cpp: 1 = the mask is also FSR's transparency and composition mask (fsrtc), -1000 = not
 F32 rk_fsr_gain_raw();          // pipeline.cpp: a factor on the mask as written (fsrgain), -1000 = 1
+F32 rk_fsr_cover_raw();          // pipeline.cpp: 0 = the reactive mask from the colour difference, -1000 or 1 = from the blended pass's coverage (fsrcover)
 F32 rk_fsr_hairmv_raw();        // pipeline.cpp: 1 = blended pixels keep the motion of the surface behind them (fsrhairmv), -1000 = off
 
 namespace
@@ -52,7 +53,7 @@ struct RigState
     F32 mCamPrev[6] = {};
     bool mCamHave = false;
     U32 mStable = 0;
-    S32 mKey[18] = {};                           // the input and output sizes and the RCAS strength (thousandths): a change of any of them restarts the wait
+    S32 mKey[19] = {};                           // the input and output sizes and the RCAS strength (thousandths): a change of any of them restarts the wait
     U32 mKeyFrames = 0;
 
     // the reference
@@ -144,6 +145,7 @@ struct AnimState
     std::vector<U8> mBlendAcc;
     F64 mBlSsStill = 0.0, mBlSsPlay = 0.0, mBlFlk = 0.0;
     U64 mBlNStill = 0, mBlNPlay = 0, mBlNFlk = 0;
+    bool mShotRef = false, mShotOut = false, mShotMask = false;      // the one picture of each kind written to D:/claude/run-logs/ (rig-shot-*.ppm / .pgm) per run
     U32 mCycles = 0;                            // the still and play cycles done since the last change of scale: the first one is still settling (its still error is up to 3 times the later ones')
 };
 
@@ -310,6 +312,10 @@ std::string tune_text(const S32* key)
     if (key[17] > -900000)
     {
         o << " hairmv " << std::fixed << std::setprecision(1) << key[17] / 1000.0;
+    }
+    if (key[18] > -900000)
+    {
+        o << " cover " << std::fixed << std::setprecision(1) << key[18] / 1000.0;
     }
     return o.str();
 }
@@ -501,6 +507,30 @@ void poll_anim_key()
         }
     }
     sAnim.mEngaged = on;
+}
+
+// one picture of the run for the eye (what the numbers are about): the target's colour as a P6 file
+void dump_ppm(LLRenderTarget& t, S32 w, S32 h, const char* path)
+{
+    std::vector<U8> rgba((size_t)w * h * 4);
+    {
+        RenderPassScope pass(t);
+        gRender.readPixels(0, 0, w, h, PixelFormat::RGBA, ComponentType::U8, rgba.data());
+    }
+    std::ofstream f(path, std::ios::binary);
+    f << "P6\n" << w << " " << h << "\n255\n";
+    std::vector<U8> row((size_t)w * 3);
+    for (S32 j = h - 1; j >= 0; --j)        // (readPixels starts at the bottom row)
+    {
+        for (S32 i = 0; i < w; ++i)
+        {
+            const U8* px = &rgba[((size_t)j * w + i) * 4];
+            row[(size_t)i * 3] = px[0];
+            row[(size_t)i * 3 + 1] = px[1];
+            row[(size_t)i * 3 + 2] = px[2];
+        }
+        f.write((const char*)row.data(), (std::streamsize)row.size());
+    }
 }
 
 void read_lum(LLRenderTarget& t, S32 w, S32 h, std::vector<F32>& y)
@@ -726,10 +756,25 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
             return;
         }
         read_lum(in, w, h, y);
+        if (sAnim.mPose == 1 && !sAnim.mShotRef)
+        {
+            sAnim.mShotRef = true;
+            dump_ppm(in, w, h, "D:/claude/run-logs/rig-shot-ref.ppm");
+        }
         {
             std::vector<U8> mk;
             if (rk_rig_read_blend(mk, w, h))
             {
+                if (sAnim.mPose == 1 && !sAnim.mShotMask)
+                {
+                    sAnim.mShotMask = true;
+                    std::ofstream m("D:/claude/run-logs/rig-shot-mask.pgm", std::ios::binary);
+                    m << "P5\n" << w << " " << h << "\n255\n";
+                    for (S32 j = h - 1; j >= 0; --j)
+                    {
+                        m.write((const char*)&mk[(size_t)j * w], (std::streamsize)w);
+                    }
+                }
                 if (sAnim.mBlendAcc.size() != mk.size())
                 {
                     sAnim.mBlendAcc.assign(mk.size(), 0);
@@ -775,6 +820,30 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
                     count += bl[k];
                 }
                 LL_INFOS("RigMetrics") << "animation blended pixels of pose " << p << " (the reactive mask above 0.05 in any reference frame): " << count << " of " << bl.size() << LL_ENDL;
+                if (p == 1 && w >= 16 && h >= 9)
+                {
+                    // where they are: the share of each cell of a 16 x 9 grid (row by row, percent of the cell's pixels), numbers only
+                    std::ostringstream g;
+                    g << "animation blended pixels of pose 1 by cell (16 x 9, percent of the cell, rows from the top):";
+                    for (int cy = 0; cy < 9; ++cy)
+                    {
+                        g << " |";
+                        for (int cx = 0; cx < 16; ++cx)
+                        {
+                            const S32 x0 = cx * w / 16, x1 = (cx + 1) * w / 16, y0 = cy * h / 9, y1 = (cy + 1) * h / 9;
+                            U64 n = 0;
+                            for (S32 y = y0; y < y1; ++y)
+                            {
+                                for (S32 x = x0; x < x1; ++x)
+                                {
+                                    n += bl[(size_t)y * w + x];
+                                }
+                            }
+                            g << " " << (int)(100.0 * (F64)n / (F64)std::max<S32>(1, (x1 - x0) * (y1 - y0)) + 0.5);
+                        }
+                    }
+                    LL_INFOS("RigMetrics") << g.str() << LL_ENDL;
+                }
             }
             LL_INFOS("RigMetrics") << "animation reference pose " << p << " (frame " << sAnim.mPoseX[p] << " of the window): " << sAnim.mSamples << " frames averaged, jitter floor rmse " << sAnim.mFloor[p] << " sharpness " << sAnim.mRefSharp[p] << LL_ENDL;
             if (p + 1 < kPoses)
@@ -820,6 +889,11 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
             return;
         }
         read_lum(out, w, h, y);
+        if (sAnim.mPose == 1 && !sAnim.mShotOut && !native)
+        {
+            sAnim.mShotOut = true;
+            dump_ppm(out, w, h, "D:/claude/run-logs/rig-shot-out.ppm");
+        }
         sAnim.mAccRmse += rmse_vs(y, sAnim.mRef[sAnim.mPose]);
         sAnim.mAccSharp += sharpness(y, w, h);
         anim_accum_categories(y, sAnim.mPose, sAnim.mCatSsStill, sAnim.mCatNStill);
@@ -1055,7 +1129,7 @@ void rk_rig_metrics(LLRenderTarget& out, LLRenderTarget& in, U32 frame)
     }
 
     // the camera and the picture sizes must have been unchanged for WARM frames (a moving camera, a changed render scale and the history that follows both spoil every number); with the sway the camera is its base pose
-    const S32 key[18] = {(S32)in.getWidth(), (S32)in.getHeight(), w, h, (S32)(rk_fsr_sharp_now() * 1000.f + 0.5f), (S32)(rk_fsr_tune(0) * 1000.f), (S32)(rk_fsr_tune(1) * 1000.f), (S32)(rk_fsr_tune(2) * 1000.f), (S32)(rk_fsr_tune(3) * 1000.f), (S32)(rk_fsr_own_raw() * 1000.f), (S32)(rk_fsr_lod_raw() * 1000.f), (S32)rk_fsr_phases_raw(), (S32)(rk_fsr_movereact_raw() * 1000.f), (S32)(rk_fsr_react_raw() * 1000.f), (S32)(rk_fsr_mask_raw() * 1000.f), (S32)(rk_fsr_tc_raw() * 1000.f), (S32)(rk_fsr_gain_raw() * 1000.f), (S32)(rk_fsr_hairmv_raw() * 1000.f) };
+    const S32 key[19] = {(S32)in.getWidth(), (S32)in.getHeight(), w, h, (S32)(rk_fsr_sharp_now() * 1000.f + 0.5f), (S32)(rk_fsr_tune(0) * 1000.f), (S32)(rk_fsr_tune(1) * 1000.f), (S32)(rk_fsr_tune(2) * 1000.f), (S32)(rk_fsr_tune(3) * 1000.f), (S32)(rk_fsr_own_raw() * 1000.f), (S32)(rk_fsr_lod_raw() * 1000.f), (S32)rk_fsr_phases_raw(), (S32)(rk_fsr_movereact_raw() * 1000.f), (S32)(rk_fsr_react_raw() * 1000.f), (S32)(rk_fsr_mask_raw() * 1000.f), (S32)(rk_fsr_tc_raw() * 1000.f), (S32)(rk_fsr_gain_raw() * 1000.f), (S32)(rk_fsr_hairmv_raw() * 1000.f), (S32)(rk_fsr_cover_raw() * 1000.f) };
     F32 cam[6];
     cam_now(cam);
     F64 dp = 0.0, da = 0.0;

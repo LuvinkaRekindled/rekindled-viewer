@@ -21,10 +21,13 @@ layout(location = 1) in vec2 vary_texcoord0;
 layout(location = 2) in vec3 vary_normal;
 
 layout(location = 0) out vec4 frag_color;
+#define COVER_STATIC 0.35      // (the system avatar's clothing alpha moves with the body: the class of a rigged surface)
+#include "lib/cover.glsl"
 
 void main()
 {
     mirror_clip(vary_position);
     const vec4 texel = texture(rk_tbl2d[nonuniformEXT(RK_HM(rk_ti_diffuseMap))], vary_texcoord0);
     frag_color = shade_lit(vary_position, vary_normal, texel, vec4(1.0));
+    rk_write_cover(frag_color.a);
 }

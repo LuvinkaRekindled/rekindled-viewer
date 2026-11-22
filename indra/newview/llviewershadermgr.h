@@ -241,6 +241,7 @@ extern RKShaderProgram         gExposureProgramNoFade;
 extern RKShaderProgram         gLuminanceProgram;
 extern RKShaderProgram         gMotionVectorProgram;
 extern RKShaderProgram         gOpaqueSnapProgram;            // <FS> the lit scene colour before the post-deferred geometry (opaque_snap.frag)
+extern RKShaderProgram         gCoverageClearProgram;         // <FS> sets the blended pass's coverage attachment to 0 (coverage_clear.frag)
 extern RKShaderProgram         gReactiveMaskProgram;          // <FS> the upscaler's reactive mask (reactive_mask.frag)
 extern RKShaderProgram         gWorldDepthSnapProgram;       // <FS> the world pass's depth as a colour texture (depth_snap.frag)
 extern RKShaderProgram         gRtShadowFilterProgram;        // <FS> the penumbra of the ray traced sun shadow from the blocker distance (rtShadowFilterF.glsl)

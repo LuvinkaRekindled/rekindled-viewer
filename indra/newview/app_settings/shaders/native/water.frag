@@ -47,6 +47,7 @@ layout(location = 1) in vec4 littleWave;
 layout(location = 2) in vec4 view;
 layout(location = 3) in vec3 vary_position;
 layout(location = 0) out vec4 frag_color;
+#include "lib/cover.glsl"
 
 // the plane's frame in eye space: x, the normal (z up in world) and the cross of the two
 vec3 vN, vT, vB;
@@ -229,4 +230,5 @@ void main()
     color = mix(fb.rgb, color, min(1.0, fade * 60.0));
 
     frag_color = min(vec4(1.0), max(vec4(color, 0.0), vec4(0.0)));      // (the alpha of the old shader was min(brightest glint, 0) times the mask: always 0)
+    rk_write_cover(1.0);        // (the water replaces the pixel: its shading changes by itself, waves and reflections)
 }

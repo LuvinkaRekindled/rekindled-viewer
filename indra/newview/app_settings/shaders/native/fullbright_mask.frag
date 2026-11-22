@@ -16,6 +16,7 @@ layout(location = 5) flat in float vary_cutoff;
 #endif
 
 layout(location = 0) out vec4 frag_color;
+#include "lib/cover.glsl"
 
 void main()
 {
@@ -46,4 +47,5 @@ void main()
 #endif
 
     frag_color = max(color, vec4(0));
+    rk_write_cover(frag_color.a);
 }

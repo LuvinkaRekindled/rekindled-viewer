@@ -31,6 +31,7 @@ layout(location = 10) flat in vec2 vary_factors;
 layout(location = 11) flat in vec3 vary_emissive;
 
 layout(location = 0) out vec4 frag_color;
+#include "lib/cover.glsl"
 
 void main()
 {
@@ -108,4 +109,5 @@ void main()
     color = apply_sky_and_water_fog(pos, additive, atten, color);
 
     frag_color = max(vec4(color * (classic_mode > 0 ? 1.1 : 1.0), base.a * vertex_color.a), vec4(0.0));
+    rk_write_cover(frag_color.a);
 }

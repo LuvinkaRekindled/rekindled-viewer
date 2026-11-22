@@ -412,7 +412,7 @@ void LLRenderTarget::bindImpl(const char* file, int line, bool restore, ClearBit
         sBoundTarget = this;
         noteClear(file, line);
     }
-    RKVkAsync::passBegin(mFBO, mTex.empty() ? 0 : (S32)mTex.size(), 0, 0, (S32)mResX, (S32)mResY, hasBits(clears, ClearBits::Color), hasBits(clears, ClearBits::Depth), clear_color,
+    RKVkAsync::passBegin(mFBO, mTex.empty() ? 0 : (S32)((mPassColorCount && mPassColorCount < mTex.size()) ? mPassColorCount : mTex.size()), 0, 0, (S32)mResX, (S32)mResY, hasBits(clears, ClearBits::Color), hasBits(clears, ClearBits::Depth), clear_color,
                          restore ? RKVkAsync::PASS_RESUME : RKVkAsync::PASS_NEW, file, line);
     RKShaderProgram::announceBound();
     sCurResX = mResX;

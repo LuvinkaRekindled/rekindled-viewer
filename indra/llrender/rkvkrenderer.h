@@ -59,6 +59,8 @@ public:
     // S6 (alpha run cost): the indices of the packet table uniforms (~0u: the program has none), looked up by name once per program, not per record
     struct PacketUniforms { bool mResolved = false; U32 mTable = ~0u, mModels = ~0u, mTexmats = ~0u, mPbr = ~0u, mLights = ~0u, mImpostors = ~0u, mMotion = ~0u, mPalIds = ~0u, mProj = ~0u; };
     const PacketUniforms& packetUniforms();
+    // the colour attachments (bit i = location i) the fragment shader has an output for, from its SPIR-V (all of them when it has none to read): a pass with more attachments than a program writes must not touch the others
+    U32 outputMask();
     // scalar / vector floats or ints; for arrays 'count' elements are written with std140 stride
     bool setFloats(const std::string& name, const F32* data, U32 components, U32 count = 1);
     bool setInts(const std::string& name, const S32* data, U32 components, U32 count = 1);
@@ -117,6 +119,8 @@ private:
     VkShaderModule mModules[3] = {};
     std::unordered_map<std::string, size_t> mUniformIndex;
     PacketUniforms mPacketU;
+    U32 mOutputMask = 0xFFu;
+    bool mOutputMaskDone = false;
     std::unordered_map<std::string, U32> mSamplerIndex;
     std::vector<U32> mSamplerUnits;
     std::vector<U8> mSamplerClass;      // 0 2D, 1 cube, 2 cube array, 3 2D array, 4 3D, 5 multisample (index into the GL per-unit texture bindings)
@@ -703,6 +707,7 @@ private:
     bool mDepthRO = false;          // depth attachment is also sampled: bound read-only
     const Image* mDepthRORoot = nullptr;   // the depth image the read-only binding was chosen for
     U32 mAppliedColorCount = 0xFFFF;
+    U32 mAppliedOutputMask = 0xFFFFFFFFu;     // (the colour write mask of each attachment follows the bound program's outputs: Program::outputMask)
 
     // draw state
     Program* mProgram = nullptr;

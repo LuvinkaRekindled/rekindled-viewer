@@ -45,6 +45,7 @@ layout(location = 14) flat in vec2 vary_matparams;
 #endif
 
 layout(location = 0) out vec4 frag_color;
+#include "lib/cover.glsl"
 
 void main()
 {
@@ -52,20 +53,27 @@ void main()
     water_clip(vary_position);
 
     const vec4 texel = texture(rk_tbl2d[nonuniformEXT(RK_HM(vary_slot))], vary_texcoord0);
+    vec4 result;
+    bool done = false;
 #ifdef ALPHA_MAT
     if ((vary_material & 1u) != 0u)
     {
-        frag_color = shade_material(vary_position, texel, vertex_color, vary_norm, vary_tangent, vary_sign, vary_texcoord0, vary_texcoord1, vary_texcoord2,
-                                    vary_material, vary_slot_normal, vary_slot_specular, vary_specular, vary_matparams);
-        return;
+        result = shade_material(vary_position, texel, vertex_color, vary_norm, vary_tangent, vary_sign, vary_texcoord0, vary_texcoord1, vary_texcoord2,
+                                vary_material, vary_slot_normal, vary_slot_specular, vary_specular, vary_matparams);
+        done = true;
     }
 #endif
 #ifdef ALPHA_UBER
-    if (vary_fullbright != 0u)
+    if (!done && vary_fullbright != 0u)
     {
-        frag_color = shade_fullbright(vary_position, texel, vertex_color);
-        return;
+        result = shade_fullbright(vary_position, texel, vertex_color);
+        done = true;
     }
 #endif
-    frag_color = shade_lit(vary_position, vary_norm, texel, vertex_color);       // (lib/shade_lit.glsl, shared with avatar_alpha.frag)
+    if (!done)
+    {
+        result = shade_lit(vary_position, vary_norm, texel, vertex_color);       // (lib/shade_lit.glsl, shared with avatar_alpha.frag)
+    }
+    frag_color = result;
+    rk_write_cover(result.a);
 }

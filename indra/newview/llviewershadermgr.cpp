@@ -235,6 +235,7 @@ RKShaderProgram            gExposureProgramNoFade;
 RKShaderProgram            gLuminanceProgram;
 RKShaderProgram            gMotionVectorProgram;
 RKShaderProgram            gOpaqueSnapProgram;             // <FS> the lit scene colour before the post-deferred geometry (native/opaque_snap.frag)
+RKShaderProgram            gCoverageClearProgram;          // <FS> sets the blended pass's coverage attachment to 0 (native/coverage_clear.frag)
 RKShaderProgram            gReactiveMaskProgram;           // <FS> the upscaler's reactive mask from the opaque colour and the finished one (native/reactive_mask.frag)
 RKShaderProgram            gWorldDepthSnapProgram;        // <FS> the world pass's depth as a colour texture, for the motion pass (native/depth_snap.frag)
 RKShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra of the ray traced sun shadow from the blocker distance (PLAN-rt-shadow-penumbra.md)
@@ -2031,6 +2032,14 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gOpaqueSnapProgram.mName = "Opaque Colour Snapshot";       // <FS> native only (native/manifest.txt, family post): the upscaler's reactive mask (native/reactive_mask.frag)
         gOpaqueSnapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gOpaqueSnapProgram.createShader();
+        llassert(success);
+    }
+
+    if (success)
+    {
+        gCoverageClearProgram.mName = "Coverage Clear";
+        gCoverageClearProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = gCoverageClearProgram.createShader();
         llassert(success);
     }
 

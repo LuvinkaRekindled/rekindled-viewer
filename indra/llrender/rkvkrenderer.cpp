@@ -686,6 +686,52 @@ static void note_uniform_write(const std::string& program, const LooseUniform& u
     s.mSize = std::max<U32>(s.mSize, bytes);
 }
 
+U32 Program::outputMask()
+{
+    if (mOutputMaskDone)
+    {
+        return mOutputMask;
+    }
+    mOutputMaskDone = true;
+    mOutputMask = 0xFFu;
+    const std::vector<U32>& w = mInfo.mSpirv[1];
+    if (w.size() < 8 || w[0] != 0x07230203u)
+    {
+        return mOutputMask;
+    }
+    // the variables of the Output storage class (OpVariable 59, storage class 3) that carry a Location decoration (OpDecorate 71, decoration 30): the colour outputs
+    std::unordered_map<U32, U32> location;
+    std::unordered_set<U32> outputs;
+    for (size_t at = 5; at < w.size();)
+    {
+        const U32 op = w[at] & 0xFFFFu, count = w[at] >> 16;
+        if (!count || at + count > w.size())
+        {
+            return mOutputMask;      // (not what we think it is: keep every attachment writable)
+        }
+        if (op == 71 && count >= 4 && w[at + 2] == 30)
+        {
+            location[w[at + 1]] = w[at + 3];
+        }
+        else if (op == 59 && count >= 4 && w[at + 3] == 3)
+        {
+            outputs.insert(w[at + 2]);
+        }
+        at += count;
+    }
+    U32 mask = 0;
+    for (U32 id : outputs)
+    {
+        auto it = location.find(id);
+        if (it != location.end() && it->second < 8)
+        {
+            mask |= 1u << it->second;
+        }
+    }
+    mOutputMask = mask;
+    return mOutputMask;
+}
+
 const Program::PacketUniforms& Program::packetUniforms()
 {
     if (!mPacketU.mResolved)
@@ -2250,6 +2296,7 @@ void Renderer::beginFrame(VkCommandBuffer cmd, U32 frame_slot)
     mStateApplied = false;
     mDepthRO = false;
     mAppliedColorCount = 0xFFFF;
+    mAppliedOutputMask = 0xFFFFFFFFu;
     mBoundPipeline = VK_NULL_HANDLE;
     mBoundIndexBuffer = VK_NULL_HANDLE;
     mUboKeyDirty = true;
@@ -3820,9 +3867,12 @@ void Renderer::applyState()
         vkCmdSetStencilReference(mCmd, VK_STENCIL_FACE_FRONT_AND_BACK, mDepthStencil.mReference);
         mAppliedDepthStencil = mDepthStencil;
     }
-    if (!mStateApplied || !(mBlend == mAppliedBlend) || mColorCount != mAppliedColorCount)
+    // (a pass with more attachments than the program has outputs: the others are not written, what the program does not output stays as it was)
+    const U32 out_mask = mProgram ? mProgram->outputMask() : 0xFFu;
+    if (!mStateApplied || !(mBlend == mAppliedBlend) || mColorCount != mAppliedColorCount || out_mask != mAppliedOutputMask)
     {
         mDiagChanged = true;
+        mAppliedOutputMask = out_mask;
         const VkBool32 enable = mBlend.mEnable ? VK_TRUE : VK_FALSE;
         VkBool32 enables[8];
         VkColorBlendEquationEXT eqs[8];
@@ -3831,7 +3881,7 @@ void Renderer::applyState()
         {
             enables[i] = enable;
             eqs[i] = { mBlend.mSrcColor, mBlend.mDstColor, mBlend.mColorOp, mBlend.mSrcAlpha, mBlend.mDstAlpha, mBlend.mAlphaOp };
-            masks[i] = mBlend.mWriteMask;
+            masks[i] = (out_mask >> i) & 1u ? mBlend.mWriteMask : 0;
         }
         if (mColorCount)
         {
@@ -4682,6 +4732,7 @@ bool Renderer::splitFrame(bool signal, U64& value)
     mPendingClear = 0;
     mStateApplied = false;
     mAppliedColorCount = 0xFFFF;
+    mAppliedOutputMask = 0xFFFFFFFFu;
     mBoundPipeline = VK_NULL_HANDLE;
     mBoundIndexBuffer = VK_NULL_HANDLE;
     mUboKeyDirty = true;

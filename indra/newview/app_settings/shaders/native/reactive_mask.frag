@@ -9,7 +9,8 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
     float react_high;       // the relative change that counts fully (default 0.25)
     float use_move;         // 1: the specularRect is the world pass's motion target (the upscaler rig's fsrmovreact): a pixel with motion of its own gets at least move_react
     float move_react;
-    float gain;             // a factor on the finished mask (the upscaler rig's fsrgain=; 1 normally)
+    float gain;             // a factor on the finished mask (the upscaler rig's fsrgain=; 1 normally, 2 from the coverage)
+    float use_cover;        // 1: the emissiveRect is the blended pass's coverage (attachment 1 of the screen target, lib/cover.glsl) and the mask is made from it: the share of the pixel the blended surfaces cover, by class
 };
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
@@ -24,12 +25,20 @@ layout(location = 0) out vec4 frag_color;
 
 void main()
 {
-    vec3 now = texture(rk_tbl2d[RK_HM(rk_ti_diffuseMap)], vary_fragcoord).rgb;
-    vec3 before = texture(rk_tbl2d[RK_HM(rk_ti_emissiveRect)], vary_fragcoord).rgb;
-    float change = max(abs(now.r - before.r), max(abs(now.g - before.g), abs(now.b - before.b)));
-    float level = max(max(now.r, max(now.g, now.b)), max(before.r, max(before.g, before.b)));
-    float rel = change / (level + 0.02);
-    float mask = clamp((rel - react_low) / max(react_high - react_low, 1.0e-4), 0.0, 1.0);
+    float mask;
+    if (use_cover > 0.5)
+    {
+        mask = texture(rk_tbl2d[RK_HM(rk_ti_emissiveRect)], vary_fragcoord).r;
+    }
+    else
+    {
+        vec3 now = texture(rk_tbl2d[RK_HM(rk_ti_diffuseMap)], vary_fragcoord).rgb;
+        vec3 before = texture(rk_tbl2d[RK_HM(rk_ti_emissiveRect)], vary_fragcoord).rgb;
+        float change = max(abs(now.r - before.r), max(abs(now.g - before.g), abs(now.b - before.b)));
+        float level = max(max(now.r, max(now.g, now.b)), max(before.r, max(before.g, before.b)));
+        float rel = change / (level + 0.02);
+        mask = clamp((rel - react_low) / max(react_high - react_low, 1.0e-4), 0.0, 1.0);
+    }
     if (use_move > 0.5)
     {
         const vec2 own = texture(rk_tbl2d[RK_HM(rk_ti_specularRect)], vary_fragcoord).rg;

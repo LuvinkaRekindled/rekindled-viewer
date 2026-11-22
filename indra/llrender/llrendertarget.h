@@ -147,6 +147,8 @@ public:
 
     U32 getTexture(U32 attachment = 0) const;
     U32 getNumTextures() const;
+    // <FS> the passes that begin on this target use its first n colour attachments only (0 = all of them): a target that has an attachment only one pass writes (the blended pass's coverage on the screen target)
+    void setPassColorCount(U32 n) { mPassColorCount = n; }
 
     U32 getDepth(void) const { return mDepth; }
 
@@ -189,6 +191,7 @@ protected:
     U32 mResX;
     U32 mResY;
     std::vector<U32> mTex;
+    U32 mPassColorCount = 0;
     std::vector<TexelFormat> mInternalFormat;
     U32 mFBO;
 
