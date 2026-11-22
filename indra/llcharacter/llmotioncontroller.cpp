@@ -968,6 +968,8 @@ void LLMotionController::updateMotions(bool force_update)
 // shared state (asset requests, motion registry) so it must run on the main thread.
 // Returns true if finishUpdateMotions() has to be called to complete the update.
 //-----------------------------------------------------------------------------
+bool (*LLMotionController::sAnimTimeHook)(LLMotionController*, F32&) = nullptr;
+
 bool LLMotionController::beginUpdateMotions(bool force_update)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
@@ -1025,6 +1027,14 @@ bool LLMotionController::beginUpdateMotions(bool force_update)
         else
         {
             mAnimTime = update_time;
+            if (sAnimTimeHook)
+            {
+                F32 rig_time = 0.f;
+                if (sAnimTimeHook(this, rig_time))
+                {
+                    mAnimTime = rig_time;       // <FS> the numeric rig's clock (a function of the frame count)
+                }
+            }
         }
     }
 

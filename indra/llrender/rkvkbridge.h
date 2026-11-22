@@ -106,6 +106,7 @@ namespace RKVkBridge
         U32 mRenderWidth = 0, mRenderHeight = 0, mOutputWidth = 0, mOutputHeight = 0;
         F32 mJitterX = 0.f, mJitterY = 0.f;             // this frame's jitter in render pixels (+x right, +y down)
         F32 mMotionScaleX = 1.f, mMotionScaleY = 1.f;
+        F32 mSharpness = 0.f;                           // <FS> FSR's RCAS sharpening, 0 (off) to 1
         S32 mReset = 0;                                 // the history is useless (camera cut)
         S32 mHdr = 0;                                   // the colour is linear HDR
         S32 mPreset = 0;                                // DLSS-NR's model preset (local builds)

@@ -14,6 +14,10 @@
 #include <sstream>
 #include <vector>
 
+#include <chrono>
+
+#include "llframetimer.h"
+#include "llmotioncontroller.h"
 #include "llrender.h"
 #include "llrendertarget.h"
 #include "llviewercamera.h"
@@ -21,6 +25,7 @@
 
 extern bool gSnapshot;
 extern bool gCubeSnapshot;
+F32 rk_fsr_sharp_now();         // pipeline.cpp: the strength of FSR's RCAS sharpening asked for in rt-debug.txt (fsrsharp=), 0 = off
 
 namespace
 {
@@ -36,7 +41,7 @@ struct RigState
     F32 mCamPrev[6] = {};
     bool mCamHave = false;
     U32 mStable = 0;
-    S32 mKey[4] = {};
+    S32 mKey[5] = {};                           // the input and output sizes and the RCAS strength (thousandths): a change of any of them restarts the wait
     U32 mKeyFrames = 0;
 
     // the reference
@@ -80,8 +85,44 @@ struct SwayState
     U32 mBurstsDone = 0;
 };
 
+// the animation case (RK_VK_RIG_ANIM=1): the own avatar's animation with its clock made a function of the frame count (LLMotionController::sAnimTimeHook), so a pose repeats exactly. The clock is frozen at
+// kPoses poses of a window of the running animation (the references are built from 64 jittered frames of each frozen pose, the still error is measured on each), then runs forward over the window and back (a period of
+// 2 M frames, no jump) while the output is compared with the same references at the frames where it passes the poses.
+constexpr int kPoses = 4;
+
+struct AnimState
+{
+    bool mEnabled = false;
+    F32 mDt = 1.f / 150.f;                      // the animation time one frame advances (RK_VK_RIG_ANIM_FPS)
+    U32 mM = 150;                               // the window in frames, one way (RK_VK_RIG_ANIM_FRAMES)
+    U32 mPoseX[kPoses] = {};                    // the poses, in frames into the window
+    bool mEngaged = false;                      // rt-debug.txt riganim=1: the rig takes the clock over (the animation must be running)
+    bool mHaveBase = false;
+    F32 mBase = 0.f;
+    int mClock = 0;                             // 0 natural, 1 frozen at mFreezeX, 2 playing
+    U32 mFreezeX = 0, mPlayStart = 0;
+    int mStage = 0;                             // 0 waiting, 1 reference, 2 still, 3 play warm-up, 4 play measuring
+    int mPose = 0;
+    U32 mStageFrames = 0, mSamples = 0;
+    bool mRefBuilt = false;
+    bool mTold = false, mToldWait = false;
+    std::vector<F32> mRef[kPoses];
+    F64 mFloor[kPoses] = {}, mRefSharp[kPoses] = {};
+    std::vector<F64> mSum, mSumSq;
+    F64 mAccRmse = 0.0, mAccSharp = 0.0;
+    F64 mStillRmse[kPoses] = {}, mStillSharp[kPoses] = {};
+    U32 mPlayN[2][kPoses] = {};
+    F64 mPlayRmse[2][kPoses] = {}, mPlaySharp = 0.0;
+    U32 mPlaySharpN = 0;
+    F64 mInRmse[kPoses] = {};
+    U32 mInN[kPoses] = {};
+};
+
+bool anim_time_hook(LLMotionController* mc, F32& t);
+
 RigState sRig;
 SwayState sSway;
+AnimState sAnim;
 
 void init()
 {
@@ -99,6 +140,20 @@ void init()
     if (const char* v = getenv("RK_VK_RIG_FRAMES")) sRig.mFrames = (U32)std::max(3, atoi(v));
     if (const char* v = getenv("RK_VK_RIG_GAP")) sRig.mGap = (U32)std::max(0, atoi(v));
     if (const char* v = getenv("RK_VK_RIG_REF")) sRig.mRefPath = v;
+    if (const char* v = getenv("RK_VK_RIG_ANIM"))
+    {
+        sAnim.mEnabled = atoi(v) != 0;
+        if (const char* f = getenv("RK_VK_RIG_ANIM_FPS")) sAnim.mDt = 1.f / (F32)std::max(10, atoi(f));
+        if (const char* f = getenv("RK_VK_RIG_ANIM_FRAMES")) sAnim.mM = (U32)std::max(40, atoi(f));
+        for (int i = 0; i < kPoses; ++i)
+        {
+            sAnim.mPoseX[i] = (U32)(2 * i + 1) * sAnim.mM / (U32)(2 * kPoses);
+        }
+        if (sAnim.mEnabled)
+        {
+            LLMotionController::sAnimTimeHook = &anim_time_hook;
+        }
+    }
     if (const char* v = getenv("RK_VK_RIG_SWAY_PERIOD")) sSway.mPeriod = (U32)std::max(8, atoi(v)) & ~1u;
     if (const char* v = getenv("RK_VK_RIG_SWAY"))
     {
@@ -245,7 +300,7 @@ void end_burst(const S32* key, U32 frame)
         const F64 flk = sRig.mFlk / n, flk_sd = sqrt(std::max(0.0, sRig.mFlk2 / n - flk * flk));
         std::ostringstream o;
         o << std::fixed << std::setprecision(5) << "burst " << ++sRig.mBursts << " at frame " << sRig.mBurstStart << ".." << frame << " (" << sRig.mCount << " frames) scale " << std::setprecision(3) << (F64)key[0] / (F64)key[2]
-          << " input " << key[0] << "x" << key[1] << " output " << key[2] << "x" << key[3] << std::setprecision(5) << ": flicker mean " << flk << " sd " << flk_sd << " p99 " << sRig.mP99 / n << " changed>4/255 " << sRig.mFrac / n
+          << " input " << key[0] << "x" << key[1] << " output " << key[2] << "x" << key[3] << " rcas " << std::setprecision(2) << key[4] / 1000.0 << std::setprecision(5) << ": flicker mean " << flk << " sd " << flk_sd << " p99 " << sRig.mP99 / n << " changed>4/255 " << sRig.mFrac / n
           << " edge " << sRig.mEdge / n << " flat " << sRig.mFlat / n << " | sharpness " << sRig.mSharp / n;
         if (!sRig.mRefBuilt)
         {
@@ -317,6 +372,337 @@ void start_sway(U32 frame, S32 out_h)
     sSway.mRmse = sSway.mRmse2 = sSway.mSharp = 0.0;
 }
 
+// ---- the animation case ----
+
+U32 clock_x(U32 frame)
+{
+    if (sAnim.mClock == 1)
+    {
+        return sAnim.mFreezeX;
+    }
+    const U32 period = 2 * sAnim.mM;
+    const U32 ph = (frame - sAnim.mPlayStart) % period;
+    return ph < sAnim.mM ? ph : period - ph;
+}
+
+bool anim_time_hook(LLMotionController* mc, F32& t)
+{
+    if (!sAnim.mEnabled || !sAnim.mEngaged || !mc->mIsSelf || sAnim.mClock == 0)
+    {
+        return false;
+    }
+    if (!sAnim.mHaveBase)
+    {
+        sAnim.mBase = mc->getAnimTime();
+        sAnim.mHaveBase = true;
+        LL_INFOS("RigMetrics") << "animation clock taken over: base time " << sAnim.mBase << " s, a window of " << sAnim.mM << " frames of " << sAnim.mDt * 1000.f << " ms, period " << 2 * sAnim.mM << " frames" << LL_ENDL;
+    }
+    t = sAnim.mBase + (F32)clock_x(LLFrameTimer::getFrameCount()) * sAnim.mDt;
+    return true;
+}
+
+void poll_anim_key()
+{
+    static std::chrono::steady_clock::time_point last;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::milliseconds(500))
+    {
+        return;
+    }
+    last = now;
+    bool on = false;
+    std::ifstream in("D:/claude/rt-debug.txt");
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.compare(0, 8, "riganim=") == 0)
+        {
+            on = atoi(line.c_str() + 8) != 0;
+        }
+    }
+    sAnim.mEngaged = on;
+}
+
+void read_lum(LLRenderTarget& t, S32 w, S32 h, std::vector<F32>& y)
+{
+    std::vector<U8> rgba((size_t)w * h * 4);
+    {
+        RenderPassScope pass(t);
+        gRender.readPixels(0, 0, w, h, PixelFormat::RGBA, ComponentType::U8, rgba.data());
+    }
+    luminance(rgba, (size_t)w * h, y);
+}
+
+F64 rmse_vs(const std::vector<F32>& a, const std::vector<F32>& b)
+{
+    if (a.size() != b.size() || a.empty())
+    {
+        return -1.0;
+    }
+    F64 se = 0.0;
+    for (size_t k = 0; k < a.size(); ++k)
+    {
+        const F64 e = (F64)a[k] - (F64)b[k];
+        se += e * e;
+    }
+    return sqrt(se / (F64)a.size());
+}
+
+void anim_reset()
+{
+    sAnim.mStage = 0;
+    sAnim.mClock = 0;
+    sAnim.mPose = 0;
+    sAnim.mStageFrames = 0;
+    sAnim.mSamples = 0;
+    sAnim.mSum.clear();
+    sAnim.mSumSq.clear();
+}
+
+void anim_begin_freeze(int pose)
+{
+    sAnim.mPose = pose;
+    sAnim.mClock = 1;
+    sAnim.mFreezeX = sAnim.mPoseX[pose];
+    sAnim.mStageFrames = 0;
+    sAnim.mSamples = 0;
+    sAnim.mAccRmse = sAnim.mAccSharp = 0.0;
+    sAnim.mSum.clear();
+    sAnim.mSumSq.clear();
+}
+
+void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h, const S32* key)
+{
+    poll_anim_key();
+    if (!sAnim.mEngaged)
+    {
+        anim_reset();
+        return;
+    }
+    const U32 kWarm = 150, kRefFrames = 64, kStillFrames = 40, kPlayPeriods = 6;
+    const U32 period = 2 * sAnim.mM;
+    const F64 scale = (F64)key[0] / (F64)key[2];
+    const bool native = key[0] == w && key[1] == h;
+    std::vector<F32> y;
+
+    if (sAnim.mStage == 0)
+    {
+        if (!sAnim.mRefBuilt)
+        {
+            if (!native)
+            {
+                if (!sAnim.mToldWait)
+                {
+                    sAnim.mToldWait = true;
+                    LL_INFOS("RigMetrics") << "animation case: waiting for the render scale 1.0 to build the references (the input is " << key[0] << "x" << key[1] << ", the output " << w << "x" << h << ")" << LL_ENDL;
+                }
+                return;
+            }
+            sAnim.mStage = 1;
+            anim_begin_freeze(0);
+        }
+        else
+        {
+            sAnim.mStage = 2;
+            anim_begin_freeze(0);
+        }
+        return;
+    }
+
+    if (sAnim.mStage == 1)
+    {
+        // the reference of a pose: 64 jittered frames of the 100 percent input at the frozen clock
+        if (!native)
+        {
+            anim_reset();
+            return;
+        }
+        // (the first reference needs longer: after a render scale change the exposure and the history are still settling, and pose 0's jitter floor was 4 times the others' on 2026-11-22 with 150 frames)
+        if (++sAnim.mStageFrames <= (sAnim.mPose == 0 ? 3 * kWarm : kWarm))
+        {
+            return;
+        }
+        read_lum(in, w, h, y);
+        if (sAnim.mSum.empty())
+        {
+            sAnim.mSum.assign(y.size(), 0.0);
+            sAnim.mSumSq.assign(y.size(), 0.0);
+        }
+        for (size_t k = 0; k < y.size(); ++k)
+        {
+            sAnim.mSum[k] += y[k];
+            sAnim.mSumSq[k] += (F64)y[k] * y[k];
+        }
+        if (++sAnim.mSamples >= kRefFrames)
+        {
+            const int p = sAnim.mPose;
+            const F64 n = (F64)sAnim.mSamples;
+            std::vector<F32>& ref = sAnim.mRef[p];
+            ref.resize(sAnim.mSum.size());
+            F64 var_sum = 0.0;
+            for (size_t k = 0; k < ref.size(); ++k)
+            {
+                const F64 mean = sAnim.mSum[k] / n;
+                ref[k] = (F32)mean;
+                var_sum += std::max(0.0, sAnim.mSumSq[k] / n - mean * mean);
+            }
+            sAnim.mFloor[p] = sqrt(var_sum / (F64)ref.size());
+            sAnim.mRefSharp[p] = sharpness(ref, w, h);
+            LL_INFOS("RigMetrics") << "animation reference pose " << p << " (frame " << sAnim.mPoseX[p] << " of the window): " << sAnim.mSamples << " frames averaged, jitter floor rmse " << sAnim.mFloor[p] << " sharpness " << sAnim.mRefSharp[p] << LL_ENDL;
+            if (p + 1 < kPoses)
+            {
+                anim_begin_freeze(p + 1);
+            }
+            else
+            {
+                std::ostringstream o;
+                o << std::fixed << std::setprecision(5) << "animation references built; rmse between the poses (is anything moving?):";
+                for (int a = 0; a < kPoses; ++a)
+                {
+                    for (int b = a + 1; b < kPoses; ++b)
+                    {
+                        o << " " << a << "-" << b << " " << rmse_vs(sAnim.mRef[a], sAnim.mRef[b]);
+                    }
+                }
+                LL_INFOS("RigMetrics") << o.str() << LL_ENDL;
+                sAnim.mRefBuilt = true;
+                sAnim.mStage = 2;
+                anim_begin_freeze(0);
+            }
+        }
+        return;
+    }
+
+    if (sAnim.mStage == 2)
+    {
+        // the still error of a pose at this scale
+        if (++sAnim.mStageFrames <= kWarm)
+        {
+            return;
+        }
+        read_lum(out, w, h, y);
+        sAnim.mAccRmse += rmse_vs(y, sAnim.mRef[sAnim.mPose]);
+        sAnim.mAccSharp += sharpness(y, w, h);
+        if (++sAnim.mSamples >= kStillFrames)
+        {
+            const int p = sAnim.mPose;
+            sAnim.mStillRmse[p] = sAnim.mAccRmse / (F64)sAnim.mSamples;
+            sAnim.mStillSharp[p] = sAnim.mAccSharp / (F64)sAnim.mSamples;
+            if (p + 1 < kPoses)
+            {
+                anim_begin_freeze(p + 1);
+            }
+            else
+            {
+                std::ostringstream o;
+                F64 mr = 0.0, ms = 0.0;
+                o << std::fixed << std::setprecision(5) << "animation still, scale " << std::setprecision(3) << scale << " rcas " << std::setprecision(2) << key[4] / 1000.0 << std::setprecision(5) << ": rmse per pose";
+                for (int i = 0; i < kPoses; ++i)
+                {
+                    o << " " << sAnim.mStillRmse[i];
+                    mr += sAnim.mStillRmse[i];
+                    ms += sAnim.mStillSharp[i];
+                }
+                o << " | mean rmse " << mr / kPoses << " sharpness " << ms / kPoses;
+                LL_INFOS("RigMetrics") << o.str() << LL_ENDL;
+                sAnim.mStage = 3;
+                sAnim.mClock = 2;
+                sAnim.mPlayStart = frame + 1;
+                sAnim.mStageFrames = 0;
+            }
+        }
+        return;
+    }
+
+    if (sAnim.mStage == 3)
+    {
+        if (++sAnim.mStageFrames >= 2 * period)
+        {
+            sAnim.mStage = 4;
+            sAnim.mStageFrames = 0;
+            memset(sAnim.mPlayN, 0, sizeof(sAnim.mPlayN));
+            memset(sAnim.mPlayRmse, 0, sizeof(sAnim.mPlayRmse));
+            memset(sAnim.mInN, 0, sizeof(sAnim.mInN));
+            memset(sAnim.mInRmse, 0, sizeof(sAnim.mInRmse));
+            sAnim.mPlaySharp = 0.0;
+            sAnim.mPlaySharpN = 0;
+        }
+        return;
+    }
+
+    // stage 4: playing; at the frames where the clock passes a pose (forward and back) the output is compared with that pose's reference
+    ++sAnim.mStageFrames;
+    const U32 ph = (frame - sAnim.mPlayStart) % period;
+    for (int i = 0; i < kPoses; ++i)
+    {
+        const int dir = ph == sAnim.mPoseX[i] ? 0 : (ph == period - sAnim.mPoseX[i] ? 1 : -1);
+        if (dir < 0)
+        {
+            continue;
+        }
+        read_lum(out, w, h, y);
+        sAnim.mPlayRmse[dir][i] += rmse_vs(y, sAnim.mRef[i]);
+        ++sAnim.mPlayN[dir][i];
+        sAnim.mPlaySharp += sharpness(y, w, h);
+        ++sAnim.mPlaySharpN;
+        if (native)
+        {
+            // at 100 percent the input at this pose against the frozen reference: the clock repeats the pose if this is near the jitter floor
+            std::vector<F32> yi;
+            read_lum(in, w, h, yi);
+            sAnim.mInRmse[i] += rmse_vs(yi, sAnim.mRef[i]);
+            ++sAnim.mInN[i];
+        }
+        break;
+    }
+    if (sAnim.mStageFrames >= kPlayPeriods * period)
+    {
+        std::ostringstream o;
+        F64 fwd = 0.0, back = 0.0, mean = 0.0, still = 0.0, still_sharp = 0.0;
+        o << std::fixed << std::setprecision(5) << "animation play, scale " << std::setprecision(3) << scale << " rcas " << std::setprecision(2) << key[4] / 1000.0 << std::setprecision(5) << " (" << kPlayPeriods << " periods): rmse forward";
+        for (int i = 0; i < kPoses; ++i)
+        {
+            const F64 f = sAnim.mPlayN[0][i] ? sAnim.mPlayRmse[0][i] / sAnim.mPlayN[0][i] : 0.0;
+            fwd += f;
+            o << " " << f;
+        }
+        o << " back";
+        for (int i = 0; i < kPoses; ++i)
+        {
+            const F64 b = sAnim.mPlayN[1][i] ? sAnim.mPlayRmse[1][i] / sAnim.mPlayN[1][i] : 0.0;
+            back += b;
+            o << " " << b;
+            still += sAnim.mStillRmse[i];
+            still_sharp += sAnim.mStillSharp[i];
+        }
+        fwd /= kPoses;
+        back /= kPoses;
+        mean = 0.5 * (fwd + back);
+        still /= kPoses;
+        still_sharp /= kPoses;
+        const F64 sharp = sAnim.mPlaySharpN ? sAnim.mPlaySharp / (F64)sAnim.mPlaySharpN : 0.0;
+        o << " | mean " << mean << " (forward " << fwd << " back " << back << ") sharpness " << sharp << " | still mean " << still << " sharpness " << still_sharp << " | EXCESS from the animation: rmse +" << mean - still
+          << std::setprecision(1) << " (" << (still > 0.0 ? 100.0 * (mean / still - 1.0) : 0.0) << " %), sharpness " << (still_sharp > 0.0 ? 100.0 * (sharp / still_sharp - 1.0) : 0.0) << " %" << std::setprecision(5);
+        if (native)
+        {
+            F64 ratio = 0.0;
+            int n = 0;
+            for (int i = 0; i < kPoses; ++i)
+            {
+                if (sAnim.mInN[i] && sAnim.mFloor[i] > 0.0)
+                {
+                    ratio += (sAnim.mInRmse[i] / sAnim.mInN[i]) / sAnim.mFloor[i];
+                    ++n;
+                }
+            }
+            o << " | repeat check (input vs frozen reference / jitter floor, 1 = exact): " << std::setprecision(2) << (n ? ratio / n : 0.0);
+        }
+        LL_INFOS("RigMetrics") << o.str() << LL_ENDL;
+        sAnim.mStage = 2;
+        anim_begin_freeze(0);
+    }
+}
+
 }
 
 void rk_rig_camera_sway(U32 frame)
@@ -360,7 +746,7 @@ void rk_rig_metrics(LLRenderTarget& out, LLRenderTarget& in, U32 frame)
     }
 
     // the camera and the picture sizes must have been unchanged for WARM frames (a moving camera, a changed render scale and the history that follows both spoil every number); with the sway the camera is its base pose
-    const S32 key[4] = { (S32)in.getWidth(), (S32)in.getHeight(), w, h };
+    const S32 key[5] = { (S32)in.getWidth(), (S32)in.getHeight(), w, h, (S32)(rk_fsr_sharp_now() * 1000.f + 0.5f) };
     F32 cam[6];
     cam_now(cam);
     F64 dp = 0.0, da = 0.0;
@@ -377,6 +763,10 @@ void rk_rig_metrics(LLRenderTarget& out, LLRenderTarget& in, U32 frame)
     sRig.mKeyFrames = key_changed ? 0 : sRig.mKeyFrames + 1;
     if (moved || key_changed)
     {
+        if (sAnim.mEnabled)
+        {
+            anim_reset();
+        }
         reset_burst();
         reset_sway();
         sRig.mAcc.clear();
@@ -386,6 +776,13 @@ void rk_rig_metrics(LLRenderTarget& out, LLRenderTarget& in, U32 frame)
     }
     if (sRig.mStable < sRig.mWarm || sRig.mKeyFrames < sRig.mWarm)
     {
+        return;
+    }
+
+    if (sAnim.mEnabled)
+    {
+        // the animation case replaces the still and sway cases of this run
+        anim_step(out, in, frame, w, h, key);
         return;
     }
 
@@ -468,7 +865,7 @@ void rk_rig_metrics(LLRenderTarget& out, LLRenderTarget& in, U32 frame)
                 F64 d2, d3;
                 std::ostringstream o;
                 o << std::fixed << std::setprecision(5) << "sway burst " << ++sSway.mBurstsDone << " at frames " << sSway.mStart << ".. (" << sSway.mCrossings << " crossings of the rest pose) scale " << std::setprecision(3)
-                  << (F64)key[0] / (F64)key[2] << " peak speed " << sSway.mSpeeds[sSway.mSpeedIdx] << " output px/frame (period " << sSway.mPeriod << " frames, +-" << sSway.mTheta0 * 180.f / (F32)F_PI << " deg)" << std::setprecision(5)
+                  << (F64)key[0] / (F64)key[2] << " rcas " << std::setprecision(2) << key[4] / 1000.0 << std::setprecision(3) << " peak speed " << sSway.mSpeeds[sSway.mSpeedIdx] << " output px/frame (period " << sSway.mPeriod << " frames, +-" << sSway.mTheta0 * 180.f / (F32)F_PI << " deg)" << std::setprecision(5)
                   << ": rmse vs reference " << rmse << " sd " << sd << " psnr " << (rmse > 1e-9 ? -20.0 * log10(rmse) : 99.0) << " | sharpness " << sharp;
                 if (camera_is_reference(d2, d3) && sRig.mStaticRmse >= 0.0)
                 {

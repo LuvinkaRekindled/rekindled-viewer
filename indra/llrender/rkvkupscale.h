@@ -27,6 +27,7 @@ namespace RKVkUpscale
         U32 mOutputWidth = 0, mOutputHeight = 0;
         float mJitterX = 0.f, mJitterY = 0.f;   // pixels of the render size, +x right, +y down
         float mMotionScaleX = 1.f, mMotionScaleY = 1.f;
+        float mSharpness = 0.f;             // FSR's RCAS sharpening, 0 (off) to 1
         bool mReset = false;                // history is useless (camera cut)
         bool mHdr = false;                  // the colour is linear HDR rather than display-referred
         float mCameraNear = 0.1f, mCameraFar = 512.f;   // metres

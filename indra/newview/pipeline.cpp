@@ -20533,6 +20533,12 @@ static F32 halton(U32 index, U32 base)
 // <FS> D:/claude/rt-debug.txt dlssq=N (default -1: the setting RKVkDLSSQuality decides): the DLSS quality changed live without touching the setting, so one lap can compare qualities in turn
 // (the key driver of the lap scripts, a same-lap A/B). Read here, by the viewer, once per half second: the ray scene's reader only runs with ray tracing on. Returns true when the value changed.
 static S32 sDlssqOverride = -1;
+static F32 sFsrSharpOverride = -1.f;        // rt-debug.txt fsrsharp=S (0 to 1): the strength of FSR's RCAS sharpening, live; -1 (no line) = none, the sharpening stays off
+
+F32 rk_fsr_sharp_now()
+{
+    return sFsrSharpOverride > 0.f ? sFsrSharpOverride : 0.f;
+}
 
 static bool pollDlssqOverride()
 {
@@ -20544,6 +20550,7 @@ static bool pollDlssqOverride()
     }
     last = now;
     S32 v = -1;
+    F32 sharp = -1.f;
     std::ifstream in("D:/claude/rt-debug.txt");
     std::string line;
     while (std::getline(in, line))
@@ -20552,7 +20559,12 @@ static bool pollDlssqOverride()
         {
             v = atoi(line.c_str() + 6);
         }
+        else if (line.compare(0, 9, "fsrsharp=") == 0)
+        {
+            sharp = (F32)atof(line.c_str() + 9);
+        }
     }
+    sFsrSharpOverride = sharp;
     if (v == sDlssqOverride)
     {
         return false;
@@ -21258,6 +21270,7 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
     a.mOutputHeight = dst->getHeight();
     a.mJitterX = LLViewerCamera::sJitterPixels.x;
     a.mJitterY = LLViewerCamera::sJitterPixels.y;
+    a.mSharpness = llclamp(rk_fsr_sharp_now(), 0.f, 1.f);
     a.mCameraNear = LLViewerCamera::getInstance()->getNear();
     a.mCameraFar = LLViewerCamera::getInstance()->getFar();
     // <FS> the depth buffer holds depth of the projection the world was drawn with (LLViewerWindow::setup3DRender: far MAX_FAR_CLIP * 2 = 1024), not of the culling camera's far (the draw distance:

@@ -413,8 +413,9 @@ bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
     d.motionVectorScale = { p.mMotionScaleX * mv_x, p.mMotionScaleY * mv_y };
     d.renderSize = { p.mRenderWidth, p.mRenderHeight };
     d.upscaleSize = { p.mOutputWidth, p.mOutputHeight };
-    d.enableSharpening = false;             // (the viewer's own CAS pass follows)
-    d.sharpness = 0.f;
+    // FSR's RCAS, the last pass of the upscale: off by default (the viewer's own CAS pass is skipped with an upscaler on, so with 0 nothing sharpens). The strength is given by the caller, 0 to 1 (rt-debug.txt fsrsharp=)
+    d.enableSharpening = p.mSharpness > 0.f;
+    d.sharpness = p.mSharpness > 0.f ? (p.mSharpness > 1.f ? 1.f : p.mSharpness) : 0.f;
     d.frameTimeDelta = p.mFrameTimeMs;
     d.preExposure = 1.f;
     d.reset = p.mReset;

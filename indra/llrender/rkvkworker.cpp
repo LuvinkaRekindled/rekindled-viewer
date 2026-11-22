@@ -15091,6 +15091,7 @@ void on_upscale(const RKVkBridge::UpscaleArgs& a)
     p.mJitterY = a.mJitterY;
     p.mMotionScaleX = a.mMotionScaleX;
     p.mMotionScaleY = a.mMotionScaleY;
+    p.mSharpness = a.mSharpness;
     p.mReset = a.mReset != 0;
     p.mHdr = a.mHdr != 0;
     p.mCameraNear = a.mCameraNear;

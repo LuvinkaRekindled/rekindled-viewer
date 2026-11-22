@@ -86,6 +86,10 @@ public:
     typedef std::set<LLMotion*> motion_set_t;
     bool mIsSelf;
 
+    // <FS> the numeric rig (doc/vulkan/PLAN-fsr-specialised.md stage 0, RK_VK_RIG_ANIM): when set, it may replace a controller's animation clock with a function of the frame count, so that a pose repeats
+    // exactly. Returns true with the time to use. Null (and then nothing changes) unless the rig sets it.
+    static bool (*sAnimTimeHook)(LLMotionController*, F32& time);
+
 public:
     // Constructor
     LLMotionController();
