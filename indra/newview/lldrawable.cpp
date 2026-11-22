@@ -2049,6 +2049,16 @@ bool LLSpatialBridge::updateMove()
 void LLSpatialBridge::shiftPos(const LLVector4a& vec)
 {
     LLDrawable::shift(vec);
+    // <FS> 2026-11-22: the box a plain attachment's bridge holds (the avatar's, world space) moves with the world as well: left in the old frame it is what updateSpatialExtents hands out while mConservative is set,
+    // and the avatar's own box takes the extents of its non-rigged attachments' bridges in at its next recompute, so a stale held box poisoned the avatar's box after a region change
+    if (mConservative)
+    {
+        for (int k = 0; k < 3; ++k)
+        {
+            mConsMin[k] += vec[k];
+            mConsMax[k] += vec[k];
+        }
+    }
 }
 
 void LLSpatialBridge::cleanupReferences()

@@ -1245,6 +1245,7 @@ public:
     // LLFrameTimer (once a frame) is used, not the drawable's visible stamp, which counts twice a frame (the idle update and the display) and is one behind at the cull
     U32             mOwnerListedFrame = 0;
     bool            ownerListedRecently() const;
+    U32             mBoxOffFrames = 0;      // <FS> 2026-11-22: frames in a row the own avatar's box was more than 40 m from the avatar (updateCharacter logs it once at 30: see onShift)
     virtual bool    shouldRenderRigged() const;
     void            setVisibilityRank(U32 rank);
     U32             getVisibilityRank() const { return mVisibilityRank; }

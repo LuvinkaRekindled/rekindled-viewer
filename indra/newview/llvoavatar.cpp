@@ -1561,6 +1561,10 @@ void LLVOAvatar::onShift(const LLVector4a& shift_vector)
     const LLVector3& shift = reinterpret_cast<const LLVector3&>(shift_vector);
     mLastAnimExtents[0] += shift;
     mLastAnimExtents[1] += shift;
+    // <FS> 2026-11-22: the base position moves with the boxes. updateSpatialExtents adds (pelvis now - mLastAnimBasePos) to the boxes on every frame that is not a full recompute: with the base left in the old
+    // frame that second shift put the avatar's box off by the region offset after every region change (a teleport, a border crossing) until the next recompute (every 4 frames alone, 80 among 100 avatars). Since
+    // 2026-11-17 the box is all that lists the avatar for drawing, so it was not drawn while its name tag showed. The boxes now always follow the pelvis, in whichever frame the pelvis is.
+    mLastAnimBasePos += shift;
 }
 
 void LLVOAvatar::updateSpatialExtents(LLVector4a& newMin, LLVector4a &newMax)
@@ -4821,7 +4825,9 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
     LLJoint::sNumUpdates = 0;
     LLJoint::sNumTouches = 0;
 
-    bool visible = isVisible() || mNeedsAnimUpdate;
+    // <FS> 2026-11-22: the viewer's own avatar always runs its attachment loop as a visible avatar: since 2026-11-17 an avatar that is not listed counts as not visible (it used to count as visible once it had no
+    // region group), and an unlisted own avatar then stopped refreshing the boxes its attachments hold, which is what kept it unlisted after a region change
+    bool visible = isVisible() || mNeedsAnimUpdate || isSelf();
 
     // update attachments positions
     if (detailed_update)
@@ -7539,7 +7545,7 @@ void RKAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
             r.mInFrustum = LLViewerCamera::getInstance()->AABBInFrustum(center, half) != 0;
         }
         r.mBits = (av->isSelf() || r.mInFrustum || av->nameTagBusy()) ? BIT_NAME_TAG : 0;
-        r.mBits |= (r.mMode == MODE_POSE && r.mVisible) ? BIT_ATTACHMENT_LOOP : 0;
+        r.mBits |= (r.mMode == MODE_POSE && (r.mVisible || av->isSelf())) ? BIT_ATTACHMENT_LOOP : 0;      // (the own avatar: see idleUpdateMisc, an unlisted own avatar still keeps its attachments' boxes)
         if (!voice_participants.empty())
         {
             r.mVoice = voice_participants.count(av->getID()) != 0;
@@ -7701,6 +7707,29 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         return false;
     }
     ensureJointLocals();        // <FS> stage C: the joints' locals live in the flat array (main thread, before this frame's jobs)
+
+    // <FS> 2026-11-22: the own avatar's box is what lists it for drawing (ownersCollect): after a region change it was off by the region offset (LLVOAvatar::onShift) and the avatar was only its name tag. A box that stays
+    // far from the avatar is logged once (at most 10 times in a session), with the numbers that say where it is: if this ever shows up the cause is not the one fixed in onShift and the bridges' shiftPos
+    if (isSelf() && mDrawable.notNull() && !mDrawable->isDead())
+    {
+        const LLVector4a* ext = mDrawable->getSpatialExtents();
+        const LLVector3 pos = getRenderPosition();
+        const F32 dx = 0.5f * (ext[0][0] + ext[1][0]) - pos.mV[0], dy = 0.5f * (ext[0][1] + ext[1][1]) - pos.mV[1], dz = 0.5f * (ext[0][2] + ext[1][2]) - pos.mV[2];
+        if (dx * dx + dy * dy + dz * dz > 40.f * 40.f)
+        {
+            static U32 logged = 0;
+            if (++mBoxOffFrames == 30 && ++logged <= 10)
+            {
+                LL_WARNS("AvatarBox") << "the own avatar's box has been far from the avatar for 30 frames: box centre offset " << dx << "," << dy << "," << dz << ", box span "
+                                      << ext[1][0] - ext[0][0] << "," << ext[1][1] - ext[0][1] << "," << ext[1][2] - ext[0][2] << ", listed frame " << mOwnerListedFrame << ", frame " << LLFrameTimer::getFrameCount()
+                                      << ", attachments " << getNumAttachments() << LL_ENDL;
+            }
+        }
+        else
+        {
+            mBoxOffFrames = 0;
+        }
+    }
 
     const RKAvatarTable::Row* table_row = RKAvatarTable::row(this);       // <FS> stage A
     bool visible = table_row ? table_row->mVisible : isVisible();
