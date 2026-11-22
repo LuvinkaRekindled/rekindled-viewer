@@ -33,6 +33,7 @@
 #include "rkvksubstream.h"
 #include "pipeline.h"
 #include "rkgpuzonetimer.h"
+#include "rkrigmetrics.h"
 
 // library includes
 #include "llimagepng.h"
@@ -20578,6 +20579,7 @@ F32 LLPipeline::getDLSSScale()
 
 void LLPipeline::updateJitter()
 {
+    rk_rig_camera_sway(LLFrameTimer::getFrameCount());      // (RK_VK_RIG_SWAY only: the rig's camera sway, before this frame's matrices are made)
     if (sDLSS && !gCubeSnapshot && pollDlssqOverride())
     {
         refreshCachedSettings();            // the render scale and the texture bias follow it; the screen buffers are made again as for a change of the setting
@@ -21292,6 +21294,7 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
     }
     LL_PROFILE_GPU_ZONE("upscale");
     RKVkBridge::upscale(a);
+    rk_rig_metrics(*dst, *src, frame);       // (RK_VK_RIG only: the numeric rig of doc/vulkan/PLAN-fsr-specialised.md stage 0)
     return true;
 }
 
