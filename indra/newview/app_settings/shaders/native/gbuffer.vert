@@ -89,7 +89,7 @@ void main()
         if (prev_model[3][3] != 0.0)
         {
             vary_cur = view_proj_cur * (motion_table.m[2u * row.model] * vec4(vertex, 1.0));
-            vary_prev = view_proj_prev * (prev_model * vec4(vertex, 1.0));
+            vary_prev = view_proj_cur * (prev_model * vec4(vertex, 1.0));       // (the last pose under THIS frame's camera: only the motion of the object, the motion pass adds the camera's: see lib/motion.glsl)
         }
         else
         {
@@ -106,7 +106,7 @@ void main()
             vec3 prev_translation;
             skin_vertex_prev(row.weights, row_palette(row), row.joints, index, prev_rotation, prev_translation);
             vary_cur = rig_transform(view_proj_cur, vertex, rig_anchor);
-            vary_prev = rig_transform(view_proj_prev, prev_rotation * position.xyz + prev_translation, skin_rig_anchor_prev(row_palette(row), row.joints));
+            vary_prev = rig_transform(view_proj_cur, prev_rotation * position.xyz + prev_translation, skin_rig_anchor_prev(row_palette(row), row.joints));       // (this frame's camera for both poses: the anchor term of the two clip positions is then the very same number and cancels; with two cameras, at 3000 m, its rounding was a motion of 0.1 px: see lib/motion.glsl)
         }
         else
         {

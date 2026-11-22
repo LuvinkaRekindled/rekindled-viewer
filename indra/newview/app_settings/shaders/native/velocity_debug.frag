@@ -1,5 +1,6 @@
 // velocity_debug.frag: the debug view of a motion target: red/green = pixels moved in x/y (full at 4 pixels), blue = the alpha flag (avatar pixels in the avatar velocity target).
 // A line for line translation of "Avatar Velocity Debug" (deferred/avatarVelocityDebugF.glsl); pairs with fullscreen.vert.
+#include "lib/motion.glsl"
 
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
@@ -26,7 +27,7 @@ void main()
         }
         else
         {
-            frag_color = vec4(clamp(abs((v.xy * 2.0 - 1.0) * 1024.0) * 0.25, 0.0, 1.0), 0.0, 1.0);
+            frag_color = vec4(clamp(abs(rk_motion_decode(v.xy)) * 0.25, 0.0, 1.0), 0.0, 1.0);
         }
         return;
     }

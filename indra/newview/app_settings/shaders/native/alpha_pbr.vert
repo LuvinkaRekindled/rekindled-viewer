@@ -90,7 +90,7 @@ void main()
         if (prev_model[3][3] != 0.0)
         {
             vary_cur = view_proj_cur * (motion_table.m[2u * row.model] * vec4(vertex, 1.0));
-            vary_prev = view_proj_prev * (prev_model * vec4(vertex, 1.0));
+            vary_prev = view_proj_cur * (prev_model * vec4(vertex, 1.0));       // (see gbuffer.vert and lib/motion.glsl: the last pose under this frame's camera)
         }
         else
         {
@@ -107,7 +107,7 @@ void main()
             vec3 prev_translation;
             skin_vertex_prev(row.weights, row_palette(row), row.joints, index, prev_rotation, prev_translation);
             vary_cur = rig_transform(view_proj_cur, vertex, rig_anchor);
-            vary_prev = rig_transform(view_proj_prev, prev_rotation * position.xyz + prev_translation, skin_rig_anchor_prev(row_palette(row), row.joints));
+            vary_prev = rig_transform(view_proj_cur, prev_rotation * position.xyz + prev_translation, skin_rig_anchor_prev(row_palette(row), row.joints));       // (see gbuffer.vert)
         }
         else
         {

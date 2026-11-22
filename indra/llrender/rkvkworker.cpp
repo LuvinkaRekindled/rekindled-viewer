@@ -14426,6 +14426,7 @@ bool decode_vk_texels(VkFormat f, const std::vector<U8>& texels, size_t pixels, 
     case VK_FORMAT_R8_UNORM: comps = 1; kind = B8; break;
     case VK_FORMAT_R16G16B16A16_SFLOAT: comps = 4; kind = H16; break;
     case VK_FORMAT_R16_SFLOAT: comps = 1; kind = H16; break;
+    case VK_FORMAT_R16G16_SFLOAT: comps = 2; kind = H16; break;       // (the motion map: it was missing, a readback of it answered with zeros)
     case VK_FORMAT_R32_SFLOAT: case VK_FORMAT_D32_SFLOAT: comps = 1; kind = F32; break;
     case VK_FORMAT_R32G32B32A32_SFLOAT: comps = 4; kind = F32; break;
     default: return false;

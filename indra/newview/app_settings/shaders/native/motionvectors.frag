@@ -1,5 +1,6 @@
 // motionvectors.frag: the screen motion of every pixel for the upscaler: the camera's motion from the depth (jittered clip space of this frame to the unjittered clip spaces of this frame and the last one),
 // replaced by the avatar velocity target's own motion where an avatar wrote. A line for line translation of "Motion Vectors" (deferred/motionVectorsF.glsl); pairs with fullscreen.vert.
+#include "lib/motion.glsl"
 
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
@@ -46,7 +47,9 @@ void main()
         const bool blended = use_blend > 0.5 && texture(rk_tbl2d[RK_HM(rk_ti_specularRect)], vary_fragcoord).r > blend_cut;
         if (e.x < 0.99995 && !overdrawn && !blended)
         {
-            mv = (e * 2.0 - 1.0) * 1024.0;
+            // the world pass wrote the motion of the surface itself under this frame's camera (2026-11-22: it used to write the whole motion under the two cameras, and at 3000 m the float32 rounding of the
+            // two absolute camera matrices made 0.1 px of random motion on every rigged pixel: the avatar rippled under FSR); the camera's own motion, from the depth in double precision, is added here
+            mv += rk_motion_decode(e);
         }
     }
     else if (use_avatar > 0.5)

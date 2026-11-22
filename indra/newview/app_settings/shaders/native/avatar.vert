@@ -132,7 +132,7 @@ void main()
             p2 = mix(p2, matrixPalettePrev[n + 30], x);
         }
         vary_cur = view_proj_cur * vec4(dot(c0, pos_in), dot(c1, pos_in), dot(c2, pos_in), 1.0);
-        vary_prev = view_proj_prev * vec4(dot(p0, pos_in), dot(p1, pos_in), dot(p2, pos_in), 1.0);
+        vary_prev = view_proj_cur * vec4(dot(p0, pos_in), dot(p1, pos_in), dot(p2, pos_in), 1.0);       // (the last pose under this frame's camera: see gbuffer.vert and lib/motion.glsl)
     }
 #endif
 }
