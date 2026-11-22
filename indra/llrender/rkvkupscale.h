@@ -22,6 +22,7 @@ namespace RKVkUpscale
         RKVk::Image* mDepth = nullptr;            // render size, sampled (depth aspect)
         RKVk::Image* mMotion = nullptr;           // render size, RG: previous minus current position in pixels
         RKVk::Image* mOutput = nullptr;           // window size, storage
+        RKVk::Image* mReactive = nullptr;         // render size, R8, sampled: the reactive mask (1 = blended content: trust the history less), optional
         U32 mRenderWidth = 0, mRenderHeight = 0;
         U32 mOutputWidth = 0, mOutputHeight = 0;
         float mJitterX = 0.f, mJitterY = 0.f;   // pixels of the render size, +x right, +y down

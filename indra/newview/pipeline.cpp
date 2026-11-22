@@ -1149,6 +1149,12 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             // motion vectors at the render size; the upscaled picture at the window size
             if (!mMotionMap.allocate(resX, resY, TexelFormat::RG16F)) return false;
             if (!mWorldDepthMap.allocate(resX, resY, TexelFormat::R32F)) return false;     // <FS> the world pass's depth for the motion pass (snapshotWorldDepth)
+            // <FS> the reactive mask (snapshotOpaqueColor, generateReactiveMask); without them the upscaler runs as before
+            if (!mOpaqueColorMap.allocate(resX, resY, screenFormat) || !mReactiveMap.allocate(resX, resY, TexelFormat::R8))
+            {
+                mOpaqueColorMap.release();
+                mReactiveMap.release();
+            }
             if (!mUpscaledMap.allocate(window_res_x, window_res_y, TexelFormat::RGBA8)) return false;
             // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the neural renderer's output, window size
             if (neuralRenderMode() != 0 && RKVkBridge::neuralRenderAvailable())
@@ -1171,6 +1177,10 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mMotionMap.release();
             mWorldDepthMap.release();
             mWorldDepthValid = false;
+            mOpaqueColorMap.release();
+            mReactiveMap.release();
+            mOpaqueColorValid = false;
+            mReactiveValid = false;
             mUpscaledMap.release();
             mNROutput.release();
             mNROutputRender.release();
@@ -1557,6 +1567,10 @@ void LLPipeline::releaseScreenBuffers()
     mMotionMap.release();
     mWorldDepthMap.release();
     mWorldDepthValid = false;
+    mOpaqueColorMap.release();
+    mReactiveMap.release();
+    mOpaqueColorValid = false;
+    mReactiveValid = false;
     mRtBlocker.release();
     mRtShadowTemp.release();
     mRtSunHard.release();
@@ -20702,6 +20716,62 @@ void LLPipeline::snapshotWorldDepth()
     mWorldDepthValid = true;
 }
 
+bool LLPipeline::reactiveMaskWanted() const
+{
+    static const bool on = !getenv("RK_VK_FSR_REACTIVE") || atoi(getenv("RK_VK_FSR_REACTIVE")) != 0;
+    return on && sDLSS && sRenderDeferred && !gCubeSnapshot && RKVkBridge::upscaleAvailable() && RKVkBridge::upscalerIsFsr()
+           && mOpaqueColorMap.isComplete() && mReactiveMap.isComplete() && gOpaqueSnapProgram.isComplete() && gReactiveMaskProgram.isComplete()
+           && mRT && mRT->screen.getWidth() == mOpaqueColorMap.getWidth() && mRT->screen.getHeight() == mOpaqueColorMap.getHeight()
+           && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
+}
+
+void LLPipeline::snapshotOpaqueColor()
+{
+    mOpaqueColorValid = false;
+    if (!reactiveMaskWanted())
+    {
+        return;
+    }
+    LL_PROFILE_GPU_ZONE("opaque colour snapshot");
+    RenderPassScope pass(mOpaqueColorMap);
+    RKRenderState::DepthScope depth(false, false);
+    RKRenderState::BlendScope blend(false);
+    gOpaqueSnapProgram.bind();
+    gOpaqueSnapProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &mRT->screen, false, LLTexUnit::TFO_POINT);
+    mScreenTriangleVB->setBuffer();
+    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    gOpaqueSnapProgram.unbind();
+    mOpaqueColorValid = true;
+}
+
+void LLPipeline::generateReactiveMask()
+{
+    mReactiveValid = false;
+    const bool have_opaque = mOpaqueColorValid;
+    mOpaqueColorValid = false;
+    if (!have_opaque || !reactiveMaskWanted())
+    {
+        return;
+    }
+    // RK_VK_FSR_REACTIVE_LOW / HIGH: the relative change of the colour that starts to count and the one that counts fully
+    static const F32 low = getenv("RK_VK_FSR_REACTIVE_LOW") ? (F32)atof(getenv("RK_VK_FSR_REACTIVE_LOW")) : 0.01f;
+    static const F32 high = getenv("RK_VK_FSR_REACTIVE_HIGH") ? (F32)atof(getenv("RK_VK_FSR_REACTIVE_HIGH")) : 0.15f;
+    LL_PROFILE_GPU_ZONE("reactive mask");
+    RenderPassScope pass(mReactiveMap);
+    RKRenderState::DepthScope depth(false, false);
+    RKRenderState::BlendScope blend(false);
+    gReactiveMaskProgram.bind();
+    gReactiveMaskProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &mRT->screen, false, LLTexUnit::TFO_POINT);
+    gReactiveMaskProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mOpaqueColorMap, false, LLTexUnit::TFO_POINT);
+    static LLStaticHashedString low_s("react_low"), high_s("react_high");
+    gReactiveMaskProgram.uniform1f(low_s, low);
+    gReactiveMaskProgram.uniform1f(high_s, high);
+    mScreenTriangleVB->setBuffer();
+    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    gReactiveMaskProgram.unbind();
+    mReactiveValid = true;
+}
+
 void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
 {
     LL_PROFILE_GPU_ZONE("motion vectors");
@@ -20733,6 +20803,17 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     }
     static LLStaticHashedString use_snapshot_s("use_snapshot");
     gMotionVectorProgram.uniform1f(use_snapshot_s, snapshot ? 1.f : 0.f);
+    // <FS> the reactive mask of this frame (generateReactiveMask runs first): where blended surfaces changed the pixel the world pass's motion is not the visible surface's
+    static const bool blend_motion_on = !getenv("RK_VK_MOTIONBLEND") || atoi(getenv("RK_VK_MOTIONBLEND")) != 0;
+    const bool blend_motion = fold && blend_motion_on && mReactiveValid && mReactiveMap.isComplete();
+    if (blend_motion)
+    {
+        gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mReactiveMap, false, LLTexUnit::TFO_POINT);
+    }
+    static LLStaticHashedString use_blend_s("use_blend"), blend_cut_s("blend_cut");
+    static const F32 blend_cut = getenv("RK_VK_MOTIONBLEND_CUT") ? (F32)atof(getenv("RK_VK_MOTIONBLEND_CUT")) : 0.1f;
+    gMotionVectorProgram.uniform1f(use_blend_s, blend_motion ? 1.f : 0.f);
+    gMotionVectorProgram.uniform1f(blend_cut_s, blend_cut);
     mWorldDepthValid = false;
     static LLStaticHashedString to_cur_s("to_cur"), to_prev_s("to_prev"), res_s("render_res");
     gMotionVectorProgram.uniformMatrix4fv(to_cur_s, 1, false, glm::value_ptr(to_cur));
@@ -21166,6 +21247,8 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
     a.mColor = src->getTexture(0);
     a.mDepth = mRT->deferredScreen.getDepth();
     a.mMotion = mMotionMap.getTexture(0);
+    a.mReactive = mReactiveValid ? mReactiveMap.getTexture(0) : 0;      // <FS> the reactive mask of this frame (generateReactiveMask), none when it was not made
+    mReactiveValid = false;
     a.mOutput = dst->getTexture(0);
     a.mRenderWidth = src->getWidth();
     a.mRenderHeight = src->getHeight();
@@ -22250,6 +22333,7 @@ void LLPipeline::renderFinalize()
                       && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
     if (dlss)
     {
+        generateReactiveMask();     // <FS> (the screen holds the finished scene colour here, before the tone map) first: the motion pass reads the mask too
         generateMotionVectors(&mMotionMap);
     }
 
@@ -24511,6 +24595,16 @@ void LLPipeline::renderDeferredLighting()
     const bool alpha_list_on = sAlphaLightsBuilt && RKVkBridge::nativeKey("alpha_list", 1) != 0;       // (rt-debug.txt alpha_list=0: the hardware slots, for a comparison)
     const S32 alpha_list_limit = alpha_list_on ? RKVkBridge::nativeKey("alpha_list_max", LLRender::kAlphaLightMax) : -1;        // (alpha_list_max: a measuring key, the cost of the loop by its length; -1 = no list)
     gRender.setAlphaLights(sAlphaLights, alpha_list_limit >= 0 ? llmin(sAlphaLightCount, alpha_list_limit) : -1);
+
+    // <FS> the lit colour before the blended surfaces: the upscaler's reactive mask is where the post-deferred draws changed it (see snapshotOpaqueColor). The pass on the screen is closed for the
+    // copy and opened again on the same target with its content kept
+    mOpaqueColorValid = false;
+    if (reactiveMaskWanted() && screen_target == &mRT->screen)
+    {
+        screen_pass.end();
+        snapshotOpaqueColor();
+        screen_pass.begin(*screen_target, RenderPass::LoadOp::Load);
+    }
 
     {  // render non-deferred geometry (alpha, fullbright, glow)
         RKRenderState::BlendScope blend(false);

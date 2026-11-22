@@ -174,6 +174,12 @@ public:
     // <FS> the depth of the world pass kept as a texture (R32F) before the post-deferred geometry draws over it: the motion pass drops the world pass's motion where the final depth is nearer (a fullbright wall in
     // front of a dancer; fullbright writes no motion). Call right after the main view's world pass.
     void snapshotWorldDepth();
+    // <FS> the upscaler's reactive mask (FSR): alpha blended surfaces write neither depth nor motion, so the upscaler takes a blended pixel (a vending machine's screen over a dancer) for the opaque
+    // thing behind it and drags the image along with it. snapshotOpaqueColor copies the lit scene colour right before the post-deferred geometry is drawn (the screen pass must not be open),
+    // generateReactiveMask compares it with the finished colour (before the tone map) and applyUpscale hands the mask over. RK_VK_FSR_REACTIVE=0 switches it off.
+    bool reactiveMaskWanted() const;
+    void snapshotOpaqueColor();
+    void generateReactiveMask();
     // <FS> resolved_input: the source is ray reconstruction's one-to-one output (PLAN-dlss-nr.md section 8, "denoise first"): the super resolution call gets a jitter of zero
     bool applyUpscale(LLRenderTarget* src, LLRenderTarget* dst);
     bool applyNeuralRender(LLRenderTarget* src, LLRenderTarget* dst);    // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md): src (window size, finished) -> dst; false: nothing was done
@@ -213,6 +219,10 @@ public:
     LLRenderTarget          mMotionMap;
     LLRenderTarget          mWorldDepthMap;                     // <FS> R32F, render size: the world pass's depth (snapshotWorldDepth)
     bool                    mWorldDepthValid = false;           // <FS> the snapshot was made this frame
+    LLRenderTarget          mOpaqueColorMap;                    // <FS> the screen's format, render size: the lit scene colour before the post-deferred geometry (snapshotOpaqueColor)
+    LLRenderTarget          mReactiveMap;                       // <FS> R8, render size: the upscaler's reactive mask (generateReactiveMask)
+    bool                    mOpaqueColorValid = false;          // <FS> the opaque colour was copied this frame
+    bool                    mReactiveValid = false;             // <FS> the mask was made this frame (applyUpscale hands it over)
     LLRenderTarget          mUpscaledMap;
     LLRenderTarget          mNROutput;      // <FS> DLSS-NR: window size RGBA16F, only with RK_VK_DLSS_NR >= 2 (the position after the upscale)
     LLRenderTarget          mNROutputRender;    // <FS> DLSS-NR: render size RGBA16F (the position before the upscale)

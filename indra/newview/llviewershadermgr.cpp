@@ -234,7 +234,9 @@ RKShaderProgram            gExposureProgram;
 RKShaderProgram            gExposureProgramNoFade;
 RKShaderProgram            gLuminanceProgram;
 RKShaderProgram            gMotionVectorProgram;
-RKShaderProgram            gWorldDepthSnapProgram;         // <FS> the world pass's depth as a colour texture, for the motion pass (native/depth_snap.frag)
+RKShaderProgram            gOpaqueSnapProgram;             // <FS> the lit scene colour before the post-deferred geometry (native/opaque_snap.frag)
+RKShaderProgram            gReactiveMaskProgram;           // <FS> the upscaler's reactive mask from the opaque colour and the finished one (native/reactive_mask.frag)
+RKShaderProgram            gWorldDepthSnapProgram;        // <FS> the world pass's depth as a colour texture, for the motion pass (native/depth_snap.frag)
 RKShaderProgram            gRtShadowFilterProgram;         // <FS> the penumbra of the ray traced sun shadow from the blocker distance (PLAN-rt-shadow-penumbra.md)
 RKShaderProgram            gRtShadowPrepProgram;           // <FS> its input pass
 RKShaderProgram            gNRRimLiftProgram;              // <FS> DLSS-NR: the rim lift after the neural renderer
@@ -2021,6 +2023,22 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gWorldDepthSnapProgram.mName = "World Depth Snapshot";       // <FS> native only (native/manifest.txt, family post)
         gWorldDepthSnapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gWorldDepthSnapProgram.createShader();
+        llassert(success);
+    }
+
+    if (success)
+    {
+        gOpaqueSnapProgram.mName = "Opaque Colour Snapshot";       // <FS> native only (native/manifest.txt, family post): the upscaler's reactive mask (native/reactive_mask.frag)
+        gOpaqueSnapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = gOpaqueSnapProgram.createShader();
+        llassert(success);
+    }
+
+    if (success)
+    {
+        gReactiveMaskProgram.mName = "Reactive Mask";
+        gReactiveMaskProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = gReactiveMaskProgram.createShader();
         llassert(success);
     }
 

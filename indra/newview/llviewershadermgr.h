@@ -240,7 +240,9 @@ extern RKShaderProgram         gExposureProgram;
 extern RKShaderProgram         gExposureProgramNoFade;
 extern RKShaderProgram         gLuminanceProgram;
 extern RKShaderProgram         gMotionVectorProgram;
-extern RKShaderProgram         gWorldDepthSnapProgram;        // <FS> the world pass's depth as a colour texture (depth_snap.frag)
+extern RKShaderProgram         gOpaqueSnapProgram;            // <FS> the lit scene colour before the post-deferred geometry (opaque_snap.frag)
+extern RKShaderProgram         gReactiveMaskProgram;          // <FS> the upscaler's reactive mask (reactive_mask.frag)
+extern RKShaderProgram         gWorldDepthSnapProgram;       // <FS> the world pass's depth as a colour texture (depth_snap.frag)
 extern RKShaderProgram         gRtShadowFilterProgram;        // <FS> the penumbra of the ray traced sun shadow from the blocker distance (rtShadowFilterF.glsl)
 extern RKShaderProgram         gRtShadowPrepProgram;          // <FS> its input: the hard sun shadow, the half-width and the blocker mask into the mipped target (rtShadowPrepF.glsl)
 extern RKShaderProgram         gDnsrSunPackProgram, gDnsrSunUnpackProgram;       // <FS> the AMD shadow denoiser's hit mask of the sun lightmap and its result back into it

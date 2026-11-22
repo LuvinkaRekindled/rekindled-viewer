@@ -250,6 +250,14 @@ Ctx* context_for(U32 flags, const RKVkUpscale::Params& p)
     }
     c.mMade = true;
 
+    // the viewer's reactive mask (where blended surfaces changed the pixel) at full strength made the upscaler throw its history away there and the blended screen jittered (the user 2026-11-21): the
+    // motion pass gives those pixels the camera's motion so the history is good, and the mask only helps a little. RK_VK_FSR_REACTIVE_SCALE (default 0.3) scales it (the SDK's fReactivenessScale)
+    {
+        char buf[32] = {};
+        float scale = GetEnvironmentVariableA("RK_VK_FSR_REACTIVE_SCALE", buf, sizeof(buf)) > 0 ? (float)atof(buf) : 0.3f;
+        fsr_ok(ffxFsr3UpscalerSetConstant(&c.mContext, FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FREACTIVENESSSCALE, &scale), "ffxFsr3UpscalerSetConstant (reactiveness scale)");
+    }
+
     // the three shared resources the dispatch writes (the SDK's ffx-api provider makes them here too, through the backend)
     FfxFsr3UpscalerSharedResourceDescriptions shared = {};
     if (!fsr_ok(ffxFsr3UpscalerGetSharedResourceDescriptions(&c.mContext, &shared), "ffxFsr3UpscalerGetSharedResourceDescriptions"))
@@ -393,7 +401,11 @@ bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
     d.depth = resource_of(*p.mDepth, false, L"fsr_depth");
     d.motionVectors = resource_of(*p.mMotion, false, L"fsr_motion");
     d.output = resource_of(*p.mOutput, true, L"fsr_output");
-    // (exposure, reactive and transparency masks stay empty: null resources)
+    // (exposure and transparency masks stay empty: null resources; the reactive mask is the viewer's own, from the blended draws: pipeline.cpp generateReactiveMask)
+    if (p.mReactive)
+    {
+        d.reactive = resource_of(*p.mReactive, false, L"fsr_reactive");
+    }
     d.dilatedDepth = context->mBackend.fpGetResource(&context->mBackend, context->mShared[0]);
     d.dilatedMotionVectors = context->mBackend.fpGetResource(&context->mBackend, context->mShared[1]);
     d.reconstructedPrevNearestDepth = context->mBackend.fpGetResource(&context->mBackend, context->mShared[2]);

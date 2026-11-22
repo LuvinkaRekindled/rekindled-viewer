@@ -102,6 +102,7 @@ namespace RKVkBridge
     struct UpscaleArgs
     {
         U32 mColor = 0, mDepth = 0, mMotion = 0, mOutput = 0;
+        U32 mReactive = 0;                              // <FS> the reactive mask (R8, render size; 1 = blended content, trust the history less), 0 = none
         U32 mRenderWidth = 0, mRenderHeight = 0, mOutputWidth = 0, mOutputHeight = 0;
         F32 mJitterX = 0.f, mJitterY = 0.f;             // this frame's jitter in render pixels (+x right, +y down)
         F32 mMotionScaleX = 1.f, mMotionScaleY = 1.f;
