@@ -96,6 +96,8 @@ struct Ctx
     FfxFsr3UpscalerContext mContext = {};
     FfxResourceInternal mShared[3] = {};             // dilated depth, dilated motion vectors, reconstructed previous nearest depth
     U64 mLastFrame = 0;
+    float mReactScale = 0.3f, mReactScaleDefault = 0.3f;    // the reactiveness scale it has now and the one it was made with (RK_VK_FSR_REACTIVE_SCALE or 0.3); rt-debug.txt fsrreact= changes it live
+    float mTune[4] = { 1.f, 1.f, 0.333f, -0.333f };  // the runtime constants this context has now (the SDK's defaults at its creation): velocity factor, shading change scale, accumulation added per frame, minimum disocclusion accumulation
 };
 std::vector<Ctx*> gContexts;                                 // [0..n): all live contexts (on the heap: the FidelityFX context must not move); the last one used is gCurrent
 std::vector<Ctx*> gRetired;                                  // pushed out: destroyed once the frame that last used them has completed
@@ -256,6 +258,7 @@ Ctx* context_for(U32 flags, const RKVkUpscale::Params& p)
         char buf[32] = {};
         float scale = GetEnvironmentVariableA("RK_VK_FSR_REACTIVE_SCALE", buf, sizeof(buf)) > 0 ? (float)atof(buf) : 0.3f;
         fsr_ok(ffxFsr3UpscalerSetConstant(&c.mContext, FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FREACTIVENESSSCALE, &scale), "ffxFsr3UpscalerSetConstant (reactiveness scale)");
+        c.mReactScale = c.mReactScaleDefault = scale;
     }
 
     // the three shared resources the dispatch writes (the SDK's ffx-api provider makes them here too, through the backend)
@@ -385,6 +388,38 @@ bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
     }
     context->mLastFrame = Context::instance().getFrameNumber();
 
+    // FSR's runtime constants (rt-debug.txt fsrvel / fsrshade / fsraccum / fsrdisocc, for the upscaler rig): set when they change; -1000 is the SDK's default, which is also put back when a line goes away
+    {
+        static const FfxFsr3UpscalerConfigureKey tune_keys[4] = { FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR, FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FSHADINGCHANGESCALE,
+                                                                   FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FACCUMULATIONADDEDPERFRAME, FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FMINDISOCCLUSIONACCUMULATION };
+        static const float tune_defaults[4] = { 1.f, 1.f, 0.333f, -0.333f };
+        {
+            const float want = p.mReactScale > -999.f ? p.mReactScale : context->mReactScaleDefault;
+            if (want != context->mReactScale)
+            {
+                float v = want;
+                if (fsr_ok(ffxFsr3UpscalerSetConstant(&context->mContext, FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FREACTIVENESSSCALE, &v), "ffxFsr3UpscalerSetConstant (reactiveness scale, live)"))
+                {
+                    context->mReactScale = want;
+                    LL_INFOS("VkFsr") << "FSR reactiveness scale is now " << want << LL_ENDL;
+                }
+            }
+        }
+        for (int i = 0; i < 4; ++i)
+        {
+            const float want = p.mTune[i] > -999.f ? p.mTune[i] : tune_defaults[i];
+            if (want != context->mTune[i])
+            {
+                float v = want;
+                if (fsr_ok(ffxFsr3UpscalerSetConstant(&context->mContext, tune_keys[i], &v), "ffxFsr3UpscalerSetConstant (tunable)"))
+                {
+                    context->mTune[i] = want;
+                    LL_INFOS("VkFsr") << "FSR constant " << i << " (0 velocity factor, 1 shading change scale, 2 accumulation added per frame, 3 minimum disocclusion accumulation) is now " << want << LL_ENDL;
+                }
+            }
+        }
+    }
+
     // RK_VK_FSR_MVX / MVY / JX / JY (default 1): multipliers for the signs, to find out which way round FSR wants them without rebuilding
     static const float mv_x = env_float("RK_VK_FSR_MVX"), mv_y = env_float("RK_VK_FSR_MVY"), j_x = env_float("RK_VK_FSR_JX"), j_y = env_float("RK_VK_FSR_JY");
     static U32 logged = 0;
@@ -405,6 +440,10 @@ bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
     if (p.mReactive)
     {
         d.reactive = resource_of(*p.mReactive, false, L"fsr_reactive");
+    }
+    if (p.mComposition)
+    {
+        d.transparencyAndComposition = resource_of(*p.mComposition, false, L"fsr_composition");
     }
     d.dilatedDepth = context->mBackend.fpGetResource(&context->mBackend, context->mShared[0]);
     d.dilatedMotionVectors = context->mBackend.fpGetResource(&context->mBackend, context->mShared[1]);

@@ -23,11 +23,14 @@ namespace RKVkUpscale
         RKVk::Image* mMotion = nullptr;           // render size, RG: previous minus current position in pixels
         RKVk::Image* mOutput = nullptr;           // window size, storage
         RKVk::Image* mReactive = nullptr;         // render size, R8, sampled: the reactive mask (1 = blended content: trust the history less), optional
+        RKVk::Image* mComposition = nullptr;      // render size, R8, sampled: FSR's transparency and composition mask (what changes without moving), optional
         U32 mRenderWidth = 0, mRenderHeight = 0;
         U32 mOutputWidth = 0, mOutputHeight = 0;
         float mJitterX = 0.f, mJitterY = 0.f;   // pixels of the render size, +x right, +y down
         float mMotionScaleX = 1.f, mMotionScaleY = 1.f;
         float mSharpness = 0.f;             // FSR's RCAS sharpening, 0 (off) to 1
+        float mReactScale = -1000.f;        // FSR's reactiveness scale (-1000: the creation default)
+        float mTune[4] = { -1000.f, -1000.f, -1000.f, -1000.f };    // FSR's runtime constants: velocity factor, shading change scale, accumulation added per frame, minimum disocclusion accumulation (-1000: the default)
         bool mReset = false;                // history is useless (camera cut)
         bool mHdr = false;                  // the colour is linear HDR rather than display-referred
         float mCameraNear = 0.1f, mCameraFar = 512.f;   // metres
@@ -59,6 +62,7 @@ namespace RKVkUpscale
     // RK_VK_DLSS_LODBIAS overrides it, RK_VK_DLSS_SCALE gives the start scale
     float lodBias();
     void setLodBias(float bias);
+    void setLodOffset(float offset);        // <FS> the upscaler rig (rt-debug.txt fsrlod=): stops added to the bias above, 0 normally
 
     VkImageLayout inputLayout(const RKVk::Image& image);
     VkImageLayout outputLayout();

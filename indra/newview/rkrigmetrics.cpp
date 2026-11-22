@@ -26,6 +26,17 @@
 extern bool gSnapshot;
 extern bool gCubeSnapshot;
 F32 rk_fsr_sharp_now();         // pipeline.cpp: the strength of FSR's RCAS sharpening asked for in rt-debug.txt (fsrsharp=), 0 = off
+F32 rk_fsr_tune(int i);         // pipeline.cpp: FSR's runtime constants asked for in rt-debug.txt (fsrvel, fsrshade, fsraccum, fsrdisocc), -1000 = the default
+F32 rk_fsr_own_raw();           // pipeline.cpp: the factor on the own motion asked for in rt-debug.txt (fsrown), -1000 = none (1)
+F32 rk_fsr_lod_raw();           // pipeline.cpp: the texture LOD offset in stops (fsrlod), -1000 = none
+F32 rk_fsr_phases_raw();        // pipeline.cpp: the jitter sequence length (fsrphases), -1000 = the default
+F32 rk_fsr_movereact_raw();     // pipeline.cpp: the reactive value of pixels with motion of their own (fsrmovreact), -1000 = none
+F32 rk_fsr_react_raw();         // pipeline.cpp: FSR's reactiveness scale (fsrreact), -1000 = the creation default
+F32 rk_fsr_mask_raw();          // pipeline.cpp: 0 = no reactive mask (fsrmask), -1000 = on
+bool rk_rig_read_blend(std::vector<U8>& out, S32 w, S32 h);     // pipeline.cpp: this frame's reactive mask as bytes (the blended pixels), false when there is none
+F32 rk_fsr_tc_raw();            // pipeline.cpp: 1 = the mask is also FSR's transparency and composition mask (fsrtc), -1000 = not
+F32 rk_fsr_gain_raw();          // pipeline.cpp: a factor on the mask as written (fsrgain), -1000 = 1
+F32 rk_fsr_hairmv_raw();        // pipeline.cpp: 1 = blended pixels keep the motion of the surface behind them (fsrhairmv), -1000 = off
 
 namespace
 {
@@ -41,7 +52,7 @@ struct RigState
     F32 mCamPrev[6] = {};
     bool mCamHave = false;
     U32 mStable = 0;
-    S32 mKey[5] = {};                           // the input and output sizes and the RCAS strength (thousandths): a change of any of them restarts the wait
+    S32 mKey[18] = {};                           // the input and output sizes and the RCAS strength (thousandths): a change of any of them restarts the wait
     U32 mKeyFrames = 0;
 
     // the reference
@@ -116,6 +127,24 @@ struct AnimState
     U32 mPlaySharpN = 0;
     F64 mInRmse[kPoses] = {};
     U32 mInN[kPoses] = {};
+    // where the error is (poses 1 to 3; pose 0's reference is not trusted): a pixel is "moving" where the references of the poses differ by more than 0.03 in luminance, an "edge" where the reference's gradient is
+    // above 0.1; the categories are 0 static, 1 moving and flat, 2 moving at an edge. Sums of squared errors and pixel counts over the still stage and over the play stage.
+    std::vector<U8> mCat[kPoses];
+    // (3: a static pixel within 6 pixels of a moving one: where trails and halos would be)
+    F64 mCatSsStill[4] = {}, mCatSsPlay[4] = {};
+    U64 mCatNStill[4] = {}, mCatNPlay[4] = {};
+    // the flicker of the frozen pose by region (the mean change of the luminance from the frame before, poses 1 to 3, over the still stage): the shimmer of strands, lashes and rings is on the moving edges
+    std::vector<F32> mStillPrev;
+    bool mStillPrevValid = false;
+    F64 mFlkSs[4] = {};
+    U64 mFlkN[4] = {};
+    // the blended pixels (what the reactive mask marked in the 100 percent reference frames, any of the 64 above a small value): hair, lashes, rings. Their squared error and flicker over the still stage and their
+    // squared error over the play stage, poses 1 to 3
+    std::vector<U8> mBlend[kPoses];
+    std::vector<U8> mBlendAcc;
+    F64 mBlSsStill = 0.0, mBlSsPlay = 0.0, mBlFlk = 0.0;
+    U64 mBlNStill = 0, mBlNPlay = 0, mBlNFlk = 0;
+    U32 mCycles = 0;                            // the still and play cycles done since the last change of scale: the first one is still settling (its still error is up to 3 times the later ones')
 };
 
 bool anim_time_hook(LLMotionController* mc, F32& t);
@@ -234,6 +263,57 @@ bool same_axes(const LLCoordFrame& a, const LLCoordFrame& b)
         && (a.getUpAxis() - b.getUpAxis()).magVecSquared() < 1e-12f && (a.getOrigin() - b.getOrigin()).magVecSquared() < 1e-12f;
 }
 
+// the FSR runtime constants that are not the default, as text for a log line (key[5..8] in thousandths, -1000000 = the default)
+std::string tune_text(const S32* key)
+{
+    static const char* names[4] = { "vel", "shade", "accum", "disocc" };
+    std::ostringstream o;
+    for (int i = 0; i < 4; ++i)
+    {
+        if (key[5 + i] > -900000)
+        {
+            o << " " << names[i] << " " << std::fixed << std::setprecision(3) << key[5 + i] / 1000.0;
+        }
+    }
+    if (key[9] > -900000)
+    {
+        o << " own " << std::fixed << std::setprecision(3) << key[9] / 1000.0;
+    }
+    if (key[10] > -900000)
+    {
+        o << " lod " << std::fixed << std::setprecision(3) << key[10] / 1000.0;
+    }
+    if (key[11] > -900)
+    {
+        o << " phases " << key[11];
+    }
+    if (key[12] > -900000)
+    {
+        o << " movreact " << std::fixed << std::setprecision(3) << key[12] / 1000.0;
+    }
+    if (key[13] > -900000)
+    {
+        o << " reactscale " << std::fixed << std::setprecision(3) << key[13] / 1000.0;
+    }
+    if (key[14] > -900000)
+    {
+        o << " mask " << std::fixed << std::setprecision(1) << key[14] / 1000.0;
+    }
+    if (key[15] > -900000)
+    {
+        o << " tc " << std::fixed << std::setprecision(1) << key[15] / 1000.0;
+    }
+    if (key[16] > -900000)
+    {
+        o << " gain " << std::fixed << std::setprecision(3) << key[16] / 1000.0;
+    }
+    if (key[17] > -900000)
+    {
+        o << " hairmv " << std::fixed << std::setprecision(1) << key[17] / 1000.0;
+    }
+    return o.str();
+}
+
 void load_reference(S32 w, S32 h)
 {
     sRig.mFileTried = true;
@@ -300,7 +380,7 @@ void end_burst(const S32* key, U32 frame)
         const F64 flk = sRig.mFlk / n, flk_sd = sqrt(std::max(0.0, sRig.mFlk2 / n - flk * flk));
         std::ostringstream o;
         o << std::fixed << std::setprecision(5) << "burst " << ++sRig.mBursts << " at frame " << sRig.mBurstStart << ".." << frame << " (" << sRig.mCount << " frames) scale " << std::setprecision(3) << (F64)key[0] / (F64)key[2]
-          << " input " << key[0] << "x" << key[1] << " output " << key[2] << "x" << key[3] << " rcas " << std::setprecision(2) << key[4] / 1000.0 << std::setprecision(5) << ": flicker mean " << flk << " sd " << flk_sd << " p99 " << sRig.mP99 / n << " changed>4/255 " << sRig.mFrac / n
+          << " input " << key[0] << "x" << key[1] << " output " << key[2] << "x" << key[3] << " rcas " << std::setprecision(2) << key[4] / 1000.0 << tune_text(key) << std::setprecision(5) << ": flicker mean " << flk << " sd " << flk_sd << " p99 " << sRig.mP99 / n << " changed>4/255 " << sRig.mFrac / n
           << " edge " << sRig.mEdge / n << " flat " << sRig.mFlat / n << " | sharpness " << sRig.mSharp / n;
         if (!sRig.mRefBuilt)
         {
@@ -450,6 +530,7 @@ F64 rmse_vs(const std::vector<F32>& a, const std::vector<F32>& b)
 
 void anim_reset()
 {
+    sAnim.mCycles = 0;
     sAnim.mStage = 0;
     sAnim.mClock = 0;
     sAnim.mPose = 0;
@@ -459,8 +540,130 @@ void anim_reset()
     sAnim.mSumSq.clear();
 }
 
+// the categories of the pixels of each pose (see AnimState::mCat)
+void anim_build_categories(S32 w, S32 h)
+{
+    const size_t count = (size_t)w * h;
+    for (int p = 1; p < kPoses; ++p)
+    {
+        std::vector<U8>& cat = sAnim.mCat[p];
+        cat.assign(count, 0);
+        const std::vector<F32>& ref = sAnim.mRef[p];
+        for (S32 j = 1; j < h - 1; ++j)
+        {
+            for (S32 i = 1; i < w - 1; ++i)
+            {
+                const size_t k = (size_t)j * w + i;
+                F32 diff = 0.f;
+                for (int q = 1; q < kPoses; ++q)
+                {
+                    if (q != p)
+                    {
+                        diff = std::max(diff, fabsf(ref[k] - sAnim.mRef[q][k]));
+                    }
+                }
+                if (diff > 0.03f)
+                {
+                    const F32 g = fabsf(ref[k + 1] - ref[k - 1]) + fabsf(ref[k + w] - ref[k - w]);
+                    cat[k] = g > 0.1f ? 2 : 1;
+                }
+            }
+        }
+        // the halo: static pixels within 6 pixels of a moving one (a separable maximum filter of the moving mask)
+        std::vector<U8> near_h(count, 0), near_v(count, 0);
+        const S32 r = 6;
+        for (S32 j = 0; j < h; ++j)
+        {
+            for (S32 i = 0; i < w; ++i)
+            {
+                U8 m = 0;
+                for (S32 d = -r; d <= r && !m; ++d)
+                {
+                    const S32 x = i + d;
+                    if (x >= 0 && x < w && cat[(size_t)j * w + x] >= 1)
+                    {
+                        m = 1;
+                    }
+                }
+                near_h[(size_t)j * w + i] = m;
+            }
+        }
+        for (S32 j = 0; j < h; ++j)
+        {
+            for (S32 i = 0; i < w; ++i)
+            {
+                U8 m = 0;
+                for (S32 d = -r; d <= r && !m; ++d)
+                {
+                    const S32 y = j + d;
+                    if (y >= 0 && y < h && near_h[(size_t)y * w + i])
+                    {
+                        m = 1;
+                    }
+                }
+                near_v[(size_t)j * w + i] = m;
+            }
+        }
+        for (size_t k = 0; k < count; ++k)
+        {
+            if (cat[k] == 0 && near_v[k])
+            {
+                cat[k] = 3;
+            }
+        }
+    }
+}
+
+// the squared error of a picture against pose p's reference, summed by category
+void anim_accum_categories(const std::vector<F32>& y, int p, F64* ss, U64* n)
+{
+    if (p < 1 || sAnim.mCat[p].size() != y.size())
+    {
+        return;
+    }
+    const std::vector<F32>& ref = sAnim.mRef[p];
+    const std::vector<U8>& cat = sAnim.mCat[p];
+    for (size_t k = 0; k < y.size(); ++k)
+    {
+        const F64 e = (F64)y[k] - (F64)ref[k];
+        ss[cat[k]] += e * e;
+        ++n[cat[k]];
+    }
+}
+
+// the squared error of a picture against pose p's reference, over the blended pixels of that pose
+void anim_accum_blend(const std::vector<F32>& y, int p, F64& ss, U64& n)
+{
+    if (p < 1 || sAnim.mBlend[p].size() != y.size())
+    {
+        return;
+    }
+    const std::vector<F32>& ref = sAnim.mRef[p];
+    const std::vector<U8>& bl = sAnim.mBlend[p];
+    for (size_t k = 0; k < y.size(); ++k)
+    {
+        if (bl[k])
+        {
+            const F64 e = (F64)y[k] - (F64)ref[k];
+            ss += e * e;
+            ++n;
+        }
+    }
+}
+
 void anim_begin_freeze(int pose)
 {
+    if (pose == 0 && sAnim.mStage == 2)
+    {
+        memset(sAnim.mCatSsStill, 0, sizeof(sAnim.mCatSsStill));
+        memset(sAnim.mCatNStill, 0, sizeof(sAnim.mCatNStill));
+        memset(sAnim.mFlkSs, 0, sizeof(sAnim.mFlkSs));
+        memset(sAnim.mFlkN, 0, sizeof(sAnim.mFlkN));
+        sAnim.mBlSsStill = sAnim.mBlFlk = 0.0;
+        sAnim.mBlNStill = sAnim.mBlNFlk = 0;
+    }
+    sAnim.mBlendAcc.clear();
+    sAnim.mStillPrevValid = false;
     sAnim.mPose = pose;
     sAnim.mClock = 1;
     sAnim.mFreezeX = sAnim.mPoseX[pose];
@@ -523,6 +726,20 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
             return;
         }
         read_lum(in, w, h, y);
+        {
+            std::vector<U8> mk;
+            if (rk_rig_read_blend(mk, w, h))
+            {
+                if (sAnim.mBlendAcc.size() != mk.size())
+                {
+                    sAnim.mBlendAcc.assign(mk.size(), 0);
+                }
+                for (size_t k = 0; k < mk.size(); ++k)
+                {
+                    sAnim.mBlendAcc[k] = std::max(sAnim.mBlendAcc[k], mk[k]);
+                }
+            }
+        }
         if (sAnim.mSum.empty())
         {
             sAnim.mSum.assign(y.size(), 0.0);
@@ -548,6 +765,17 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
             }
             sAnim.mFloor[p] = sqrt(var_sum / (F64)ref.size());
             sAnim.mRefSharp[p] = sharpness(ref, w, h);
+            {
+                std::vector<U8>& bl = sAnim.mBlend[p];
+                bl.assign(sAnim.mBlendAcc.size(), 0);
+                size_t count = 0;
+                for (size_t k = 0; k < bl.size(); ++k)
+                {
+                    bl[k] = sAnim.mBlendAcc[k] > 12 ? 1 : 0;
+                    count += bl[k];
+                }
+                LL_INFOS("RigMetrics") << "animation blended pixels of pose " << p << " (the reactive mask above 0.05 in any reference frame): " << count << " of " << bl.size() << LL_ENDL;
+            }
             LL_INFOS("RigMetrics") << "animation reference pose " << p << " (frame " << sAnim.mPoseX[p] << " of the window): " << sAnim.mSamples << " frames averaged, jitter floor rmse " << sAnim.mFloor[p] << " sharpness " << sAnim.mRefSharp[p] << LL_ENDL;
             if (p + 1 < kPoses)
             {
@@ -565,6 +793,17 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
                     }
                 }
                 LL_INFOS("RigMetrics") << o.str() << LL_ENDL;
+                anim_build_categories(w, h);
+                {
+                    U64 n[4] = { 0, 0, 0, 0 };
+                    for (size_t k = 0; k < sAnim.mCat[1].size(); ++k)
+                    {
+                        ++n[sAnim.mCat[1][k]];
+                    }
+                    const F64 total = (F64)sAnim.mCat[1].size();
+                    LL_INFOS("RigMetrics") << std::fixed << std::setprecision(4) << "animation regions (pose 1): static far " << n[0] / total << " of the pixels, static within 6 px of the moving " << n[3] / total << ", moving flat " << n[1] / total
+                                           << ", moving at an edge " << n[2] / total << LL_ENDL;
+                }
                 sAnim.mRefBuilt = true;
                 sAnim.mStage = 2;
                 anim_begin_freeze(0);
@@ -583,6 +822,25 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
         read_lum(out, w, h, y);
         sAnim.mAccRmse += rmse_vs(y, sAnim.mRef[sAnim.mPose]);
         sAnim.mAccSharp += sharpness(y, w, h);
+        anim_accum_categories(y, sAnim.mPose, sAnim.mCatSsStill, sAnim.mCatNStill);
+        anim_accum_blend(y, sAnim.mPose, sAnim.mBlSsStill, sAnim.mBlNStill);
+        if (sAnim.mStillPrevValid && sAnim.mStillPrev.size() == y.size() && sAnim.mPose >= 1 && sAnim.mCat[sAnim.mPose].size() == y.size())
+        {
+            const std::vector<U8>& cat = sAnim.mCat[sAnim.mPose];
+            const bool have_bl = sAnim.mBlend[sAnim.mPose].size() == y.size();
+            for (size_t k = 0; k < y.size(); ++k)
+            {
+                sAnim.mFlkSs[cat[k]] += fabsf(y[k] - sAnim.mStillPrev[k]);
+                ++sAnim.mFlkN[cat[k]];
+                if (have_bl && sAnim.mBlend[sAnim.mPose][k])
+                {
+                    sAnim.mBlFlk += fabsf(y[k] - sAnim.mStillPrev[k]);
+                    ++sAnim.mBlNFlk;
+                }
+            }
+        }
+        sAnim.mStillPrev = y;
+        sAnim.mStillPrevValid = true;
         if (++sAnim.mSamples >= kStillFrames)
         {
             const int p = sAnim.mPose;
@@ -596,7 +854,7 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
             {
                 std::ostringstream o;
                 F64 mr = 0.0, ms = 0.0;
-                o << std::fixed << std::setprecision(5) << "animation still, scale " << std::setprecision(3) << scale << " rcas " << std::setprecision(2) << key[4] / 1000.0 << std::setprecision(5) << ": rmse per pose";
+                o << std::fixed << std::setprecision(5) << "animation still" << (sAnim.mCycles == 0 ? " [settling cycle: ignore]" : "") << ", scale " << std::setprecision(3) << scale << " rcas " << std::setprecision(2) << key[4] / 1000.0 << tune_text(key) << std::setprecision(5) << ": rmse per pose";
                 for (int i = 0; i < kPoses; ++i)
                 {
                     o << " " << sAnim.mStillRmse[i];
@@ -604,6 +862,17 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
                     ms += sAnim.mStillSharp[i];
                 }
                 o << " | mean rmse " << mr / kPoses << " sharpness " << ms / kPoses;
+                {
+                    // the flicker of the frozen pose by region (mean change from the frame before): far static, near static, moving flat, moving edge (strands, lashes, rings)
+                    const char* fn[4] = { "far", "near", "flat", "edge" };
+                    const int order[4] = { 0, 3, 1, 2 };
+                    o << " | flicker by region";
+                    for (int j = 0; j < 4; ++j)
+                    {
+                        const int c = order[j];
+                        o << " " << fn[j] << " " << std::setprecision(5) << (sAnim.mFlkN[c] ? sAnim.mFlkSs[c] / (F64)sAnim.mFlkN[c] : 0.0);
+                    }
+                }
                 LL_INFOS("RigMetrics") << o.str() << LL_ENDL;
                 sAnim.mStage = 3;
                 sAnim.mClock = 2;
@@ -624,6 +893,10 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
             memset(sAnim.mPlayRmse, 0, sizeof(sAnim.mPlayRmse));
             memset(sAnim.mInN, 0, sizeof(sAnim.mInN));
             memset(sAnim.mInRmse, 0, sizeof(sAnim.mInRmse));
+            memset(sAnim.mCatSsPlay, 0, sizeof(sAnim.mCatSsPlay));
+            memset(sAnim.mCatNPlay, 0, sizeof(sAnim.mCatNPlay));
+            sAnim.mBlSsPlay = 0.0;
+            sAnim.mBlNPlay = 0;
             sAnim.mPlaySharp = 0.0;
             sAnim.mPlaySharpN = 0;
         }
@@ -642,6 +915,8 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
         }
         read_lum(out, w, h, y);
         sAnim.mPlayRmse[dir][i] += rmse_vs(y, sAnim.mRef[i]);
+        anim_accum_categories(y, i, sAnim.mCatSsPlay, sAnim.mCatNPlay);
+        anim_accum_blend(y, i, sAnim.mBlSsPlay, sAnim.mBlNPlay);
         ++sAnim.mPlayN[dir][i];
         sAnim.mPlaySharp += sharpness(y, w, h);
         ++sAnim.mPlaySharpN;
@@ -659,7 +934,7 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
     {
         std::ostringstream o;
         F64 fwd = 0.0, back = 0.0, mean = 0.0, still = 0.0, still_sharp = 0.0;
-        o << std::fixed << std::setprecision(5) << "animation play, scale " << std::setprecision(3) << scale << " rcas " << std::setprecision(2) << key[4] / 1000.0 << std::setprecision(5) << " (" << kPlayPeriods << " periods): rmse forward";
+        o << std::fixed << std::setprecision(5) << "animation play" << (sAnim.mCycles == 0 ? " [settling cycle: ignore]" : "") << ", scale " << std::setprecision(3) << scale << " rcas " << std::setprecision(2) << key[4] / 1000.0 << tune_text(key) << std::setprecision(5) << " (" << kPlayPeriods << " periods): rmse forward";
         for (int i = 0; i < kPoses; ++i)
         {
             const F64 f = sAnim.mPlayN[0][i] ? sAnim.mPlayRmse[0][i] / sAnim.mPlayN[0][i] : 0.0;
@@ -698,6 +973,40 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
             o << " | repeat check (input vs frozen reference / jitter floor, 1 = exact): " << std::setprecision(2) << (n ? ratio / n : 0.0);
         }
         LL_INFOS("RigMetrics") << o.str() << LL_ENDL;
+        {
+            // where the excess is: the root mean squared error of each region while playing and while still (poses 1 to 3), and each region's share of the excess in mean squared error
+            const char* names[4] = { "static far", "moving flat", "moving edge", "static near" };
+            std::ostringstream r;
+            r << std::fixed << std::setprecision(5) << "animation play regions" << (sAnim.mCycles == 0 ? " [settling cycle: ignore]" : "") << ", scale " << std::setprecision(3) << scale << " rcas " << std::setprecision(2) << key[4] / 1000.0 << tune_text(key)
+              << std::setprecision(5) << ":";
+            F64 mse_excess[4] = {}, total_excess = 0.0;
+            U64 pix_total = sAnim.mCatNPlay[0] + sAnim.mCatNPlay[1] + sAnim.mCatNPlay[2] + sAnim.mCatNPlay[3];
+            for (int c = 0; c < 4; ++c)
+            {
+                const F64 mp = sAnim.mCatNPlay[c] ? sAnim.mCatSsPlay[c] / (F64)sAnim.mCatNPlay[c] : 0.0;
+                const F64 ms = sAnim.mCatNStill[c] ? sAnim.mCatSsStill[c] / (F64)sAnim.mCatNStill[c] : 0.0;
+                const F64 share = pix_total ? (F64)sAnim.mCatNPlay[c] / (F64)pix_total : 0.0;
+                mse_excess[c] = share * (mp - ms);
+                total_excess += mse_excess[c];
+                r << " " << names[c] << " (" << std::setprecision(3) << share << " of the pixels) still " << std::setprecision(5) << sqrt(ms) << " play " << sqrt(mp) << ";";
+            }
+            r << " share of the excess in mean squared error:";
+            for (int c = 0; c < 4; ++c)
+            {
+                r << " " << names[c] << " " << std::setprecision(1) << (total_excess > 0.0 ? 100.0 * mse_excess[c] / total_excess : 0.0) << " %";
+            }
+            LL_INFOS("RigMetrics") << r.str() << LL_ENDL;
+        }
+        {
+            // the blended pixels (hair, lashes, rings): the root mean squared error while frozen and while playing, and the flicker of the frozen pose
+            std::ostringstream b;
+            const F64 ms = sAnim.mBlNStill ? sAnim.mBlSsStill / (F64)sAnim.mBlNStill : 0.0, mp = sAnim.mBlNPlay ? sAnim.mBlSsPlay / (F64)sAnim.mBlNPlay : 0.0;
+            const F64 fl = sAnim.mBlNFlk ? sAnim.mBlFlk / (F64)sAnim.mBlNFlk : 0.0;
+            b << std::fixed << std::setprecision(5) << "animation blended region" << (sAnim.mCycles == 0 ? " [settling cycle: ignore]" : "") << ", scale " << std::setprecision(3) << scale << " rcas " << std::setprecision(2) << key[4] / 1000.0 << tune_text(key)
+              << std::setprecision(5) << ": still rmse " << sqrt(ms) << " play rmse " << sqrt(mp) << " flicker " << fl << " (" << sAnim.mBlNStill / 120 << " pixels a frame, about)";
+            LL_INFOS("RigMetrics") << b.str() << LL_ENDL;
+        }
+        ++sAnim.mCycles;
         sAnim.mStage = 2;
         anim_begin_freeze(0);
     }
@@ -746,7 +1055,7 @@ void rk_rig_metrics(LLRenderTarget& out, LLRenderTarget& in, U32 frame)
     }
 
     // the camera and the picture sizes must have been unchanged for WARM frames (a moving camera, a changed render scale and the history that follows both spoil every number); with the sway the camera is its base pose
-    const S32 key[5] = { (S32)in.getWidth(), (S32)in.getHeight(), w, h, (S32)(rk_fsr_sharp_now() * 1000.f + 0.5f) };
+    const S32 key[18] = {(S32)in.getWidth(), (S32)in.getHeight(), w, h, (S32)(rk_fsr_sharp_now() * 1000.f + 0.5f), (S32)(rk_fsr_tune(0) * 1000.f), (S32)(rk_fsr_tune(1) * 1000.f), (S32)(rk_fsr_tune(2) * 1000.f), (S32)(rk_fsr_tune(3) * 1000.f), (S32)(rk_fsr_own_raw() * 1000.f), (S32)(rk_fsr_lod_raw() * 1000.f), (S32)rk_fsr_phases_raw(), (S32)(rk_fsr_movereact_raw() * 1000.f), (S32)(rk_fsr_react_raw() * 1000.f), (S32)(rk_fsr_mask_raw() * 1000.f), (S32)(rk_fsr_tc_raw() * 1000.f), (S32)(rk_fsr_gain_raw() * 1000.f), (S32)(rk_fsr_hairmv_raw() * 1000.f) };
     F32 cam[6];
     cam_now(cam);
     F64 dp = 0.0, da = 0.0;

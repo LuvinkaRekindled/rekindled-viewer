@@ -22,6 +22,7 @@ namespace
 bool gFsr = false;
 
 std::atomic<float> sLodBias(0.f);       // read by the Vulkan thread when it makes a sampler, written when the render scale changes
+std::atomic<float> sLodOffset(0.f);     // <FS> the rig's offset in stops (rt-debug.txt fsrlod=), added to the bias
 bool sLodBiasLocked = false;            // RK_VK_DLSS_LODBIAS is set: it stays
 
 // the value at start: the environment (the scale the viewer started with, or an explicit bias)
@@ -116,7 +117,12 @@ float lodBias()
 {
     initLodBias();
     const float bias = sLodBias.load();
-    return (gFsr && bias < 0.f) ? bias - 1.f : bias;        // (FSR asks for one more stop when it upscales)
+    return ((gFsr && bias < 0.f) ? bias - 1.f : bias) + sLodOffset.load();        // (FSR asks for one more stop when it upscales)
+}
+
+void setLodOffset(float offset)
+{
+    sLodOffset.store(offset);
 }
 
 void setLodBias(float bias)

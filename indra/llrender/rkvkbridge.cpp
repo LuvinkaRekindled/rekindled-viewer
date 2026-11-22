@@ -1242,6 +1242,11 @@ void RKVkBridge::setUpscaleLodBias(float bias)
     RKVkUpscale::setLodBias(bias);
 }
 
+void RKVkBridge::setUpscaleLodOffset(float offset)
+{
+    RKVkUpscale::setLodOffset(offset);
+}
+
 bool RKVkBridge::upscaleAvailable()
 {
     return sMirror.mReady && RKVkUpscale::ready();

@@ -15068,6 +15068,7 @@ void on_upscale(const RKVkBridge::UpscaleArgs& a)
     Tex* motion = find(a.mMotion);
     Tex* output = find(a.mOutput);
     Tex* reactive = a.mReactive ? find(a.mReactive) : nullptr;      // <FS> optional: none when it was not made this frame
+    Tex* composition = a.mComposition ? find(a.mComposition) : nullptr;
     if (!color || !depth || !motion || !output)
     {
         if (failures++ < 5)
@@ -15083,6 +15084,7 @@ void on_upscale(const RKVkBridge::UpscaleArgs& a)
     p.mMotion = &motion->mImage;
     p.mOutput = &output->mImage;
     p.mReactive = reactive ? &reactive->mImage : nullptr;
+    p.mComposition = composition ? &composition->mImage : nullptr;
     p.mRenderWidth = a.mRenderWidth;
     p.mRenderHeight = a.mRenderHeight;
     p.mOutputWidth = a.mOutputWidth;
@@ -15092,6 +15094,11 @@ void on_upscale(const RKVkBridge::UpscaleArgs& a)
     p.mMotionScaleX = a.mMotionScaleX;
     p.mMotionScaleY = a.mMotionScaleY;
     p.mSharpness = a.mSharpness;
+    p.mReactScale = a.mReactScale;
+    for (int i = 0; i < 4; ++i)
+    {
+        p.mTune[i] = a.mTune[i];
+    }
     p.mReset = a.mReset != 0;
     p.mHdr = a.mHdr != 0;
     p.mCameraNear = a.mCameraNear;
@@ -15107,6 +15114,10 @@ void on_upscale(const RKVkBridge::UpscaleArgs& a)
     if (p.mReactive)
     {
         needs.push_back({ p.mReactive, RKVkUpscale::inputLayout(*p.mReactive) });
+    }
+    if (p.mComposition && p.mComposition != p.mReactive)
+    {
+        needs.push_back({ p.mComposition, RKVkUpscale::inputLayout(*p.mComposition) });
     }
     bool done = false;
     Renderer::instance().recordExternal(needs, [&](VkCommandBuffer cmd) { done = RKVkUpscale::evaluate(cmd, p); });

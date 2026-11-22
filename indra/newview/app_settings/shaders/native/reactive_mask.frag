@@ -7,12 +7,16 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
     float react_low;        // the relative change that starts to count (default 0.03)
     float react_high;       // the relative change that counts fully (default 0.25)
+    float use_move;         // 1: the specularRect is the world pass's motion target (the upscaler rig's fsrmovreact): a pixel with motion of its own gets at least move_react
+    float move_react;
+    float gain;             // a factor on the finished mask (the upscaler rig's fsrgain=; 1 normally)
 };
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
     uint rk_ti_diffuseMap;      // the scene colour after the post-deferred geometry
     uint rk_ti_emissiveRect;    // the opaque colour (opaque_snap.frag)
+    uint rk_ti_specularRect;    // the world pass's motion target (RG16 unorm, x = 1.0: no motion of its own), read when use_move is set
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -26,5 +30,13 @@ void main()
     float level = max(max(now.r, max(now.g, now.b)), max(before.r, max(before.g, before.b)));
     float rel = change / (level + 0.02);
     float mask = clamp((rel - react_low) / max(react_high - react_low, 1.0e-4), 0.0, 1.0);
-    frag_color = vec4(mask, 0.0, 0.0, 1.0);
+    if (use_move > 0.5)
+    {
+        const vec2 own = texture(rk_tbl2d[RK_HM(rk_ti_specularRect)], vary_fragcoord).rg;
+        if (own.x < 0.99995)
+        {
+            mask = max(mask, move_react);
+        }
+    }
+    frag_color = vec4(min(mask * gain, 1.0), 0.0, 0.0, 1.0);
 }

@@ -10,7 +10,11 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
     float use_avatar;       // 1 when the avatar velocity pass ran this frame, 2: the diffuseRect is the world pass's motion target (RG16 unorm, rk_motion_encode: x >= 0.99995 means none)
     float use_snapshot;     // 1: the emissiveRect holds the depth of the world pass; where the final depth is nearer, something drew over the pixel after the world pass and the motion kept there is not its own
     float use_blend;        // 1: the specularRect holds the reactive mask (reactive_mask.frag); where it is above blend_cut, blended surfaces changed the pixel after the opaque pass and the motion kept there is the opaque thing behind
+    float own_scale;        // the rig's calibration (rt-debug.txt fsrown=): a factor on the world pass's own motion, 1 normally
     float blend_cut;        // the mask value from which the pixel takes the camera's motion (RK_VK_MOTIONBLEND_CUT, default 0.1: a faint blended surface over a moving thing still drags it)
+    float hair_gap;         // > 0 (the rig's fsrhairmv=2): a pixel drawn over after the world pass whose surface is within this many metres of the world pass's surface (rigged blended hair writes depth just above the head) keeps the motion of the world pass
+    float proj_c;           // the projection's [2][2] and [3][2] (view distance from depth: d / (2 depth - 1 + c))
+    float proj_d;
 };
 
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
@@ -41,15 +45,24 @@ void main()
         vec2 e = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_fragcoord).rg;
         // a fullbright surface (drawn after lighting, in the post-deferred pass) writes no motion: the dancer behind a fullbright wall left its motion in the world pass's target, and the wall's
         // pixels would take it (the upscaler then drags the wall's texture along with the dancer: the user 2026-11-21). The world pass's own depth tells: nearer in the end = drawn over since.
-        const bool overdrawn = use_snapshot > 0.5 && depth < texture(rk_tbl2d[RK_HM(rk_ti_emissiveRect)], vary_fragcoord).r - 1.0e-7;
+        const float world_depth = use_snapshot > 0.5 ? texture(rk_tbl2d[RK_HM(rk_ti_emissiveRect)], vary_fragcoord).r : 1.0;
+        bool overdrawn = use_snapshot > 0.5 && depth < world_depth - 1.0e-7;
+        bool hair_core = false;
+        if (overdrawn && hair_gap > 0.0)
+        {
+            const float dist_now = proj_d / (depth * 2.0 - 1.0 + proj_c);
+            const float dist_world = proj_d / (world_depth * 2.0 - 1.0 + proj_c);
+            hair_core = abs(dist_world - dist_now) < hair_gap;
+            overdrawn = overdrawn && !hair_core;
+        }
         // a blended surface (a vending machine's screen over a dancer) writes no motion either: its pixel is what is seen, so it moves with the camera, not with the dancer behind it. Left with the
         // dancer's motion the upscaler dragged the screen's image along (the user 2026-11-21); the reactive mask alone made it throw its history away and the screen jittered.
-        const bool blended = use_blend > 0.5 && texture(rk_tbl2d[RK_HM(rk_ti_specularRect)], vary_fragcoord).r > blend_cut;
+        const bool blended = !hair_core && use_blend > 0.5 && texture(rk_tbl2d[RK_HM(rk_ti_specularRect)], vary_fragcoord).r > blend_cut;
         if (e.x < 0.99995 && !overdrawn && !blended)
         {
             // the world pass wrote the motion of the surface itself under this frame's camera (2026-11-22: it used to write the whole motion under the two cameras, and at 3000 m the float32 rounding of the
             // two absolute camera matrices made 0.1 px of random motion on every rigged pixel: the avatar rippled under FSR); the camera's own motion, from the depth in double precision, is added here
-            mv += rk_motion_decode(e);
+            mv += rk_motion_decode(e) * own_scale;
         }
     }
     else if (use_avatar > 0.5)

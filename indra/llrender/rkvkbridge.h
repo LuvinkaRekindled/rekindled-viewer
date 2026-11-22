@@ -107,6 +107,9 @@ namespace RKVkBridge
         F32 mJitterX = 0.f, mJitterY = 0.f;             // this frame's jitter in render pixels (+x right, +y down)
         F32 mMotionScaleX = 1.f, mMotionScaleY = 1.f;
         F32 mSharpness = 0.f;                           // <FS> FSR's RCAS sharpening, 0 (off) to 1
+        U32 mComposition = 0;                           // <FS> FSR's transparency and composition mask (R8, render size), 0 = none
+        F32 mReactScale = -1000.f;                     // <FS> FSR's reactiveness scale (rt-debug.txt fsrreact=; -1000 = the creation default, 0.3)
+        F32 mTune[4] = { -1000.f, -1000.f, -1000.f, -1000.f };      // <FS> FSR's runtime constants (velocity factor, shading change scale, accumulation added per frame, minimum disocclusion accumulation); -1000 = the SDK's default
         S32 mReset = 0;                                 // the history is useless (camera cut)
         S32 mHdr = 0;                                   // the colour is linear HDR
         S32 mPreset = 0;                                // DLSS-NR's model preset (local builds)
@@ -151,6 +154,7 @@ namespace RKVkBridge
     bool neuralRenderAvailable();
     // the texture mip bias DLSS wants for the current render scale (log2 of it, 0 at 100% or with DLSS off); samplers made afterwards use it
     void setUpscaleLodBias(float bias);
+    void setUpscaleLodOffset(float offset);     // <FS> the upscaler rig (rt-debug.txt fsrlod=): stops added to the bias, 0 normally
 
     // ---- shadow packets (render packets) ----
     // One record that draws a whole pass of static, untextured shadow casters. For every draw: the GL names of its vertex and index buffer, its index range and the

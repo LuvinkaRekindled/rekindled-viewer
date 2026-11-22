@@ -20540,6 +20540,49 @@ F32 rk_fsr_sharp_now()
     return sFsrSharpOverride > 0.f ? sFsrSharpOverride : 0.f;
 }
 
+// rt-debug.txt fsrvel= / fsrshade= / fsraccum= / fsrdisocc= : FSR's runtime constants (velocity factor, shading change scale, accumulation added per frame, minimum disocclusion accumulation), live, for the upscaler rig;
+// -1000 (no line) = the SDK's default
+static F32 sFsrTune[4] = { -1000.f, -1000.f, -1000.f, -1000.f };
+
+F32 rk_fsr_tune(int i)
+{
+    return sFsrTune[i];
+}
+
+// rt-debug.txt fsrown=F : a factor on the world pass's own motion in the motion pass (the rig's calibration of the vectors: the error against the reference is lowest where the factor is right); no line = 1
+static F32 sFsrOwn = -1000.f;
+
+F32 rk_fsr_ownscale()
+{
+    return sFsrOwn > -999.f ? sFsrOwn : 1.f;
+}
+
+F32 rk_fsr_own_raw()
+{
+    return sFsrOwn;
+}
+
+// rt-debug.txt fsrlod= (stops added to the texture LOD bias of the upscaler), fsrphases= (the length of the jitter sequence) and fsrmovreact= (a reactive mask value for every pixel that has motion of its own): the upscaler
+// rig's own knobs, live; -1000 = not set
+static F32 sFsrLod = -1000.f, sFsrMoveReact = -1000.f;
+static S32 sFsrPhases = -1000;
+
+// rt-debug.txt fsrreact= (the reactiveness scale of FSR, live) and fsrmask= (0: no reactive mask at all, the blended surfaces then get no help and no camera motion): the rig's A/B of the viewer's own reactive mask
+static F32 sFsrReact = -1000.f, sFsrMask = -1000.f;
+F32 rk_fsr_react_raw() { return sFsrReact; }
+F32 rk_fsr_mask_raw() { return sFsrMask; }
+
+// rt-debug.txt fsrtc=1 (the same mask is also given to FSR as its transparency and composition mask: it only widens the colour clamp, it does not throw the history away) and fsrgain=G (a factor on the mask
+// as written; with fsrreact=0 the composition mask alone at strength G): the rig's A/B of FSR's second mask input
+static F32 sFsrTc = -1000.f, sFsrGain = -1000.f, sFsrHairMv = -1000.f;
+F32 rk_fsr_hairmv_raw() { return sFsrHairMv; }
+F32 rk_fsr_tc_raw() { return sFsrTc; }
+F32 rk_fsr_gain_raw() { return sFsrGain; }
+
+F32 rk_fsr_lod_raw() { return sFsrLod; }
+F32 rk_fsr_phases_raw() { return (F32)sFsrPhases; }
+F32 rk_fsr_movereact_raw() { return sFsrMoveReact; }
+
 static bool pollDlssqOverride()
 {
     static std::chrono::steady_clock::time_point last;
@@ -20551,6 +20594,9 @@ static bool pollDlssqOverride()
     last = now;
     S32 v = -1;
     F32 sharp = -1.f;
+    F32 tune[4] = { -1000.f, -1000.f, -1000.f, -1000.f };
+    F32 own = -1000.f, lod = -1000.f, move_react = -1000.f, react = -1000.f, mask = -1000.f, tc = -1000.f, gain = -1000.f, hairmv = -1000.f;
+    S32 phases = -1000;
     std::ifstream in("D:/claude/rt-debug.txt");
     std::string line;
     while (std::getline(in, line))
@@ -20563,8 +20609,77 @@ static bool pollDlssqOverride()
         {
             sharp = (F32)atof(line.c_str() + 9);
         }
+        else if (line.compare(0, 7, "fsrvel=") == 0)
+        {
+            tune[0] = (F32)atof(line.c_str() + 7);
+        }
+        else if (line.compare(0, 9, "fsrshade=") == 0)
+        {
+            tune[1] = (F32)atof(line.c_str() + 9);
+        }
+        else if (line.compare(0, 9, "fsraccum=") == 0)
+        {
+            tune[2] = (F32)atof(line.c_str() + 9);
+        }
+        else if (line.compare(0, 10, "fsrdisocc=") == 0)
+        {
+            tune[3] = (F32)atof(line.c_str() + 10);
+        }
+        else if (line.compare(0, 7, "fsrown=") == 0)
+        {
+            own = (F32)atof(line.c_str() + 7);
+        }
+        else if (line.compare(0, 7, "fsrlod=") == 0)
+        {
+            lod = (F32)atof(line.c_str() + 7);
+        }
+        else if (line.compare(0, 10, "fsrphases=") == 0)
+        {
+            phases = atoi(line.c_str() + 10);
+        }
+        else if (line.compare(0, 12, "fsrmovreact=") == 0)
+        {
+            move_react = (F32)atof(line.c_str() + 12);
+        }
+        else if (line.compare(0, 9, "fsrreact=") == 0)
+        {
+            react = (F32)atof(line.c_str() + 9);
+        }
+        else if (line.compare(0, 8, "fsrmask=") == 0)
+        {
+            mask = (F32)atof(line.c_str() + 8);
+        }
+        else if (line.compare(0, 6, "fsrtc=") == 0)
+        {
+            tc = (F32)atof(line.c_str() + 6);
+        }
+        else if (line.compare(0, 8, "fsrgain=") == 0)
+        {
+            gain = (F32)atof(line.c_str() + 8);
+        }
+        else if (line.compare(0, 10, "fsrhairmv=") == 0)
+        {
+            hairmv = (F32)atof(line.c_str() + 10);
+        }
     }
+    sFsrHairMv = hairmv;
+    sFsrReact = react;
+    sFsrMask = mask;
+    sFsrTc = tc;
+    sFsrGain = gain;
+    if (lod != sFsrLod)
+    {
+        RKVkBridge::setUpscaleLodOffset(lod > -999.f ? lod : 0.f);      // (the samplers are made again with the new bias)
+    }
+    sFsrLod = lod;
+    sFsrPhases = phases;
+    sFsrMoveReact = move_react;
+    sFsrOwn = own;
     sFsrSharpOverride = sharp;
+    for (int i = 0; i < 4; ++i)
+    {
+        sFsrTune[i] = tune[i];
+    }
     if (v == sDlssqOverride)
     {
         return false;
@@ -20614,7 +20729,7 @@ void LLPipeline::updateJitter()
     }
     // the sequence is long enough that the upscaler sees every sub-pixel position of the output pixel: 8 * (window / render)^2
     const F32 scale = llmax(RenderResolutionMultiplier, 0.33f);
-    const U32 phases = (U32)ceilf(8.f / (scale * scale));
+    const U32 phases = sFsrPhases > 0 ? (U32)sFsrPhases : (U32)ceilf(8.f / (scale * scale));       // (rt-debug.txt fsrphases= overrides the length, for the upscaler rig)
     const U32 i = (mJitterIndex % phases) + 1;
     LLViewerCamera::sJitterPixels = glm::vec2(halton(i, 2) - 0.5f, halton(i, 3) - 0.5f);
     const F32 w = (F32)gViewerWindow->getWorldViewWidthRaw();
@@ -20733,7 +20848,7 @@ void LLPipeline::snapshotWorldDepth()
 bool LLPipeline::reactiveMaskWanted() const
 {
     static const bool on = !getenv("RK_VK_FSR_REACTIVE") || atoi(getenv("RK_VK_FSR_REACTIVE")) != 0;
-    return on && sDLSS && sRenderDeferred && !gCubeSnapshot && RKVkBridge::upscaleAvailable() && RKVkBridge::upscalerIsFsr()
+    return on && rk_fsr_mask_raw() != 0.f && sDLSS && sRenderDeferred && !gCubeSnapshot && RKVkBridge::upscaleAvailable() && RKVkBridge::upscalerIsFsr()
            && mOpaqueColorMap.isComplete() && mReactiveMap.isComplete() && gOpaqueSnapProgram.isComplete() && gReactiveMaskProgram.isComplete()
            && mRT && mRT->screen.getWidth() == mOpaqueColorMap.getWidth() && mRT->screen.getHeight() == mOpaqueColorMap.getHeight()
            && LLViewerCamera::getInstance()->getZoomFactor() <= 1.f;
@@ -20777,13 +20892,47 @@ void LLPipeline::generateReactiveMask()
     gReactiveMaskProgram.bind();
     gReactiveMaskProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &mRT->screen, false, LLTexUnit::TFO_POINT);
     gReactiveMaskProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mOpaqueColorMap, false, LLTexUnit::TFO_POINT);
-    static LLStaticHashedString low_s("react_low"), high_s("react_high");
+    // rt-debug.txt fsrmovreact=R (the upscaler rig): every pixel that has motion of its own in the world pass's target gets at least this reactive value (a direction test: does FSR trust its history too much on moving surfaces?)
+    const F32 move_react = rk_fsr_movereact_raw() > 0.f ? llclamp(rk_fsr_movereact_raw(), 0.f, 1.f) : 0.f;
+    const bool use_move = move_react > 0.f && motion_fold_active();
+    if (use_move)
+    {
+        gReactiveMaskProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mRT->deferredScreen, false, LLTexUnit::TFO_POINT, 4);
+    }
+    static LLStaticHashedString low_s("react_low"), high_s("react_high"), use_move_s("use_move"), move_react_s("move_react");
     gReactiveMaskProgram.uniform1f(low_s, low);
     gReactiveMaskProgram.uniform1f(high_s, high);
+    gReactiveMaskProgram.uniform1f(use_move_s, use_move ? 1.f : 0.f);
+    gReactiveMaskProgram.uniform1f(move_react_s, move_react);
+    static LLStaticHashedString gain_s("gain");
+    gReactiveMaskProgram.uniform1f(gain_s, rk_fsr_gain_raw() > -999.f ? rk_fsr_gain_raw() : 1.f);
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     gReactiveMaskProgram.unbind();
     mReactiveValid = true;
+}
+
+// the upscaler rig (rkrigmetrics.cpp): this frame's reactive mask as bytes (the red channel, w x h as asked), false when it was not made this frame or has another size; called after the upscale of a frame
+static bool sReactiveThisFrame = false;       // the upscale of this frame was given a reactive mask (applyUpscale)
+
+bool rk_rig_read_blend(std::vector<U8>& out, S32 w, S32 h)
+{
+    LLPipeline& pl = gPipeline;
+    if (!sReactiveThisFrame ||!pl.mReactiveMap.isComplete() || pl.mReactiveMap.getWidth() != (U32)w || pl.mReactiveMap.getHeight() != (U32)h)
+    {
+        return false;
+    }
+    std::vector<U8> rgba((size_t)w * h * 4);
+    {
+        RenderPassScope pass(pl.mReactiveMap);
+        gRender.readPixels(0, 0, w, h, PixelFormat::RGBA, ComponentType::U8, rgba.data());
+    }
+    out.resize((size_t)w * h);
+    for (size_t k = 0; k < out.size(); ++k)
+    {
+        out[k] = rgba[4 * k];
+    }
+    return true;
 }
 
 void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
@@ -20810,7 +20959,13 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     gMotionVectorProgram.uniform1f(use_avatar_s, fold ? 2.f : 0.f);
     // <FS> the world pass's depth, when it was kept this frame: where the final depth is nearer something drew over the pixel after the world pass (fullbright writes no motion)
     static const bool snapshot_on = !getenv("RK_VK_MOTIONSNAP") || atoi(getenv("RK_VK_MOTIONSNAP")) != 0;
-    const bool snapshot = fold && snapshot_on && mWorldDepthValid && mWorldDepthMap.isComplete();
+    // rt-debug.txt fsrhairmv=1 (the upscaler rig, a direction test): blended and overdrawn pixels keep the motion of the opaque surface behind them, as hair over a head would if it had motion of its own
+    // (=2: only the pixels the blended hair drew depth into, within 0.3 m of the surface the world pass saw there; the soft fringe keeps the camera's motion)
+    // 2026-11-22: the default is 2 (rt-debug.txt fsrhairmv=0 turns it off, =1 is the rig's all-pixels proxy)
+    const F32 hair_mode = rk_fsr_hairmv_raw() > -999.f ? rk_fsr_hairmv_raw() : 2.f;
+    const bool hair_mv = hair_mode > 0.5f && hair_mode < 1.5f;
+    const bool hair_core = hair_mode >= 1.5f;
+    const bool snapshot = fold && snapshot_on && !hair_mv && mWorldDepthValid && mWorldDepthMap.isComplete();
     if (snapshot)
     {
         gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mWorldDepthMap, false, LLTexUnit::TFO_POINT);
@@ -20819,7 +20974,7 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     gMotionVectorProgram.uniform1f(use_snapshot_s, snapshot ? 1.f : 0.f);
     // <FS> the reactive mask of this frame (generateReactiveMask runs first): where blended surfaces changed the pixel the world pass's motion is not the visible surface's
     static const bool blend_motion_on = !getenv("RK_VK_MOTIONBLEND") || atoi(getenv("RK_VK_MOTIONBLEND")) != 0;
-    const bool blend_motion = fold && blend_motion_on && mReactiveValid && mReactiveMap.isComplete();
+    const bool blend_motion = fold && blend_motion_on && !hair_mv && mReactiveValid && mReactiveMap.isComplete();
     if (blend_motion)
     {
         gMotionVectorProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mReactiveMap, false, LLTexUnit::TFO_POINT);
@@ -20828,6 +20983,12 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     static const F32 blend_cut = getenv("RK_VK_MOTIONBLEND_CUT") ? (F32)atof(getenv("RK_VK_MOTIONBLEND_CUT")) : 0.1f;
     gMotionVectorProgram.uniform1f(use_blend_s, blend_motion ? 1.f : 0.f);
     gMotionVectorProgram.uniform1f(blend_cut_s, blend_cut);
+    static LLStaticHashedString hair_gap_s("hair_gap"), proj_c_s("proj_c"), proj_d_s("proj_d");
+    gMotionVectorProgram.uniform1f(hair_gap_s, hair_core ? 0.3f : 0.f);
+    gMotionVectorProgram.uniform1f(proj_c_s, LLViewerCamera::sJitteredProjection[2][2]);
+    gMotionVectorProgram.uniform1f(proj_d_s, LLViewerCamera::sJitteredProjection[3][2]);
+    static LLStaticHashedString own_scale_s("own_scale");
+    gMotionVectorProgram.uniform1f(own_scale_s, rk_fsr_ownscale());       // (the rig's calibration of the vectors: 1 unless rt-debug.txt fsrown= says otherwise)
     mWorldDepthValid = false;
     static LLStaticHashedString to_cur_s("to_cur"), to_prev_s("to_prev"), res_s("render_res");
     gMotionVectorProgram.uniformMatrix4fv(to_cur_s, 1, false, glm::value_ptr(to_cur));
@@ -21261,7 +21422,9 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
     a.mColor = src->getTexture(0);
     a.mDepth = mRT->deferredScreen.getDepth();
     a.mMotion = mMotionMap.getTexture(0);
-    a.mReactive = mReactiveValid ? mReactiveMap.getTexture(0) : 0;      // <FS> the reactive mask of this frame (generateReactiveMask), none when it was not made
+    const bool have_reactive = mReactiveValid;
+    sReactiveThisFrame = have_reactive;       // (for the rig's read of the mask, after the upscale)
+    a.mReactive = have_reactive ? mReactiveMap.getTexture(0) : 0;      // <FS> the reactive mask of this frame (generateReactiveMask), none when it was not made
     mReactiveValid = false;
     a.mOutput = dst->getTexture(0);
     a.mRenderWidth = src->getWidth();
@@ -21271,6 +21434,12 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
     a.mJitterX = LLViewerCamera::sJitterPixels.x;
     a.mJitterY = LLViewerCamera::sJitterPixels.y;
     a.mSharpness = llclamp(rk_fsr_sharp_now(), 0.f, 1.f);
+    a.mReactScale = rk_fsr_react_raw();
+    a.mComposition = (rk_fsr_tc_raw() > 0.5f && have_reactive) ? mReactiveMap.getTexture(0) : 0;      // (the same mask as FSR's transparency and composition mask, for the rig: fsrtc=1)
+    for (int i = 0; i < 4; ++i)
+    {
+        a.mTune[i] = rk_fsr_tune(i);
+    }
     a.mCameraNear = LLViewerCamera::getInstance()->getNear();
     a.mCameraFar = LLViewerCamera::getInstance()->getFar();
     // <FS> the depth buffer holds depth of the projection the world was drawn with (LLViewerWindow::setup3DRender: far MAX_FAR_CLIP * 2 = 1024), not of the culling camera's far (the draw distance:
