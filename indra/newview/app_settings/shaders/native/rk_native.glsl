@@ -15,14 +15,9 @@ layout(std430, set = 2, binding = 4) readonly buffer RkHandleMap { uint rk_hm[];
 #define RK_HM(id) rk_hm[(id)]
 
 // ---- the depth convention (PLAN-reversed-z.md) ----
-// RK_REVERSE_Z 0 (today): the depth buffer holds 0.0 at the near plane and 1.0 at the far plane and the sky. 1: reversed, 1.0 near, 0.0 far and sky, and the projection is built directly in Vulkan form.
-// Shader code does not compare against 1.0 or remap depth by itself: it asks these. They are MACROS, not functions, so that with RK_REVERSE_Z 0 the compiler sees exactly the text they replaced
-// (spv-equiv.py proves that the compiled code is the same).
-#ifndef RK_REVERSE_Z
-#define RK_REVERSE_Z 0
-#endif
-#if RK_REVERSE_Z != 0
-#define rk_depth_ndc(d) (d)                                  // the z of the normalised device coordinate that goes with a stored depth, for the inverse projection of the main view
+// The depth buffer is reversed: 1.0 at the near plane, 0.0 at the far plane and the sky (the shadow maps keep the standard one), and the projection is built directly in Vulkan form.
+// Shader code does not compare against 1.0 or remap depth by itself: it asks these.
+#define rk_depth_ndc(d) (d)                                // the z of the normalised device coordinate that goes with a stored depth, for the inverse projection of the main view
 #define rk_depth_far() 0.0                                   // the value the depth buffer holds for the far plane and the sky
 #define rk_depth_is_far(d) ((d) <= 0.0)                      // a pixel with no surface (sky, clouds, sun, moon, stars)
 #define rk_depth_has_surface(d) ((d) > 0.0)                  // the opposite
@@ -34,47 +29,20 @@ layout(std430, set = 2, binding = 4) readonly buffer RkHandleMap { uint rk_hm[];
 #define rk_depth_recip(d) (d)                                // about 1 / distance (up to a constant and the far plane term): a stored depth is that in the reversed convention
 #define rk_depth_span(far_d, near_d) ((near_d) - (far_d))    // how much farther the far depth is than the near one, as a positive number
 #define rk_depth_push_far(d, x, y) max(0.0, (d) - (x) - (y)) // a depth moved farther by two margins, not past the far plane
-#else
-#define rk_depth_ndc(d) (2.0 * (d) - 1.0)
-#define rk_depth_far() 1.0
-#define rk_depth_is_far(d) ((d) >= 1.0)
-#define rk_depth_has_surface(d) ((d) < 1.0)
-#define rk_depth_in_front(a, b, eps) ((a) < (b) - (eps))
-#define rk_depth_behind(a, b) ((a) > (b))
-#define rk_depth_nearest(a, b) min(a, b)
-#define rk_depth_farthest(a, b) max(a, b)
-#define rk_clip_depth(clip) ((clip).z / (clip).w * 0.5 + 0.5)
-#define rk_depth_recip(d) (1.0 - (d))
-#define rk_depth_span(far_d, near_d) ((far_d) - (near_d))
-#define rk_depth_push_far(d, x, y) min(1.0, (d) + (x) + (y))
-#endif
 
 // ---- the clip z of a vertex (PLAN-reversed-z.md) ----
-// The projection of the viewer is the GL one (z of the clip space between -w and w); Vulkan wants 0 to w. RK_CLIP_Z_OF(dst, src) writes the z of dst from src: with RK_REVERSE_Z 0 the old remap,
-// exactly the text it replaces. With RK_REVERSE_Z 1 the projection the program gets is already the reversed Vulkan one (LLRender gives it for everything but the shadow passes), so the z is taken as it is.
-// The programs that draw into the shadow maps (shadow.vert, shadow_cube.vert, shadow_alpha.vert, avatar_shadow.vert) keep the standard convention: RK_CLIP_Z_STD, the remap in every case.
+// The projection of the viewer is the GL one (z of the clip space between -w and w); Vulkan wants 0 to w. RK_CLIP_Z_OF(dst, src) writes the z of dst from src: the projection the program gets is already
+// the reversed Vulkan one (LLRender gives it for everything but the shadow passes), so the z is taken as it is.
+// The programs that draw into the shadow maps (shadow.vert, shadow_cube.vert, shadow_alpha.vert, avatar_shadow.vert) keep the standard convention: RK_CLIP_Z_STD, the old remap.
 #define RK_CLIP_Z_STD_OF(dst, src) (dst).z = ((src).z + (src).w) * 0.5
-#if RK_REVERSE_Z != 0
 #define RK_CLIP_Z_OF(dst, src) (dst).z = (src).z
-#else
-#define RK_CLIP_Z_OF(dst, src) RK_CLIP_Z_STD_OF(dst, src)
-#endif
 #define RK_CLIP_Z(p) RK_CLIP_Z_OF(p, p)
-// a vertex pinned to the far plane (the stars, the moon and the sun disc: the GL clip z is w times a factor just under 1): in the reversed convention the far plane is 0 and the same factor
-// gives a depth just above it. RK_FAR_CLIP_Z(w) is exactly the far plane, RK_FAR_CLIP_Z_K(w, k) is w * k in the standard convention and the same distance from the far plane in the reversed one.
-#if RK_REVERSE_Z != 0
+// a vertex pinned to the far plane (the stars, the moon and the sun disc: the GL clip z is w times a factor just under 1): the far plane is 0 and the same factor
+// gives a depth just above it. RK_FAR_CLIP_Z(w) is exactly the far plane, RK_FAR_CLIP_Z_K(w, k) the same distance from the far plane as w * k was in the standard convention.
 #define RK_FAR_CLIP_Z(w) 0.0
 #define RK_FAR_CLIP_Z_K(w, k) ((w) * ((1.0 - (k)) * 0.5))
-#else
-#define RK_FAR_CLIP_Z(w) (w)
-#define RK_FAR_CLIP_Z_K(w, k) ((w) * (k))
-#endif
 #define RK_CLIP_Z_STD(p) RK_CLIP_Z_STD_OF(p, p)
-// the tie break of nearly coplanar surfaces (PLAN-reversed-z.md, rt-debug.txt rztie=, 0 = off): with the reversed convention a draw's depth is scaled by 1 + k * rank / 8, where rank (0 to 127,
+// the tie break of nearly coplanar surfaces (the setting RKDepthTieBreak, 0 = off): a draw's depth is scaled by 1 + k * rank / 8, where rank (0 to 127,
 // bits 16 to 22 of the row's flags: 8 * log2(64 m / the radius of the object), set by the viewer when it makes the draw batch: llvovolume.cpp) grows as the object gets smaller. Of two surfaces closer together
 // than the noise of the depth the smaller object wins, always, as a poster over its board or lettering over its wall. (Objects of the same size are not told apart.)
-#if RK_REVERSE_Z != 0
 #define RK_TIE(p, flags, k) if ((k) != 0.0) { (p).z *= 1.0 + (k) * float(((flags) >> 16u) & 127u) * 0.125; }
-#else
-#define RK_TIE(p, flags, k)
-#endif

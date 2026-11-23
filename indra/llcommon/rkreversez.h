@@ -1,14 +1,7 @@
-// rkreversez.h: the depth convention switch of PLAN-reversed-z (a development switch: RK_VK_REVERSEZ=1 in the environment). With it off (the default) the viewer
-// is exactly what it was: standard depth, 0.0 at the near plane and 1.0 at the far plane and the sky. With it on, every depth target except the shadow maps holds the
-// REVERSED convention: 1.0 at the near plane, 0.0 at the far plane and the sky; the projection the shaders get is the reversed Vulkan form, the compare ops, the
-// clear value and the depth bias of those targets are mirrored by the renderer, and the native programs are built with RK_REVERSE_Z=1 (rk_native.glsl).
-// The switch is deleted when the stages of the plan are proven (the convention is then the only one).
+// rkreversez.h: the depth convention (PLAN-reversed-z). Every depth target except the shadow maps holds the REVERSED convention: 1.0 at the near plane, 0.0 at the far plane and the sky (float depth
+// spends its precision where the far surfaces are). The projection the shaders get is the reversed Vulkan form (LLRender::getShaderProjectionMatrix), the compare ops, the clear value and the depth
+// bias of those targets are mirrored by the renderer (rkvkrenderer.cpp, RKImage::mReverseZ), and the native shaders ask the macros of rk_native.glsl instead of comparing against 1.0 themselves.
+// The shadow maps keep the standard convention and the GL projection (RK_CLIP_Z_STD, LLRenderTarget::setReverseZ(false)).
 #pragma once
 
 #include <cstdlib>
-
-inline bool rk_reverse_z()
-{
-    static const bool on = []() { const char* e = getenv("RK_VK_REVERSEZ"); return e && atoi(e) != 0; }();
-    return on;
-}

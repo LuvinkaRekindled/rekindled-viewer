@@ -194,7 +194,7 @@ protected:
     U32 mResY;
     std::vector<U32> mTex;
     U32 mPassColorCount = 0;
-    bool mReverseZ = rk_reverse_z();       // its depth texture holds the reversed convention (rkreversez.h): set before allocate; the shadow maps keep the standard one
+    bool mReverseZ = true;   // its depth texture holds the reversed convention (rkreversez.h): set before allocate; the shadow maps keep the standard one
     std::vector<TexelFormat> mInternalFormat;
     U32 mFBO;
 

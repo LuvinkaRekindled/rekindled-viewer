@@ -209,7 +209,7 @@ bool create_backbuffer(U32 width, U32 height)
         LL_WARNS("VkMirror") << "could not create the mirror backbuffer " << width << "x" << height << LL_ENDL;
         return false;
     }
-    sMirror.mDepth.mReverseZ = rk_reverse_z();          // the depth of the window (the HUD, the name tags and the UI in 3D are drawn into it after the upscale): the convention of every other depth target (rkreversez.h)
+    sMirror.mDepth.mReverseZ = true;        // the depth of the window (the HUD, the name tags and the UI in 3D are drawn into it after the upscale): the convention of every other depth target (rkreversez.h)
     sMirror.mBackWidth = width;
     sMirror.mBackHeight = height;
     ctx.setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)sMirror.mBackbuffer.mImage, "mirror backbuffer color");

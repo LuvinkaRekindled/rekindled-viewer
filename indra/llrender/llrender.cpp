@@ -1393,10 +1393,7 @@ void LLRender::setStandardClipZ(bool on)
     if (on != sStandardClipZ)
     {
         sStandardClipZ = on;
-        if (rk_reverse_z())
-        {
-            ++mMatHash[MM_PROJECTION];      // (every program gets the projection, its inverse and the products again)
-        }
+        ++mMatHash[MM_PROJECTION];      // (every program gets the projection, its inverse and the products again)
     }
 }
 
@@ -1405,7 +1402,7 @@ void LLRender::setStandardClipZ(bool on)
 const glm::mat4& LLRender::getShaderProjectionMatrix()
 {
     const glm::mat4& p = mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]];
-    if (!rk_reverse_z() || sStandardClipZ)
+    if (sStandardClipZ)
     {
         return p;
     }

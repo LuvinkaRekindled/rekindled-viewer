@@ -883,10 +883,6 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         {
             native_defines.push_back({ "RT_REFL_DEBUG", "1" });        // the test views of the traced hit (rt-debug.txt hitq 3, 4, 6, 7 - 15, 17, 18, 22 - 24): five more call sites of the hit function, a longer compile
         }
-        if (rk_reverse_z())
-        {
-            native_defines.push_back({ "RK_REVERSE_Z", "1" });       // the depth convention of the native programs (rk_native.glsl, PLAN-reversed-z.md)
-        }
         RKVkBridge::nativeRtSession(sRtSessionShaders);      // (the stock programs of this session carry ray query code: the `rt` lines of the manifest keep them)
         RKVkBridge::nativeGlobalDefines(native_defines);
     }

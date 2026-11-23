@@ -11415,18 +11415,10 @@ void main()
     // texel p covers source texels 2p and 2p+1; the last one also takes the odd extra source row / column (the level sizes are the floor of half, as Vulkan's mip chain)
     int nx = (p.x == pc.dstSize.x - 1 && (pc.srcSize.x & 1) == 1 && pc.srcSize.x > 1) ? 3 : 2;
     int ny = (p.y == pc.dstSize.y - 1 && (pc.srcSize.y & 1) == 1 && pc.srcSize.y > 1) ? 3 : 2;
-#ifdef HIZ_REVERSED
     float d = 1.0;          // the reversed convention (1.0 near, 0.0 far): the farthest depth is the smallest
-#else
-    float d = 0.0;
-#endif
     for (int y = 0; y < ny; ++y)
         for (int x = 0; x < nx; ++x)
-#ifdef HIZ_REVERSED
             d = min(d, texelFetch(uSrc, min(b + ivec2(x, y), m), pc.srcLod).r);
-#else
-            d = max(d, texelFetch(uSrc, min(b + ivec2(x, y), m), pc.srcLod).r);
-#endif
     imageStore(uDst, p, vec4(d));
 }
 )GLSL";
@@ -11439,8 +11431,7 @@ struct Box { vec4 c; vec4 h; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Boxes { Box b[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { uint o[]; };
 layout(push_constant) uniform PC { mat4 vp; uvec2 boxes; uvec2 outp; uint count; uint levels; vec2 depthSize; uint fine; uint pad0; uint pad1; uint pad2; } pc;
-// the depth convention (rkreversez.h): with HIZ_REVERSED the viewer gives the reversed Vulkan projection in vp (clip z from w at the near plane to 0 at the far plane) and the pyramid holds reversed depths
-#ifdef HIZ_REVERSED
+// the depth convention (rkreversez.h): the viewer gives the reversed Vulkan projection in vp (clip z from w at the near plane to 0 at the far plane) and the pyramid holds reversed depths
 #define BOX_NEAR_INIT (-1e9)
 #define BOX_NEAR_MERGE(a, b) max(a, b)
 #define PYR_FAR_INIT 1.0
@@ -11449,16 +11440,6 @@ layout(push_constant) uniform PC { mat4 vp; uvec2 boxes; uvec2 outp; uint count;
 #define BEHIND_NEAR(z, w) ((z) > (w))
 #define NO_SURFACE(d) ((d) <= 0.0)
 #define OCCLUDED(box_near, pyr_far) ((box_near) < (pyr_far))
-#else
-#define BOX_NEAR_INIT 1e9
-#define BOX_NEAR_MERGE(a, b) min(a, b)
-#define PYR_FAR_INIT 0.0
-#define PYR_FAR_MERGE(a, b) max(a, b)
-#define CLIP_Z(cl) (((cl).z + (cl).w) * 0.5)
-#define BEHIND_NEAR(z, w) ((z) < 0.0)
-#define NO_SURFACE(d) ((d) >= 1.0)
-#define OCCLUDED(box_near, pyr_far) ((box_near) > (pyr_far))
-#endif
 void main()
 {
     uint i = gl_GlobalInvocationID.x;
@@ -11547,10 +11528,6 @@ VkShaderModule hiz_compile(const char* source, const char* what)
     }
     glslang::TShader shader(EShLangCompute);
     const char* strings[1] = { source };
-    if (rk_reverse_z())
-    {
-        shader.setPreamble("#define HIZ_REVERSED 1\n");
-    }
     shader.setStrings(strings, 1);
     shader.setEnvInput(glslang::EShSourceGlsl, EShLangCompute, glslang::EShClientVulkan, 100);
     shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);

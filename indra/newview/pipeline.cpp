@@ -4139,7 +4139,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     {
         RK_CPU_ZONE("occlusion: Hi-Z send");
         LL_PROFILE_GPU_ZONE("hiz");
-        const glm::mat4 hiz_view_proj = gRender.getShaderProjectionMatrix() * glm::make_mat4(gRenderModelView);       // (the reversed projection with RK_VK_REVERSEZ: the Hi-Z shaders know both conventions)
+        const glm::mat4 hiz_view_proj = gRender.getShaderProjectionMatrix() * glm::make_mat4(gRenderModelView);       // (the reversed projection)
         RKHiz::send(glm::value_ptr(hiz_view_proj));
     }
 }
@@ -20605,12 +20605,12 @@ static F32 sFsrTrail = -1000.f;
 F32 rk_rz_tie()
 {
     static LLCachedControl<S32> tie(gSavedSettings, "RKDepthTieBreak", 20);
-    return rk_reverse_z() ? (F32)tie * 1.0e-7f : 0.f;
+    return (F32)tie * 1.0e-7f;
 }
 // the uniform of the programs that apply the tie break (alpha_pass.inc): set where their packets are pushed
 void rk_tie_uniform(RKShaderProgram* program)
 {
-    if (program && rk_reverse_z())
+    if (program)
     {
         static LLStaticHashedString tie_s("rk_tie");
         program->uniform1f(tie_s, rk_rz_tie());
@@ -21141,7 +21141,7 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     // the depth buffer was drawn with the jittered projection: undo exactly that to get back to world space, then project the point with this
     // frame's and last frame's matrices without jitter. Everything stays homogeneous so that the sky (depth 1) works as well.
     // (with the reversed depth convention the depth buffer holds what the reversed projection gave: undo that one)
-    const glm::dmat4 drawn_proj = rk_reverse_z() ? rk_reversed_projection_d(LLViewerCamera::sJitteredProjection) : glm::dmat4(LLViewerCamera::sJitteredProjection);
+    const glm::dmat4 drawn_proj = rk_reversed_projection_d(LLViewerCamera::sJitteredProjection);
     const glm::dmat4 inv_scene = glm::inverse(drawn_proj * glm::dmat4(LLViewerCamera::sJitterModelview));
     const glm::mat4 to_cur = glm::mat4(glm::dmat4(mViewProjCur) * inv_scene);
     const glm::mat4 to_prev = glm::mat4(glm::dmat4(mViewProjPrevValid ? mViewProjPrev : mViewProjCur) * inv_scene);
