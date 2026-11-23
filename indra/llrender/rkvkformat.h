@@ -65,7 +65,8 @@ namespace RKVkFormat
         S_DEPTH,
         S_BC1_RGB, S_BC1_RGBA, S_BC2, S_BC3, S_BC7,
         S_GENERIC_COMPRESSED,
-        S_BC1_SRGBA, S_BC2_SRGBA, S_BC3_SRGBA
+        S_BC1_SRGBA, S_BC2_SRGBA, S_BC3_SRGBA,
+        S_DEPTH_REVERSED
     };
     Store store(S32 gl_internal_format);        // S_NONE: no Vulkan format for it
 

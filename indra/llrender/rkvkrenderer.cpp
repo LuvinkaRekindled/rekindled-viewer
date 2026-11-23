@@ -2531,7 +2531,7 @@ void Renderer::transition(VkCommandBuffer cmd, Image& view_or_image, VkImageLayo
         VkImageSubresourceRange range = { image.mAspect, 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS };
         if (image.mAspect & VK_IMAGE_ASPECT_DEPTH_BIT)
         {
-            VkClearDepthStencilValue zero = { 1.f, 0 };
+            VkClearDepthStencilValue zero = { image.mReverseZ ? 0.f : 1.f, 0 };
             vkCmdClearDepthStencilImage(cmd, image.mImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &range);
         }
         else
@@ -2962,7 +2962,7 @@ void Renderer::beginRenderingIfNeeded()
         depth.imageLayout = depth_layout;
         depth.loadOp = ((mPendingClear & CLEAR_DEPTH) && !mDepthRO) ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         depth.storeOp = mDepthRO ? VK_ATTACHMENT_STORE_OP_NONE : VK_ATTACHMENT_STORE_OP_STORE;
-        depth.clearValue.depthStencil = { mClearDepth, mClearStencil };
+        depth.clearValue.depthStencil = { mDepthTarget->mReverseZ ? 1.f - mClearDepth : mClearDepth, mClearStencil };
         if (extent.width == 0)
         {
             extent = { mDepthTarget->mExtent.width, mDepthTarget->mExtent.height };
@@ -3030,7 +3030,7 @@ void Renderer::clear(U32 bits, const F32 color[4], F32 depth, U32 stencil)
     if ((bits & CLEAR_DEPTH) && mDepthTarget)
     {
         atts[n].aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-        atts[n].clearValue.depthStencil = { mClearDepth, mClearStencil };
+        atts[n].clearValue.depthStencil = { mDepthTarget->mReverseZ ? 1.f - mClearDepth : mClearDepth, mClearStencil };
         ++n;
     }
     if (n == 0)
@@ -3839,7 +3839,11 @@ void Renderer::applyState()
         mDiagChanged = true;
     }
 
-    if (!mStateApplied || !(mRaster == mAppliedRaster))
+    // a reversed depth target (rkreversez.h): what the viewer asks for in standard terms is mirrored here, once, for everything drawn into it
+    const bool rz = mDepthTarget && mDepthTarget->mReverseZ;
+    const bool rz_changed = rz != mAppliedRz;
+    mAppliedRz = rz;
+    if (!mStateApplied || rz_changed || !(mRaster == mAppliedRaster))
     {
         mDiagChanged = true;
         vkCmdSetCullMode(mCmd, mRaster.mCull);
@@ -3851,15 +3855,15 @@ void Renderer::applyState()
         }
         vkCmdSetLineWidth(mCmd, Context::instance().getCaps().mWideLines ? mRaster.mLineWidth : 1.f);
         vkCmdSetDepthBiasEnable(mCmd, mRaster.mDepthBias ? VK_TRUE : VK_FALSE);
-        vkCmdSetDepthBias(mCmd, mRaster.mBiasConstant, 0.f, mRaster.mBiasSlope);
+        vkCmdSetDepthBias(mCmd, rz ? -mRaster.mBiasConstant : mRaster.mBiasConstant, 0.f, rz ? -mRaster.mBiasSlope : mRaster.mBiasSlope);
         mAppliedRaster = mRaster;
     }
-    if (!mStateApplied || !(mDepthStencil == mAppliedDepthStencil))
+    if (!mStateApplied || rz_changed || !(mDepthStencil == mAppliedDepthStencil))
     {
         mDiagChanged = true;
         vkCmdSetDepthTestEnable(mCmd, mDepthStencil.mDepthTest ? VK_TRUE : VK_FALSE);
         vkCmdSetDepthWriteEnable(mCmd, mDepthStencil.mDepthWrite ? VK_TRUE : VK_FALSE);
-        vkCmdSetDepthCompareOp(mCmd, mDepthStencil.mDepthOp);
+        vkCmdSetDepthCompareOp(mCmd, rz ? reverse_depth_compare(mDepthStencil.mDepthOp) : mDepthStencil.mDepthOp);
         vkCmdSetStencilTestEnable(mCmd, mDepthStencil.mStencilTest ? VK_TRUE : VK_FALSE);
         vkCmdSetStencilOp(mCmd, VK_STENCIL_FACE_FRONT_AND_BACK, mDepthStencil.mFail, mDepthStencil.mPass, mDepthStencil.mDepthFail, mDepthStencil.mStencilOp);
         vkCmdSetStencilCompareMask(mCmd, VK_STENCIL_FACE_FRONT_AND_BACK, mDepthStencil.mCompareMask);

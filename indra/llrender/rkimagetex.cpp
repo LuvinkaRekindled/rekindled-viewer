@@ -300,7 +300,8 @@ S32 RKImageTex::dataFormatBits(TexelFormat f)
     case TexelFormat::R16F:                         return 16;
     case TexelFormat::RGB8:
     case TexelFormat::SRGB8:
-    case TexelFormat::Depth:                        return 24;
+    case TexelFormat::Depth:
+    case TexelFormat::DepthReversed:                return 24;
     case TexelFormat::RGBA8:
     case TexelFormat::SRGBA8:
     case TexelFormat::R11G11B10F:

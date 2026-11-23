@@ -75,7 +75,7 @@ static_assert((int)TOP_POINTS == (int)PrimitiveMode::Points && (int)TOP_TRIANGLE
 
 static_assert((int)S_RGBA8 == (int)TexelFormat::RGBA8 && (int)S_LUM_ALPHA8 == (int)TexelFormat::LumAlpha8 && (int)S_RGBA16F == (int)TexelFormat::RGBA16F && (int)S_RGB10A2 == (int)TexelFormat::RGB10A2
               && (int)S_DEPTH == (int)TexelFormat::Depth && (int)S_BC7 == (int)TexelFormat::BC7 && (int)S_GENERIC_COMPRESSED == (int)TexelFormat::GenericCompressed
-              && (int)S_BC3_SRGBA == (int)TexelFormat::BC3_SRGBA && (int)S_R8 == (int)TexelFormat::R8 && (int)S_R11G11B10F == (int)TexelFormat::R11G11B10F, "TexelFormat");
+              && (int)S_BC3_SRGBA == (int)TexelFormat::BC3_SRGBA && (int)S_R8 == (int)TexelFormat::R8 && (int)S_R11G11B10F == (int)TexelFormat::R11G11B10F && (int)S_DEPTH_REVERSED == (int)TexelFormat::DepthReversed, "TexelFormat");
 static_assert((int)C_R == (int)PixelFormat::R && (int)C_RGB == (int)PixelFormat::RGB && (int)C_RGBA == (int)PixelFormat::RGBA && (int)C_BGRA == (int)PixelFormat::BGRA
               && (int)C_LUM_ALPHA == (int)PixelFormat::LumAlpha && (int)C_ALPHA == (int)PixelFormat::Alpha && (int)C_DEPTH == (int)PixelFormat::Depth, "PixelFormat");
 
@@ -318,7 +318,7 @@ namespace RKVkFormat
 namespace
 {
 const char* const kStoreNames[] = { "None", "RGBA8", "RGB8", "SRGBA8", "SRGB8", "Alpha8", "Lum8", "LumAlpha8", "RG16F", "RG32F", "RG16", "R8", "RG8", "R32F", "R16F", "RGBA16F", "RGBA32F", "RGBA16", "R11G11B10F", "RGB10A2",
-                                    "Depth", "BC1_RGB", "BC1_RGBA", "BC2", "BC3", "BC7", "GenericCompressed", "BC1_SRGBA", "BC2_SRGBA", "BC3_SRGBA" };
+                                    "Depth", "BC1_RGB", "BC1_RGBA", "BC2", "BC3", "BC7", "GenericCompressed", "BC1_SRGBA", "BC2_SRGBA", "BC3_SRGBA", "DepthReversed" };
 const char* const kCompsNames[] = { "None", "R", "RG", "RGB", "BGR", "RGBA", "BGRA", "Lum", "LumAlpha", "Alpha", "Depth" };
 const char* const kTypeNames[] = { "None", "U8", "S8", "U16", "S16", "U32", "S32", "F32", "F16" };
 template <size_t N> const char* name_of(const char* const (&names)[N], U8 v) { return v < N ? names[v] : "?"; }

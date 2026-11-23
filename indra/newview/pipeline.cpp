@@ -1260,6 +1260,7 @@ bool LLPipeline::allocateShadowBuffer(U32 resX, U32 resY)
     { //allocate 4 sun shadow maps
         for (U32 i = 0; i < 4; i++)
         {
+            mRT->shadow[i].setReverseZ(false);        // (the shadow maps keep the standard depth convention: rkreversez.h)
             if (!mRT->shadow[i].allocate(sun_shadow_map_width, sun_shadow_map_height, TexelFormat::None, true))
             {
                 return false;
@@ -1285,6 +1286,7 @@ bool LLPipeline::allocateShadowBuffer(U32 resX, U32 resY)
             U32 spot_shadow_map_height = height;
             for (U32 i = 0; i < 2; i++)
             {
+                mSpotShadow[i].setReverseZ(false);
                 if (!mSpotShadow[i].allocate(spot_shadow_map_width, spot_shadow_map_height, TexelFormat::None, true))
                 {
                     return false;

@@ -153,6 +153,7 @@ bool store_info(RKVkFormat::Store st, FormatMap& m)
     case S_R11G11B10F: m.mVk = VK_FORMAT_B10G11R11_UFLOAT_PACK32; return true;
     case S_RGB10A2: m.mVk = VK_FORMAT_A2B10G10R10_UNORM_PACK32; return true;
     case S_DEPTH: m.mVk = VK_FORMAT_D32_SFLOAT; m.mTexelBytes = 4; m.mDepth = true; return true;
+    case S_DEPTH_REVERSED: m.mVk = VK_FORMAT_D32_SFLOAT; m.mTexelBytes = 4; m.mDepth = true; return true;
     case S_BC1_RGB: m.mVk = VK_FORMAT_BC1_RGB_UNORM_BLOCK; m.mTexelBytes = 8; m.mCompressed = true; return true;
     case S_BC1_RGBA: m.mVk = VK_FORMAT_BC1_RGBA_UNORM_BLOCK; m.mTexelBytes = 8; m.mCompressed = true; return true;
     case S_BC2: m.mVk = VK_FORMAT_BC2_UNORM_BLOCK; m.mTexelBytes = 16; m.mCompressed = true; return true;
@@ -845,6 +846,7 @@ bool ensure_image(Tex& t, RKVkFormat::Target tg, RKVkFormat::Store st, U32 w, U3
     {
         return false;
     }
+    t.mImage.mReverseZ = (st == S_DEPTH_REVERSED);
     if (const U32 gl_name = tex_gl_name(t))
     {
         Context::instance().setObjectName(VK_OBJECT_TYPE_IMAGE, (U64)t.mImage.mImage, "GL texture " + std::to_string(gl_name));

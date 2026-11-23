@@ -106,7 +106,7 @@ void LLRenderTarget::resize(U32 resx, U32 resy)
     {
         gRender.getTexUnit(0)->bindManual(mUsage, mDepth);
         TextureTarget internal_type = LLTexUnit::getInternalType(mUsage);
-        RKImageTex::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
+        RKImageTex::setManualImage(mDepth, internal_type, 0, mReverseZ ? TexelFormat::DepthReversed : TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
 
         sBytesAllocated += pix_diff*4;
     }
@@ -286,7 +286,7 @@ bool LLRenderTarget::allocateDepth()
     gRender.getTexUnit(0)->bindManual(mUsage, mDepth);
 
     TextureTarget internal_type = LLTexUnit::getInternalType(mUsage);
-    RKImageTex::setManualImage(mDepth, internal_type, 0, TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
+    RKImageTex::setManualImage(mDepth, internal_type, 0, mReverseZ ? TexelFormat::DepthReversed : TexelFormat::Depth, mResX, mResY, PixelFormat::Depth, ComponentType::U32, NULL, false);
     gRender.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
 
     sBytesAllocated += mResX*mResY*4;

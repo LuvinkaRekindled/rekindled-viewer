@@ -37,7 +37,8 @@ enum class TexelFormat : U8
     Depth,
     BC1_RGB, BC1_RGBA, BC2, BC3, BC7,
     GenericCompressed,
-    BC1_SRGBA, BC2_SRGBA, BC3_SRGBA
+    BC1_SRGBA, BC2_SRGBA, BC3_SRGBA,
+    DepthReversed       // the same storage as Depth (D32F), the convention reversed: 1.0 at the near plane, 0.0 at the far plane and the sky (rkreversez.h)
 };
 // PixelFormat: the component layout of client pixel data (was the GL format: GL_RGBA, GL_RED ...). ComponentType (F3.6d) is its component type.
 enum class PixelFormat : U8 { None = 0, R, RG, RGB, BGR, RGBA, BGRA, Lum, LumAlpha, Alpha, Depth };

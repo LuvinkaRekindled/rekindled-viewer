@@ -260,6 +260,19 @@ U32 mipLevelCount(U32 width, U32 height);
 // clear selection bits
 enum ClearBits : U32 { CLEAR_COLOR = 1, CLEAR_DEPTH = 2, CLEAR_STENCIL = 4 };
 
+// the compare of a depth test in the reversed convention (1.0 near, 0.0 far): less is greater and the other way round
+inline VkCompareOp reverse_depth_compare(VkCompareOp op)
+{
+    switch (op)
+    {
+    case VK_COMPARE_OP_LESS: return VK_COMPARE_OP_GREATER;
+    case VK_COMPARE_OP_LESS_OR_EQUAL: return VK_COMPARE_OP_GREATER_OR_EQUAL;
+    case VK_COMPARE_OP_GREATER: return VK_COMPARE_OP_LESS;
+    case VK_COMPARE_OP_GREATER_OR_EQUAL: return VK_COMPARE_OP_LESS_OR_EQUAL;
+    default: return op;
+    }
+}
+
 class Renderer
 {
 public:
@@ -754,6 +767,7 @@ private:
     VkPipeline mBoundPipeline = VK_NULL_HANDLE;
     RasterState mAppliedRaster;
     DepthStencilState mAppliedDepthStencil;
+    bool mAppliedRz = false;                    // the convention of the depth target the dynamic depth state was last set for
     BlendState mAppliedBlend;
     bool mVertexInputDirty = true;
     S32 mAppliedViewport[4] = { -1, -1, -1, -1 };

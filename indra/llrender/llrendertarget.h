@@ -30,6 +30,7 @@
 // LLRenderTarget is unavailible on the mapserver since it uses FBOs.
 
 #include "rkdevicecaps.h"
+#include "rkreversez.h"
 #include "llrender.h"
 #include "rkrenderpass.h"        // F3.5a: RenderPassScope
 
@@ -149,6 +150,7 @@ public:
     U32 getNumTextures() const;
     // <FS> the passes that begin on this target use its first n colour attachments only (0 = all of them): a target that has an attachment only one pass writes (the blended pass's coverage on the screen target)
     void setPassColorCount(U32 n) { mPassColorCount = n; }
+    void setReverseZ(bool on) { mReverseZ = on; }
 
     U32 getDepth(void) const { return mDepth; }
 
@@ -192,6 +194,7 @@ protected:
     U32 mResY;
     std::vector<U32> mTex;
     U32 mPassColorCount = 0;
+    bool mReverseZ = rk_reverse_z();       // its depth texture holds the reversed convention (rkreversez.h): set before allocate; the shadow maps keep the standard one
     std::vector<TexelFormat> mInternalFormat;
     U32 mFBO;
 

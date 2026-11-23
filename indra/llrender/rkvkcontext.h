@@ -197,6 +197,8 @@ struct Image
     // GL textures that are allocated without data (render targets) read as zero in practice; Vulkan images start undefined.
     // Set on such images: the renderer clears them the first time they leave the undefined layout.
     bool mZeroOnFirstUse = false;
+    // a depth image with the reversed convention (1.0 at the near plane, 0.0 at the far plane and the sky): the renderer mirrors the clear value, the compare op and the bias of what is drawn into it (rkreversez.h)
+    bool mReverseZ = false;
     // <FS> the identity of mView for the bindless table: a Vulkan may hand a destroyed view's handle to the next view, so the table is keyed by this number, never reused. Zero until the
     // table first needs it; whoever replaces mView sets it back to zero.
     U64 mViewId = 0;
