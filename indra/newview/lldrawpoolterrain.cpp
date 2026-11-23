@@ -258,7 +258,7 @@ void LLDrawPoolTerrain::drawShadowPull()
     header.mMatrices = (U32)(matrices.size() / 16);
     header.mPass = 6;           // "other" (the ray scene is not told: mFragment)
     header.mFragment = 1;
-    const glm::mat4 view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
+    const glm::mat4 view_proj = gRender.getShaderProjectionMatrix() * glm::make_mat4(gRenderModelView);
     memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
     const size_t entries_bytes = entries.size() * sizeof(entries[0]), matrix_bytes = matrices.size() * sizeof(F32);
     blob.resize(entries_bytes + matrix_bytes);

@@ -554,7 +554,7 @@ static void highlight_alpha_from_table(std::unordered_set<const LLSpatialGroup*>
     }
     F32 matrices[32];
     memcpy(matrices, glm::value_ptr(gRender.getModelviewMatrix()), 16 * sizeof(F32));
-    memcpy(matrices + 16, glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
+    memcpy(matrices + 16, glm::value_ptr(gRender.getShaderProjectionMatrix()), 16 * sizeof(F32));
     RKVkBridge::ShadowPacketsHeader begin_header;
     begin_header.mKind = 29;
     begin_header.mEntries = 0;
@@ -827,7 +827,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     tr.mPbr.clear();
     tr.mMatrixKeys.clear();
     const glm::mat4 tr_view = gRender.getModelviewMatrix();         // (what the old draws start from before their model matrix: the HUD and probe renders set it on the stack)
-    const glm::mat4 tr_proj = gRender.getProjectionMatrix();
+    const glm::mat4 tr_proj = gRender.getShaderProjectionMatrix();
     // the matrices the shader would get from LLRender::syncMatrices() for a model matrix: modelview, modelview * projection, normal matrix (as the geometry packets of the deferred passes)
     auto tr_matrix = [&](const LLMatrix4* model) -> U32
     {
@@ -971,7 +971,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             F32 matrices[32];
             // the matrix stack's top (what the old draws started from, and what the transient entries use): gRenderModelView is the camera's copy; they must agree, and the log says when they do not
             memcpy(matrices, glm::value_ptr(gRender.getModelviewMatrix()), 16 * sizeof(F32));
-            memcpy(matrices + 16, glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
+            memcpy(matrices + 16, glm::value_ptr(gRender.getShaderProjectionMatrix()), 16 * sizeof(F32));
             {
                 F32 worst = 0.f;
                 for (int k = 0; k < 16; ++k)

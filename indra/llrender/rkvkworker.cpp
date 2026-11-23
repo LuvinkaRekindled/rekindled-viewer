@@ -15,6 +15,7 @@
 #if defined(RK_VULKAN)
 
 #include "rkvkbridge.h"
+#include "rkreversez.h"
 #include "rkvkpalettegpu.h"     // <FS> PLAN-avatars-100.md D3 stage 3a: the records of kinds 44 and 45
 #include "rkhandletable.h"
 class LLMeshSkinInfo;       // (the handle table of skins: only a pointer is needed here)
@@ -1130,6 +1131,7 @@ Image* texture_view(U32 name, S32 level, U32 layer)
     view->mMipLevels = 1;
     view->mLayers = 1;
     view->mOwner = &t.mImage;
+    view->mReverseZ = t.mImage.mReverseZ;        // (the depth convention of the texture: the renderer reads it from the view it is given, rkreversez.h)
     view->mBaseMip = (U32)level;
     view->mBaseLayer = layer;
     VkImageViewCreateInfo vi = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
@@ -11413,10 +11415,18 @@ void main()
     // texel p covers source texels 2p and 2p+1; the last one also takes the odd extra source row / column (the level sizes are the floor of half, as Vulkan's mip chain)
     int nx = (p.x == pc.dstSize.x - 1 && (pc.srcSize.x & 1) == 1 && pc.srcSize.x > 1) ? 3 : 2;
     int ny = (p.y == pc.dstSize.y - 1 && (pc.srcSize.y & 1) == 1 && pc.srcSize.y > 1) ? 3 : 2;
+#ifdef HIZ_REVERSED
+    float d = 1.0;          // the reversed convention (1.0 near, 0.0 far): the farthest depth is the smallest
+#else
     float d = 0.0;
+#endif
     for (int y = 0; y < ny; ++y)
         for (int x = 0; x < nx; ++x)
+#ifdef HIZ_REVERSED
+            d = min(d, texelFetch(uSrc, min(b + ivec2(x, y), m), pc.srcLod).r);
+#else
             d = max(d, texelFetch(uSrc, min(b + ivec2(x, y), m), pc.srcLod).r);
+#endif
     imageStore(uDst, p, vec4(d));
 }
 )GLSL";
@@ -11429,13 +11439,33 @@ struct Box { vec4 c; vec4 h; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Boxes { Box b[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { uint o[]; };
 layout(push_constant) uniform PC { mat4 vp; uvec2 boxes; uvec2 outp; uint count; uint levels; vec2 depthSize; uint fine; uint pad0; uint pad1; uint pad2; } pc;
+// the depth convention (rkreversez.h): with HIZ_REVERSED the viewer gives the reversed Vulkan projection in vp (clip z from w at the near plane to 0 at the far plane) and the pyramid holds reversed depths
+#ifdef HIZ_REVERSED
+#define BOX_NEAR_INIT (-1e9)
+#define BOX_NEAR_MERGE(a, b) max(a, b)
+#define PYR_FAR_INIT 1.0
+#define PYR_FAR_MERGE(a, b) min(a, b)
+#define CLIP_Z(cl) ((cl).z)
+#define BEHIND_NEAR(z, w) ((z) > (w))
+#define NO_SURFACE(d) ((d) <= 0.0)
+#define OCCLUDED(box_near, pyr_far) ((box_near) < (pyr_far))
+#else
+#define BOX_NEAR_INIT 1e9
+#define BOX_NEAR_MERGE(a, b) min(a, b)
+#define PYR_FAR_INIT 0.0
+#define PYR_FAR_MERGE(a, b) max(a, b)
+#define CLIP_Z(cl) (((cl).z + (cl).w) * 0.5)
+#define BEHIND_NEAR(z, w) ((z) < 0.0)
+#define NO_SURFACE(d) ((d) >= 1.0)
+#define OCCLUDED(box_near, pyr_far) ((box_near) > (pyr_far))
+#endif
 void main()
 {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.count) return;
     Box bx = Boxes(pc.boxes).b[i];
     bool water = (floatBitsToUint(bx.c.w) & 1u) != 0u;
-    float minz = 1e9;
+    float minz = BOX_NEAR_INIT;        // the nearest depth of the box
     vec2 mn = vec2(1e9), mx = vec2(-1e9);
     uint behind = 0u;
     bool near_cut = false;
@@ -11443,13 +11473,13 @@ void main()
     {
         vec3 s = vec3((k & 1) != 0 ? 1.0 : -1.0, (k & 2) != 0 ? 1.0 : -1.0, (k & 4) != 0 ? 1.0 : -1.0);
         vec4 cl = pc.vp * vec4(bx.c.xyz + s * bx.h.xyz, 1.0);
-        float z = (cl.z + cl.w) * 0.5;
+        float z = CLIP_Z(cl);
         if (cl.w <= 1e-4) { ++behind; near_cut = true; continue; }
-        if (!water && z < 0.0) near_cut = true;
+        if (!water && BEHIND_NEAR(z, cl.w)) near_cut = true;
         vec2 uv = cl.xy / cl.w * 0.5 + 0.5;
         mn = min(mn, uv);
         mx = max(mx, uv);
-        minz = min(minz, clamp(z / cl.w, 0.0, 1.0));
+        minz = BOX_NEAR_MERGE(minz, clamp(z / cl.w, 0.0, 1.0));
     }
     uint result = 0u;
     Out(pc.outp).o[3u * i + 1u] = 0u;
@@ -11459,7 +11489,7 @@ void main()
     else
     {
         if (mx.x < 0.0 || mn.x > 1.0 || mx.y < 0.0 || mn.y > 1.0) result = 1u | (1u << 17);      // outside the view: no samples either
-        else if (!water && minz >= 1.0) result = 1u << 18;
+        else if (!water && NO_SURFACE(minz)) result = 1u << 18;
         else
         {
             mn = clamp(mn, vec2(0.0), vec2(1.0));
@@ -11473,11 +11503,11 @@ void main()
             ivec2 t0 = min(ivec2(floor(pmn / texel)), sz - 1);
             ivec2 t1 = min(ivec2(floor(pmx / texel)), sz - 1);
             t1 = min(t1, t0 + 11);
-            float maxd = 0.0;
+            float maxd = PYR_FAR_INIT;        // the farthest depth of the pyramid texels the box covers
             for (int y = t0.y; y <= t1.y; ++y)
                 for (int x = t0.x; x <= t1.x; ++x)
-                    maxd = max(maxd, texelFetch(uPyr, ivec2(x, y), lod).r);
-            result = (minz > maxd ? 1u : 0u) | (uint(lod) << 8);
+                    maxd = PYR_FAR_MERGE(maxd, texelFetch(uPyr, ivec2(x, y), lod).r);
+            result = (OCCLUDED(minz, maxd) ? 1u : 0u) | (uint(lod) << 8);
             Out(pc.outp).o[3u * i + 1u] = floatBitsToUint(minz);
             Out(pc.outp).o[3u * i + 2u] = floatBitsToUint(maxd);
         }
@@ -11517,6 +11547,10 @@ VkShaderModule hiz_compile(const char* source, const char* what)
     }
     glslang::TShader shader(EShLangCompute);
     const char* strings[1] = { source };
+    if (rk_reverse_z())
+    {
+        shader.setPreamble("#define HIZ_REVERSED 1\n");
+    }
     shader.setStrings(strings, 1);
     shader.setEnvInput(glslang::EShSourceGlsl, EShLangCompute, glslang::EShClientVulkan, 100);
     shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_3);

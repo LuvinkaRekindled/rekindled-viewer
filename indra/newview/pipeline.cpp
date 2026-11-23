@@ -87,6 +87,7 @@
 #include "lltoolmgr.h"
 #include "llviewercamera.h"
 #include "rkvkbridge.h"
+#include "rkreversez.h"
 #include "lldrawpoolwlsky.h"
 #include "rkalphatransient.h"
 #include "rkvkasync.h"
@@ -4138,7 +4139,7 @@ void LLPipeline::doOcclusion(LLCamera& camera)
     {
         RK_CPU_ZONE("occlusion: Hi-Z send");
         LL_PROFILE_GPU_ZONE("hiz");
-        const glm::mat4 hiz_view_proj = gRender.getProjectionMatrix() * glm::make_mat4(gRenderModelView);
+        const glm::mat4 hiz_view_proj = gRender.getShaderProjectionMatrix() * glm::make_mat4(gRenderModelView);       // (the reversed projection with RK_VK_REVERSEZ: the Hi-Z shaders know both conventions)
         RKHiz::send(glm::value_ptr(hiz_view_proj));
     }
 }
@@ -21108,12 +21109,25 @@ bool rk_rig_read_motion(std::vector<F32>& rgba, S32& w, S32& h)
     return true;
 }
 
+// the GL projection as the reversed Vulkan one (rkreversez.h), in double: z' = (w - z) / 2, as LLRender::getShaderProjectionMatrix does it in float
+static glm::dmat4 rk_reversed_projection_d(const glm::mat4& p)
+{
+    glm::dmat4 r(p);
+    for (int c = 0; c < 4; ++c)
+    {
+        r[c][2] = ((double)p[c][3] - (double)p[c][2]) * 0.5;
+    }
+    return r;
+}
+
 void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
 {
     LL_PROFILE_GPU_ZONE("motion vectors");
     // the depth buffer was drawn with the jittered projection: undo exactly that to get back to world space, then project the point with this
     // frame's and last frame's matrices without jitter. Everything stays homogeneous so that the sky (depth 1) works as well.
-    const glm::dmat4 inv_scene = glm::inverse(glm::dmat4(LLViewerCamera::sJitteredProjection) * glm::dmat4(LLViewerCamera::sJitterModelview));
+    // (with the reversed depth convention the depth buffer holds what the reversed projection gave: undo that one)
+    const glm::dmat4 drawn_proj = rk_reverse_z() ? rk_reversed_projection_d(LLViewerCamera::sJitteredProjection) : glm::dmat4(LLViewerCamera::sJitteredProjection);
+    const glm::dmat4 inv_scene = glm::inverse(drawn_proj * glm::dmat4(LLViewerCamera::sJitterModelview));
     const glm::mat4 to_cur = glm::mat4(glm::dmat4(mViewProjCur) * inv_scene);
     const glm::mat4 to_prev = glm::mat4(glm::dmat4(mViewProjPrevValid ? mViewProjPrev : mViewProjCur) * inv_scene);
 
@@ -21166,8 +21180,8 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     gMotionVectorProgram.uniform1f(use_bmotion_s, blend_att ? 1.f : 0.f);
     static LLStaticHashedString hair_gap_s("hair_gap"), proj_c_s("proj_c"), proj_d_s("proj_d");
     gMotionVectorProgram.uniform1f(hair_gap_s, hair_core ? 0.3f : 0.f);
-    gMotionVectorProgram.uniform1f(proj_c_s, LLViewerCamera::sJitteredProjection[2][2]);
-    gMotionVectorProgram.uniform1f(proj_d_s, LLViewerCamera::sJitteredProjection[3][2]);
+    gMotionVectorProgram.uniform1f(proj_c_s, (F32)drawn_proj[2][2]);
+    gMotionVectorProgram.uniform1f(proj_d_s, (F32)drawn_proj[3][2]);
     static LLStaticHashedString own_scale_s("own_scale");
     gMotionVectorProgram.uniform1f(own_scale_s, rk_fsr_ownscale());       // (the rig's calibration of the vectors: 1 unless rt-debug.txt fsrown= says otherwise)
     mWorldDepthValid = false;
@@ -25937,6 +25951,12 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     LL_PROFILE_GPU_ZONE("renderShadow");
 
     LLPipeline::sShadowRender = true;
+    // the shadow maps keep the standard depth convention and the GL projection for the length of this function (rkreversez.h, PLAN-reversed-z.md)
+    struct StandardClipZScope
+    {
+        StandardClipZScope() { gRender.setStandardClipZ(true); }
+        ~StandardClipZScope() { gRender.setStandardClipZ(false); }
+    } standard_clip_z_scope;
     const U64 shadow_draws_before = LLVertexBuffer::sDrawCalls;       // <FS> shadow draw statistics
 
     // <FS> which shadow pass of the frame is this (for the GPU timer log)

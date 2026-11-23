@@ -411,6 +411,13 @@ public:
 
     const glm::mat4& getModelviewMatrix();
     const glm::mat4& getProjectionMatrix();
+    // the projection a shader is given (rkreversez.h): the same as getProjectionMatrix() unless the depth convention is reversed (RK_VK_REVERSEZ) and the draw is not a shadow map draw: then the
+    // reversed Vulkan form of it (z of the clip space from 1 at the near plane to 0 at the far plane, no remap needed in the vertex shader: RK_CLIP_Z in rk_native.glsl). CPU code that
+    // culls, unprojects or tests with the matrix keeps using getProjectionMatrix().
+    const glm::mat4& getShaderProjectionMatrix();
+    // the shadow map draws (LLPipeline::renderShadow) keep the standard convention and the GL projection: they set this for their length
+    void setStandardClipZ(bool on);
+    static bool sStandardClipZ;
 
     void syncMatrices();
     void syncLightState();

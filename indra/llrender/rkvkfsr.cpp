@@ -12,6 +12,7 @@
 #if defined(RK_VULKAN)
 
 #include "rkvkfsr.h"
+#include "rkreversez.h"
 
 #if defined(RK_FSR)
 #include <vulkan/vulkan.h>
@@ -376,6 +377,10 @@ bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
     {
         flags |= FFX_FSR3UPSCALER_ENABLE_HIGH_DYNAMIC_RANGE;
     }
+    if (rk_reverse_z())
+    {
+        flags |= FFX_FSR3UPSCALER_ENABLE_DEPTH_INVERTED;       // the depth buffer holds 1.0 at the near plane and 0.0 at the far plane (rkreversez.h)
+    }
     Ctx* context = context_for(flags, p);
     if (!context)
     {
@@ -460,8 +465,9 @@ bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
     d.frameTimeDelta = p.mFrameTimeMs;
     d.preExposure = 1.f;
     d.reset = p.mReset;
-    d.cameraNear = p.mCameraNear;
-    d.cameraFar = p.mCameraFar;
+    // an inverted depth buffer: FSR wants the far distance as "near" and the near distance as "far" (it checks cameraNear > cameraFar for the flag)
+    d.cameraNear = rk_reverse_z() ? p.mCameraFar : p.mCameraNear;
+    d.cameraFar = rk_reverse_z() ? p.mCameraNear : p.mCameraFar;
     d.cameraFovAngleVertical = p.mCameraFovY;
     d.viewSpaceToMetersFactor = 1.f;        // (view space is metres)
     d.flags = 0;

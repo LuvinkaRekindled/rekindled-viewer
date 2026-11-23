@@ -27,6 +27,7 @@
 #include "linden_common.h"
 
 #include "llrender.h"
+#include "rkreversez.h"
 #include "rkvktexanim.h"
 
 #include "llvertexbuffer.h"
@@ -1183,7 +1184,7 @@ void LLRender::syncMatrices()
                 if (cached_mvp_mdv_hash != mMatHash[i] || cached_mvp_proj_hash != mMatHash[MM_PROJECTION])
                 {
                     cached_mvp = mat;
-                    cached_mvp = mMatrix[proj][mMatIdx[proj]] * cached_mvp;
+                    cached_mvp = getShaderProjectionMatrix() * cached_mvp;
                     cached_mvp_mdv_hash = mMatHash[i];
                     cached_mvp_proj_hash = mMatHash[MM_PROJECTION];
                 }
@@ -1195,7 +1196,7 @@ void LLRender::syncMatrices()
         i = MM_PROJECTION;
         if (mMatHash[MM_PROJECTION] != shader->mMatHash[MM_PROJECTION])
         { //update projection matrix, normal, and MVP
-            const glm::mat4& mat = mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]];
+            const glm::mat4& mat = getShaderProjectionMatrix();
 
             // GZ: This was previously disabled seemingly due to a bug involving the deferred renderer's regular pushing and popping of mats.
             // We're reenabling this and cleaning up the code around that - that would've been the appropriate course initially.
@@ -1383,6 +1384,43 @@ const glm::mat4& LLRender::getModelviewMatrix()
 const glm::mat4& LLRender::getProjectionMatrix()
 {
     return mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]];
+}
+
+bool LLRender::sStandardClipZ = false;
+
+void LLRender::setStandardClipZ(bool on)
+{
+    if (on != sStandardClipZ)
+    {
+        sStandardClipZ = on;
+        if (rk_reverse_z())
+        {
+            ++mMatHash[MM_PROJECTION];      // (every program gets the projection, its inverse and the products again)
+        }
+    }
+}
+
+// the GL projection P (clip z between -w and w, 0 at the near plane in the depth buffer) as the reversed Vulkan one: z' = (w - z) / 2 is 1 at the near plane and 0 at the far plane (a row operation, in double:
+// for a perspective matrix the entries of the new row are n / (f - n) and f n / (f - n)). Its inverse is the inverse of the matrix the shaders get, as the unprojection needs.
+const glm::mat4& LLRender::getShaderProjectionMatrix()
+{
+    const glm::mat4& p = mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]];
+    if (!rk_reverse_z() || sStandardClipZ)
+    {
+        return p;
+    }
+    static glm::mat4 reversed;
+    static U32 reversed_hash = 0xFFFFFFFF;
+    if (reversed_hash != mMatHash[MM_PROJECTION] || reversed[3][3] != p[3][3] || reversed[0][0] != p[0][0])
+    {
+        reversed = p;
+        for (int c = 0; c < 4; ++c)
+        {
+            reversed[c][2] = (F32)(((double)p[c][3] - (double)p[c][2]) * 0.5);
+        }
+        reversed_hash = mMatHash[MM_PROJECTION];
+    }
+    return reversed;
 }
 
 void LLRender::translateUI(F32 x, F32 y, F32 z)

@@ -715,7 +715,7 @@ bool LLVertexBuffer::pullDraw(U32 mode, bool indexed, U32 first, U32 count) cons
     }
     gRender.syncMatrices();
     const glm::mat4 mv = gRender.getModelviewMatrix();
-    const glm::mat4 mvp = gRender.getProjectionMatrix() * mv;
+    const glm::mat4 mvp = gRender.getShaderProjectionMatrix() * mv;
     const glm::mat4 n = glm::transpose(glm::inverse(mv));
     F32 matrices[44];
     memcpy(matrices, glm::value_ptr(mv), 64);

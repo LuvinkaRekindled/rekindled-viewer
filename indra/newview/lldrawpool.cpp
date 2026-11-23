@@ -351,7 +351,7 @@ struct RKPullBatch
     RKPullBatch()
     {
         mView = gRender.getModelviewMatrix();
-        mProj = gRender.getProjectionMatrix();
+        mProj = gRender.getShaderProjectionMatrix();
         matrix(nullptr);
     }
     U32 matrix(const LLMatrix4* model)
@@ -1583,7 +1583,7 @@ void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
     header.mPass = (U32)tn;
     F32 matrices[32];
     memcpy(matrices, gRenderModelView, 16 * sizeof(F32));
-    memcpy(matrices + 16, glm::value_ptr(gRender.getProjectionMatrix()), 16 * sizeof(F32));
+    memcpy(matrices + 16, glm::value_ptr(gRender.getShaderProjectionMatrix()), 16 * sizeof(F32));
     RKVkBridge::shadowPackets(header, matrices, sizeof(matrices));
     rk_scene_geo_count(1, 1);
     extern bool rk_scene_geo_type_has_double_sided(int tn);
