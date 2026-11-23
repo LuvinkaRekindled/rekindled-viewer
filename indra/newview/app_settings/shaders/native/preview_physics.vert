@@ -18,6 +18,6 @@ void main()
 {
     //transform vertex
     gl_Position = modelview_projection_matrix * vec4(position.xyz, 1.0);
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
     vary_texcoord0 = (texture_matrix0 * vec4(texcoord0,0,1)).xy;
 }

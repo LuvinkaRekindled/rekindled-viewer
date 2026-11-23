@@ -35,7 +35,7 @@ void main()
     avatar_skin(row, index, t0, t1, t2);
     gl_Position = projection_matrix * vec4(dot(t0, pos_in), dot(t1, pos_in), dot(t2, pos_in), 1.0);
     // GL clip space z is [-w, w], Vulkan's is [0, w]: the viewer's own vertex shaders get this line from the translator, a native one does it itself (see alpha.vert)
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
+    RK_CLIP_Z_STD(gl_Position);
 #ifdef SHADOW_ALPHA
     vary_texcoord0 = RowVec2(row.texcoords).t[index];
 #endif

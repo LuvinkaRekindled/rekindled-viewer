@@ -31,7 +31,7 @@ void main()
     //transform vertex
     vec4 vert = modelview_projection_matrix * vec4(position.xyz, 1.0);
     gl_Position = vert;
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
 
     vary_position = (modelview_matrix * vec4(position.xyz, 1.0)).xyz;
     vary_tc_base = gltf_texcoord(texcoord0, texture_base_color_transform[0], texture_base_color_transform[1], texture_matrix0);

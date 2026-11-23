@@ -44,5 +44,5 @@ void main()
     const vec4 clip = modelview_projection_matrix * pos;
     refCoord = vec4(clip.xyz + vec3(0.0, 0.0, 0.2), bigWave.x);
     gl_Position = clip;
-    gl_Position.z = (clip.z + clip.w) * 0.5;        // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z_OF(gl_Position, clip);        // (GL clip space to Vulkan's, as the old programs get it appended)
 }

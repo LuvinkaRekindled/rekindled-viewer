@@ -25,9 +25,9 @@ void main()
     sun_fade = smoothstep(0.3, 1.0, (position.z + 50) / 512.0f);
 
     // smash to *almost* far clip plane -- behind clouds but in front of stars
-    pos.z = pos.w * 0.999999;
+    pos.z = RK_FAR_CLIP_Z_K(pos.w, 0.999999);
     gl_Position = pos;
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
 
     vary_texcoord0 = (texture_matrix0 * vec4(texcoord0, 0, 1)).xy;
 }

@@ -45,7 +45,7 @@ void main()
     const mat3 normal_matrix = mat3(model.n0.xyz, model.n1.xyz, model.n2.xyz);
 
     gl_Position = model.mvp * vec4(position, 1.0);
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's)
     vary_position = (model.mv * vec4(position, 1.0)).xyz;
     vary_normal = normalize(normal_matrix * normal);
     vary_object = position;

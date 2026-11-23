@@ -25,7 +25,7 @@ void main()
 
     // World / view / projection
     gl_Position = model.mvp * vec4(position.xyz, 1.0);
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
 
     // Texture coords
     // SL-13084 EEP added support for custom cloud textures -- flip them horizontally to match the preview of Clouds > Cloud Scroll

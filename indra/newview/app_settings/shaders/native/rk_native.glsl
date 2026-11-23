@@ -31,6 +31,9 @@ layout(std430, set = 2, binding = 4) readonly buffer RkHandleMap { uint rk_hm[];
 #define rk_depth_nearest(a, b) max(a, b)
 #define rk_depth_farthest(a, b) min(a, b)
 #define rk_clip_depth(clip) ((clip).z / (clip).w)            // the stored depth of a vertex output position (clip space, as the vertex stage wrote gl_Position)
+#define rk_depth_recip(d) (d)                                // about 1 / distance (up to a constant and the far plane term): a stored depth is that in the reversed convention
+#define rk_depth_span(far_d, near_d) ((near_d) - (far_d))    // how much farther the far depth is than the near one, as a positive number
+#define rk_depth_push_far(d, x, y) max(0.0, (d) - (x) - (y)) // a depth moved farther by two margins, not past the far plane
 #else
 #define rk_depth_ndc(d) (2.0 * (d) - 1.0)
 #define rk_depth_far() 1.0
@@ -41,4 +44,29 @@ layout(std430, set = 2, binding = 4) readonly buffer RkHandleMap { uint rk_hm[];
 #define rk_depth_nearest(a, b) min(a, b)
 #define rk_depth_farthest(a, b) max(a, b)
 #define rk_clip_depth(clip) ((clip).z / (clip).w * 0.5 + 0.5)
+#define rk_depth_recip(d) (1.0 - (d))
+#define rk_depth_span(far_d, near_d) ((far_d) - (near_d))
+#define rk_depth_push_far(d, x, y) min(1.0, (d) + (x) + (y))
 #endif
+
+// ---- the clip z of a vertex (PLAN-reversed-z.md) ----
+// The projection of the viewer is the GL one (z of the clip space between -w and w); Vulkan wants 0 to w. RK_CLIP_Z_OF(dst, src) writes the z of dst from src: with RK_REVERSE_Z 0 the old remap,
+// exactly the text it replaces. With RK_REVERSE_Z 1 the projection the program gets is already the reversed Vulkan one (LLRender gives it for everything but the shadow passes), so the z is taken as it is.
+// The programs that draw into the shadow maps (shadow.vert, shadow_cube.vert, shadow_alpha.vert, avatar_shadow.vert) keep the standard convention: RK_CLIP_Z_STD, the remap in every case.
+#define RK_CLIP_Z_STD_OF(dst, src) (dst).z = ((src).z + (src).w) * 0.5
+#if RK_REVERSE_Z != 0
+#define RK_CLIP_Z_OF(dst, src) (dst).z = (src).z
+#else
+#define RK_CLIP_Z_OF(dst, src) RK_CLIP_Z_STD_OF(dst, src)
+#endif
+#define RK_CLIP_Z(p) RK_CLIP_Z_OF(p, p)
+// a vertex pinned to the far plane (the stars, the moon and the sun disc: the GL clip z is w times a factor just under 1): in the reversed convention the far plane is 0 and the same factor
+// gives a depth just above it. RK_FAR_CLIP_Z(w) is exactly the far plane, RK_FAR_CLIP_Z_K(w, k) is w * k in the standard convention and the same distance from the far plane in the reversed one.
+#if RK_REVERSE_Z != 0
+#define RK_FAR_CLIP_Z(w) 0.0
+#define RK_FAR_CLIP_Z_K(w, k) ((w) * ((1.0 - (k)) * 0.5))
+#else
+#define RK_FAR_CLIP_Z(w) (w)
+#define RK_FAR_CLIP_Z_K(w, k) ((w) * (k))
+#endif
+#define RK_CLIP_Z_STD(p) RK_CLIP_Z_STD_OF(p, p)

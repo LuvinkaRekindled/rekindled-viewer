@@ -64,7 +64,7 @@ void main()
     {
         if (depth_radius < 0.0)
         {
-            depth = 1.0;    // no depth test for overlays
+            depth = rk_depth_far();    // no depth test for overlays
         }
         else if (depth_radius == 0.0)
         {
@@ -81,12 +81,12 @@ void main()
             const float c = textureLod(rk_tbl2d[RK_HM(rk_ti_depthMap)], uv0 + vec2(0.0, t.y), 0.0).r;
             const float d = textureLod(rk_tbl2d[RK_HM(rk_ti_depthMap)], uv0 + t, 0.0).r;
             const float bil = mix(mix(a, b, fr.x), mix(c, d, fr.x), fr.y);
-            const float hi = max(max(a, b), max(c, d));
-            const float lo = min(min(a, b), min(c, d));
+            const float hi = rk_depth_farthest(rk_depth_farthest(a, b), rk_depth_farthest(c, d));
+            const float lo = rk_depth_nearest(rk_depth_nearest(a, b), rk_depth_nearest(c, d));
             // a depth edge (the far one more than 3 % farther than the near one, 1 - depth is about 1 / distance) gets no margin: the margin is for the slope of a surface, and at an occluder's silhouette it
             // would let the hidden outline of the selection show through along the edge
-            const bool edge = (1.0 - lo) > 1.03 * max(1.0 - hi, 1.0e-7);
-            depth = min(1.0, bil + (edge ? 0.0 : 3.0 * (hi - lo)) + 1.0e-6);
+            const bool edge = rk_depth_recip(lo) > 1.03 * max(rk_depth_recip(hi), 1.0e-7);
+            depth = rk_depth_push_far(bil, (edge ? 0.0 : 3.0 * rk_depth_span(hi, lo)), 1.0e-6);
         }
         else
         {
@@ -100,15 +100,15 @@ void main()
                     if (abs(float(i)) <= depth_radius && abs(float(j)) <= depth_radius)
                     {
                         const float d = textureLod(rk_tbl2d[RK_HM(rk_ti_depthMap)], vary_fragcoord + vec2(float(i), float(j)) * t, 0.0).r;
-                        lo = min(lo, d);
-                        hi = max(hi, d);
+                        lo = rk_depth_nearest(lo, d);
+                        hi = rk_depth_farthest(hi, d);
                     }
                 }
             }
             // the margin is for the slope of a surface, as in the bilinear mode: at a depth edge (an avatar in front of a wall) hi - lo is the whole step between the two surfaces, and hi + (hi - lo)
             // lay behind the wall or past the far plane in the band around every silhouette: tags and hover texts behind the wall showed through there (the user 2026-11-21, along the outline of his avatar)
-            const bool edge = (1.0 - lo) > 1.03 * max(1.0 - hi, 1.0e-7);
-            depth = min(1.0, hi + (edge ? 0.0 : (hi - lo)) + 1.0e-6);
+            const bool edge = rk_depth_recip(lo) > 1.03 * max(rk_depth_recip(hi), 1.0e-7);
+            depth = rk_depth_push_far(hi, (edge ? 0.0 : rk_depth_span(hi, lo)), 1.0e-6);
         }
     }
     gl_FragDepth = depth;

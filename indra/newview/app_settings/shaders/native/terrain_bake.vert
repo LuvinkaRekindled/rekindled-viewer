@@ -15,7 +15,7 @@ layout(location = 1) out vec4 vary_texcoord1;
 void main()
 {
     gl_Position = modelview_projection_matrix * vec4(position.xyz, 1.0);
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
 
     vec2 tc = texcoord1.xy;
 

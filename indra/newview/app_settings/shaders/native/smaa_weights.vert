@@ -19,5 +19,5 @@ void main()
     SMAABlendingWeightCalculationVS(vary_texcoord0,
                                     vary_pixcoord,
                                     vary_offset);
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
 }

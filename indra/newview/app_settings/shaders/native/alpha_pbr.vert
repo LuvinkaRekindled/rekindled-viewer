@@ -81,7 +81,7 @@ void main()
     gl_Position = rig_transform(model.mvp, vertex, rig_anchor);
 #endif
     // (the table's matrices are GL clip space: see alpha.vert)
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
+    RK_CLIP_Z(gl_Position);
 #if defined(GB_MOTION) && !defined(HAS_SKIN)
     {
         // a draw that is not rigged: its slot's model matrix of this frame and of the one before, when the slot moved (else the pixels keep the camera's motion: w = 0 gives the sentinel)

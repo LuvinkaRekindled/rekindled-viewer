@@ -24,9 +24,9 @@ void main()
 
     // smash to far clip plane to
     // avoid rendering on top of moon (do NOT write to gl_FragDepth, it's slow)
-    pos.z = pos.w;
+    pos.z = RK_FAR_CLIP_Z(pos.w);
     gl_Position = pos;
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
 
     float t = mod(time, 1.25f);
     screenpos = position.xy * vec2(t, t);

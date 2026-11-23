@@ -108,7 +108,7 @@ void main()
     vary_normal = norm;
     vary_position = pos.xyz;
     gl_Position = projection_matrix * pos;
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
 #ifdef GB_MOTION
     {
         // the motion of the vertex: the world space palettes of this frame and of the last (the avatar velocity pass did the same in its own pass until 2026-11-15); the wind of the clothing is left out, as there

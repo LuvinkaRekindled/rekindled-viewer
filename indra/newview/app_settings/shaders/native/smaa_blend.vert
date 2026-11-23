@@ -16,5 +16,5 @@ void main()
     gl_Position = vec4(position.xyz, 1.0);
     vary_texcoord0 = (gl_Position.xy*0.5+0.5);
     SMAANeighborhoodBlendingVS(vary_texcoord0, vary_offset);
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
 }

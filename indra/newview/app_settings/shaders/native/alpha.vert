@@ -85,7 +85,7 @@ void main()
 #endif
     // the matrices of the scene table are in GL clip space (z in [-w, w], what the viewer's own shaders compute); Vulkan's is [0, w]. Every viewer vertex shader gets this line from the translator; a program
     // that takes its matrix from the table has to do it itself, or its depth is wrong (the first native alpha test drew a sign over the tree in front of it).
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
+    RK_CLIP_Z(gl_Position);
 
     vec2 texcoord = RowVec2(row.texcoords).t[index];
 #ifndef HAS_SKIN

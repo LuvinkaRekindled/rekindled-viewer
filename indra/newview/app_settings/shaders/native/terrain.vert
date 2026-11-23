@@ -25,7 +25,7 @@ void main()
     const vec3 normal = RowVec4(row.normals).v[index].xyz;
 
     gl_Position = model.mvp * position;
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (the table's matrices are GL clip space: see alpha.vert)
+    RK_CLIP_Z(gl_Position);      // (the table's matrices are GL clip space: see alpha.vert)
     vary_position = (model.mv * position).xyz;
     vary_normal = normalize(mat3(model.n0.xyz, model.n1.xyz, model.n2.xyz) * normal);
 

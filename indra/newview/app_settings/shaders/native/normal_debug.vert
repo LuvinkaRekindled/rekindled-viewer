@@ -30,7 +30,7 @@ vec4 get_screen_normal(vec3 position, vec4 world_pos, vec3 normal, mat4 mat)
     world_norm.xyz = debug_normal_draw_length * normalize(world_norm.xyz);
     world_norm.xyz += world_pos.xyz;
     vec4 clip = projection_matrix * world_norm;
-    clip.z = (clip.z + clip.w) * 0.5;       // (GL clip space to Vulkan's)
+    RK_CLIP_Z_OF(clip, clip);       // (GL clip space to Vulkan's)
     return clip;
 }
 
@@ -41,7 +41,7 @@ void main()
     vec4 world_pos = mat * vec4(position.xyz, 1.0);
 
     gl_Position = projection_matrix * world_pos;
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
     normal_g = get_screen_normal(position.xyz, world_pos, normal.xyz, mat);
 #ifdef HAS_ATTRIBUTE_TANGENT
     tangent_g = get_screen_normal(position.xyz, world_pos, tangent.xyz, mat);

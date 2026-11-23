@@ -22,9 +22,9 @@ void main()
 
     // smash to *almost* far clip plane -- stars are still behind
     // SL-19283 - finagle the moon position to be between clouds and stars.
-    pos.z = pos.w * 0.999991;
+    pos.z = RK_FAR_CLIP_Z_K(pos.w, 0.999991);
     gl_Position = pos;
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
 
     vary_texcoord0 = (texture_matrix0 * vec4(texcoord0, 0, 1)).xy;
 }

@@ -25,7 +25,7 @@ void main()
     // World / view / projection
     vec4 pos = model.mvp * vec4(position.xyz, 1.0);
     gl_Position = pos;
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;      // (GL clip space to Vulkan's, as the old programs get it appended)
+    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
 
     // Get relative position
     vec3 rel_pos = position.xyz - camPosLocal.xyz + vec3(0, 50, 0);

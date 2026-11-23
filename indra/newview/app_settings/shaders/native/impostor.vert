@@ -33,7 +33,7 @@ void main()
     const uint k = uint(gl_VertexIndex);
     const vec3 position = a.xyz + sl[k] * b.xyz + su[k] * c.xyz;
     gl_Position = modelview_projection_matrix * vec4(position, 1.0);
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
+    RK_CLIP_Z(gl_Position);
     vary_texcoord0 = uv[k];
     vary_slot_diffuse = floatBitsToUint(a.w);
     vary_slot_normal = floatBitsToUint(b.w);

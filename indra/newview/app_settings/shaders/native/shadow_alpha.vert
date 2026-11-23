@@ -66,7 +66,7 @@ void main()
     }
     gl_Position = rk_view_proj * rig_transform(AlphaModels(rk_packet_models).m[pk.model], vertex, rig_anchor);
     // GL clip space z is [-w, w], Vulkan's is [0, w]: the viewer's own vertex shaders get this line from the translator, a native one does it itself (see alpha.vert)
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
+    RK_CLIP_Z_STD(gl_Position);
 
     // texture windows (RKVkBridge::kAlphaWindowShift): a batch of more than four textures is drawn by several entries over the same index range, each naming the textures of one window (the number of the
     // texture in position.w, shifted by the window's width; the window number is in bits 12 - 15 of the flags). The triangles of the other windows are moved outside the clip volume (the three vertices of

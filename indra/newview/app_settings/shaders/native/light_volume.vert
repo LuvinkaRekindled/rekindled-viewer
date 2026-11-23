@@ -35,7 +35,7 @@ void main()
 
     gl_Position = modelview_projection_matrix * vec4(position * size + center, 1.0);
     // (the matrix is GL clip space: the z remap is the translator's line of the viewer's own vertex shaders, see alpha.vert)
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
+    RK_CLIP_Z(gl_Position);
 
     vary_light_a = vec4(r1.xyz, r1.w);
     vary_light_b = vec4((modelview_matrix * vec4(center, 1.0)).xyz, size);

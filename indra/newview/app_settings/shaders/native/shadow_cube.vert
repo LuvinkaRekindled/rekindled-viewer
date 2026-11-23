@@ -13,5 +13,5 @@ layout(location = 0) in vec3 position;
 void main()
 {
     gl_Position = modelview_projection_matrix * vec4(position * box_size + box_center, 1.0);
-    gl_Position.z = (gl_Position.z + gl_Position.w) * 0.5;
+    RK_CLIP_Z_STD(gl_Position);
 }
