@@ -71,5 +71,6 @@ void main()
 
     frag_data0 = vec4(n, 0.0);
     frag_data1 = vec4(rough, 0.0, 0.0, 1.0);
-    frag_data2 = vec4(depth, 0.0, 0.0, 1.0);
+    // the denoiser's matrices (rkvkdenoise.cpp: the inverse of the GL projection, S = 2 depth - 1) are built for the STANDARD convention (0 near, 1 far and sky): the reversed depth is exactly 1 - that
+    frag_data2 = vec4(1.0 - depth, 0.0, 0.0, 1.0);
 }
