@@ -42,7 +42,7 @@ void main()
     view = vec4(oEyeVec, bigWave.y);
 
     const vec4 clip = modelview_projection_matrix * pos;
-    refCoord = vec4(clip.xyz + vec3(0.0, 0.0, 0.2), bigWave.x);
+    refCoord = vec4(clip.xy, RK_GL_CLIP_Z(clip) + 0.2, bigWave.x);      // (the GL clip z the fragment stage divides by, not the reversed one)
     gl_Position = clip;
     RK_CLIP_Z_OF(gl_Position, clip);        // (GL clip space to Vulkan's, as the old programs get it appended)
 }

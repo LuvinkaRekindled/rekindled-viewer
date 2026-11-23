@@ -1027,7 +1027,7 @@ void main()
 
     vertex_color = diffuse_color;
 #ifdef ALPHA_BLEND
-    vary_fragcoord = vert.xyz;
+    vary_fragcoord = vec3(vert.xy, RK_GL_CLIP_Z(vert));        // (the GL clip z the fragment stage divides by, not the reversed one)
 #endif
 }
 

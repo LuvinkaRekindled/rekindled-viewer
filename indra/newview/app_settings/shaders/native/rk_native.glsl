@@ -37,6 +37,9 @@ layout(std430, set = 2, binding = 4) readonly buffer RkHandleMap { uint rk_hm[];
 #define RK_CLIP_Z_STD_OF(dst, src) (dst).z = ((src).z + (src).w) * 0.5
 #define RK_CLIP_Z_OF(dst, src) (dst).z = (src).z
 #define RK_CLIP_Z(p) RK_CLIP_Z_OF(p, p)
+// the GL clip z (between -w and w, about w for a distant point) of a clip position made with the reversed projection: z_reversed = (w - z_gl) / 2. For the programs that hand the old clip z to the fragment stage
+// as a stand-in for w (screen coordinates = xy / z: the water, the underwater view, glTF blend): with the reversed z that division gave a position far outside the screen (the water showed the edge of the picture).
+#define RK_GL_CLIP_Z(clip) ((clip).w - 2.0 * (clip).z)
 // a vertex pinned to the far plane (the stars, the moon and the sun disc: the GL clip z is w times a factor just under 1): the far plane is 0 and the same factor
 // gives a depth just above it. RK_FAR_CLIP_Z(w) is exactly the far plane, RK_FAR_CLIP_Z_K(w, k) the same distance from the far plane as w * k was in the standard convention.
 #define RK_FAR_CLIP_Z(w) 0.0
