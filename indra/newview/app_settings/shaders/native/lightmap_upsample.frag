@@ -31,7 +31,7 @@ void main()
 {
     const vec2 uv = vary_fragcoord;
     const float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], uv).r;
-    if (depth >= 1.0)
+    if (rk_depth_is_far(depth))
     {
         frag_color = vec4(1.0);         // a sky pixel: nothing reads the lightmap there
         return;
@@ -57,7 +57,7 @@ void main()
         const vec4 col = texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], (idx + 0.5) / half_res);
         const vec2 tap_uv = (min(idx * 2.0 + half_offset, screen_res - 1.0) + 0.5) / screen_res;
         const float tap_depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], tap_uv).r;
-        if (tap_depth >= 1.0)
+        if (rk_depth_is_far(tap_depth))
         {
             continue;                   // a sky pixel's lightmap value (1.0) is not a lighting value of this surface
         }

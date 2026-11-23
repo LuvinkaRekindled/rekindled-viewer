@@ -157,7 +157,7 @@ vec3 getPositionWithNDC(vec3 ndc)
 vec4 getPositionWithDepth(vec2 pos_screen, float depth)
 {
     vec2 sc = getScreenCoordinate(pos_screen);
-    vec3 ndc = vec3(sc.x, sc.y, 2.0 * depth - 1.0);
+    vec3 ndc = vec3(sc.x, sc.y, rk_depth_ndc(depth));
     return vec4(getPositionWithNDC(ndc), 1.0);
 }
 

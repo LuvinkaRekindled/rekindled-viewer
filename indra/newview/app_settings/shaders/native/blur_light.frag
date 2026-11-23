@@ -47,7 +47,7 @@ void main()
     const vec2 g0 = gbuffer_uv(tc0);
     const float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], g0).r;
     const vec4 ccol = texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], tc0);
-    if (depth >= 1.0)
+    if (rk_depth_is_far(depth))
     {
         frag_color = ccol;          // a sky pixel: the lightmap is 1.0 there and nothing reads it
         return;

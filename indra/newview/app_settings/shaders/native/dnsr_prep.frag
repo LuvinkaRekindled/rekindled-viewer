@@ -45,7 +45,7 @@ void main()
     vec3 n = vec3(0.0, 0.0, 1.0);
     float rough = 1.0;
 
-    if (depth < 1.0)
+    if (rk_depth_has_surface(depth))
     {
         vec4 normInfo = getNormRaw(tc);
         vec4 specInfo = texture(rk_tbl2d[RK_HM(rk_ti_specularRect)], tc);

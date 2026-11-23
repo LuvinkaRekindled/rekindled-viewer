@@ -9,7 +9,7 @@
 vec3 rk_view_pos(mat4 inv_proj, vec2 screen_uv, float depth)
 {
     vec2 sc = screen_uv * 2.0 - 1.0;
-    float n = 2.0 * depth - 1.0;
+    float n = rk_depth_ndc(depth);
     float rw = 1.0 / (inv_proj[2][3] * n + inv_proj[3][3]);
     return vec3((inv_proj[0][0] * sc.x + inv_proj[3][0]) * rw, (inv_proj[1][1] * sc.y + inv_proj[3][1]) * rw, inv_proj[3][2] * rw);
 }

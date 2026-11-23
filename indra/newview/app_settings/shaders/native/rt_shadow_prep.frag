@@ -32,7 +32,7 @@ void main()
 {
     const vec2 tc = vary_fragcoord;
     const float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], tc).r;
-    if (depth >= 1.0)
+    if (rk_depth_is_far(depth))
     {
         frag_color = vec4(0.0);         // a sky pixel: no surface, no blocker
         return;

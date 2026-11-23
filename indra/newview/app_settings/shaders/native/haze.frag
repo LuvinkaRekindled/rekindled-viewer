@@ -60,7 +60,7 @@ void main()
 {
     vec2  tc           = vary_fragcoord.xy;
     float depth        = getDepth(tc.xy);
-    if (depth >= 1.0)
+    if (rk_depth_is_far(depth))
     {
         //should only be true of sky, clouds, sun/moon, and stars: nothing to haze, no position, normal or atmosphere work for these pixels
         discard;

@@ -56,8 +56,8 @@ void main()
         // we want to depth test when the camera is above water, but some GPUs have a hard time
         // with depth testing against render targets that are bound for sampling in the same shader
         // so we do it manually here
-        float cur_depth = vary_fragcoord.z / vary_fragcoord.w * 0.5 + 0.5;
-        if (cur_depth > depth)
+        float cur_depth = rk_clip_depth(vary_fragcoord);
+        if (rk_depth_behind(cur_depth, depth))
         {
             discard;
         }

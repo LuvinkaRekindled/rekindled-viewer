@@ -41,7 +41,7 @@ void main()
     const vec2 tc = vary_fragcoord;
     vec4 c = texture(rk_tbl2d[RK_HM(rk_ti_lightMap)], tc);
     const float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], tc).r;
-    if (depth >= 1.0)
+    if (rk_depth_is_far(depth))
     {
         frag_color = c;             // a sky pixel: nothing reads its sun channel
         return;

@@ -162,7 +162,7 @@ void main()
     const vec2 uv = vary_fragcoord;
 #endif
     const float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], uv).r;
-    if (depth >= 1.0)
+    if (rk_depth_is_far(depth))
     {
         frag_color = vec4(1.0);         // a sky pixel: nothing reads the lightmap there
 #ifdef RK_RT_QUERY

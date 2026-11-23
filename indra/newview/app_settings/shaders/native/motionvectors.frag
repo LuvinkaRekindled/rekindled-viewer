@@ -33,7 +33,7 @@ layout(location = 0) out vec4 frag_color;
 void main()
 {
     float depth = texture(rk_tbl2d[RK_HM(rk_ti_depthMap)], vary_fragcoord).r;
-    vec4 ndc = vec4(vary_fragcoord * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 ndc = vec4(vary_fragcoord * 2.0 - 1.0, rk_depth_ndc(depth), 1.0);
     vec4 cur = to_cur * ndc;
     vec4 prev = to_prev * ndc;
     vec2 cur_ndc = cur.xy / cur.w;
@@ -47,13 +47,13 @@ void main()
         vec2 e = texture(rk_tbl2d[RK_HM(rk_ti_diffuseRect)], vary_fragcoord).rg;
         // a fullbright surface (drawn after lighting, in the post-deferred pass) writes no motion: the dancer behind a fullbright wall left its motion in the world pass's target, and the wall's
         // pixels would take it (the upscaler then drags the wall's texture along with the dancer: the user 2026-11-21). The world pass's own depth tells: nearer in the end = drawn over since.
-        const float world_depth = use_snapshot > 0.5 ? texture(rk_tbl2d[RK_HM(rk_ti_emissiveRect)], vary_fragcoord).r : 1.0;
-        bool overdrawn = use_snapshot > 0.5 && depth < world_depth - 1.0e-7;
+        const float world_depth = use_snapshot > 0.5 ? texture(rk_tbl2d[RK_HM(rk_ti_emissiveRect)], vary_fragcoord).r : rk_depth_far();
+        bool overdrawn = use_snapshot > 0.5 && rk_depth_in_front(depth, world_depth, 1.0e-7);
         bool hair_core = false;
         if (overdrawn && hair_gap > 0.0)
         {
-            const float dist_now = proj_d / (depth * 2.0 - 1.0 + proj_c);
-            const float dist_world = proj_d / (world_depth * 2.0 - 1.0 + proj_c);
+            const float dist_now = proj_d / (rk_depth_ndc(depth) + proj_c);
+            const float dist_world = proj_d / (rk_depth_ndc(world_depth) + proj_c);
             hair_core = abs(dist_world - dist_now) < hair_gap;
             overdrawn = overdrawn && !hair_core;
         }
