@@ -26,6 +26,12 @@ Rekindled is free. If you'd like to chip in, donations go in-world: the Donate b
 
 How much faster it is depends on the scene, the crowd and the machine, so there is no single figure here: the measurements we have come from a few machines, different scenes and different days, and they cannot be added up. The design notes and measurements are not part of this repository.
 
+## Recommended
+
+- Turn on Preferences > Graphics > Hardware Settings > Compression to save VRAM.
+- Try Preferences > Graphics > Vulkan > Upscaling at 67%. Hit OK to save it, then restart the viewer.
+- If you're getting more FPS than you need, try turning on Vsync to keep your GPU and CPU cooler in Preferences > Graphics > Rendering.
+
 ## Versions
 
 Rekindled has its own version, written like `0.99.01` (major.minor.patch, the minor and the patch with two digits), followed by a build number (the number of commits), and it shows the Firestorm version it is based on in parentheses: `0.99.01.1351 (Firestorm 7.2.5)`. The version is in `indra/newview/VIEWER_VERSION_REKINDLED.txt`; the Firestorm version it is based on stays in `indra/newview/VIEWER_VERSION_FS.txt`.
