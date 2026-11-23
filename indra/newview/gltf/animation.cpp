@@ -404,7 +404,7 @@ void Skin::uploadMatrixPalette(Asset& asset)
     // prepare matrix palette
     LL_PROFILE_ZONE_SCOPED_CATEGORY_GLTF;
 
-    U32 max_joints = LLSkinningUtil::getMaxGLTFJointCount();
+    U32 max_joints = LLSkinningUtil::getMaxGLTFJointCount() / 2;       // (half of the block: the palette of the frame before follows, for the upscaler's motion)
 
     if (mUBO == 0)
     {
@@ -451,6 +451,22 @@ void Skin::uploadMatrixPalette(Asset& asset)
         mp[idx + 10] = m[10];
         mp[idx + 11] = m[14];
     }
+
+    // the palette of the frame before follows this frame's (see Asset::uploadTransforms)
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (frame != mPaletteFrame)
+    {
+        mPalettePrev = std::move(mPaletteCur);
+        mPaletteFrame = frame;
+    }
+    mPaletteCur = glmp;
+    if (mPalettePrev.size() != mPaletteCur.size())
+    {
+        mPalettePrev = mPaletteCur;
+    }
+    mMoving = mPalettePrev != mPaletteCur;
+    mPrevOffset = (U32)(joint_count * 3);
+    glmp.insert(glmp.end(), mPalettePrev.begin(), mPalettePrev.end());
 
     gRender.bufferData(mUBO, BufferKind::Uniform, glmp.size() * sizeof(F32), glmp.data());
 }

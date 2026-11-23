@@ -238,6 +238,11 @@ namespace LL
             S32 mSkeleton = INVALID_INDEX;
 
             U32 mUBO = 0;
+            // the upscaler's motion: the buffer holds this frame's palette and, after it, the one of the frame before (mPrevOffset vec4s on); mMoving = they differ
+            std::vector<F32> mPaletteCur, mPalettePrev;
+            U32 mPaletteFrame = U32_MAX;
+            U32 mPrevOffset = 0;
+            bool mMoving = false;
             std::vector<S32> mJoints;
             std::string mName;
             std::vector<mat4> mInverseBindMatricesData;
@@ -393,6 +398,11 @@ namespace LL
 
             // UBO for storing node transforms
             U32 mNodesUBO = 0;
+            // the upscaler's motion: the buffer holds this frame's node matrices and, after them, the ones of the frame before (mNodesPrevOffset vec4s on); mNodesMoving = they differ
+            std::vector<F32> mNodesCur, mNodesPrev;
+            U32 mNodesFrame = U32_MAX;
+            U32 mNodesPrevOffset = 0;
+            bool mNodesMoving = false;
 
             // UBO for storing material data
             U32 mMaterialsUBO = 0;

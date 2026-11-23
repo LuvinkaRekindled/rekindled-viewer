@@ -55,7 +55,7 @@ namespace LL
         // variant - bitmask according to RKShaderProgram::GLTFVariant flags
         void render(U8 variant);
 
-        void render(LL::GLTF::Asset& asset, U8 variant);
+        void render(LL::GLTF::Asset& asset, U8 variant, const LLMatrix4a* asset_cur = nullptr, const LLMatrix4a* asset_prev = nullptr);        // (the asset to agent matrix of this frame and of the one before: the upscaler's motion)
 
         // bind the given material for rendering
         void bind(LL::GLTF::Asset& asset, LL::GLTF::Material& material);

@@ -81,6 +81,11 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
     vec4 waterFogColor;
     float waterFogDensity;
     float waterFogKS;
+    mat4 view_proj_cur;         // the camera of this frame, unjittered (pipeline.cpp rk_motion_fold_uniforms): the motion of the upscaler
+    vec2 render_res;
+    mat4 gltf_asset_cur;        // the asset to agent matrix of this frame and of the one before (gltfscenemanager.cpp)
+    mat4 gltf_asset_prev;
+    vec4 gltf_motion;           // x: 1 where this draw moves (the object, its nodes or its joints), y: where the matrices of the frame before start in the node or joint block (vec4s)
 };
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
@@ -4206,16 +4211,29 @@ vec3 pbrCalcPointLightOrSpotLight(vec3 diffuseColor, vec3 specularColor,
 // ==================================
 // output definition
 // ==================================
+#ifdef GB_MOTION
+layout(location = 24) in vec4 vary_cur;
+layout(location = 25) in vec4 vary_prev;
+#endif
 #if defined(ALPHA_BLEND) || defined(UNLIT)
 layout(location = 0) out vec4 frag_color;
+#include "lib/cover.glsl"
 #else
 layout(location = 0) out vec4 frag_data[4];
+#ifdef GB_MOTION
+#include "lib/motion.glsl"
+// the motion target of the world pass (attachment 4): this surface's motion in pixels, 1.0 in x where it has none of its own
+layout(location = 4) out vec2 frag_velocity;
+#endif
 #endif
 // ==================================
 
 
 void main()
 {
+#if defined(GB_MOTION) && !defined(ALPHA_BLEND) && !defined(UNLIT)
+    frag_velocity = rk_motion_encode(vary_cur, vary_prev, render_res);
+#endif
     unpackMaterial();
 // ==================================
 // all variants
@@ -4366,6 +4384,17 @@ void main()
     frag_color = color;
 #endif
 #endif  // ALPHA_BLEND
+#if defined(ALPHA_BLEND) || defined(UNLIT)
+    // the blended pass's coverage and motion for the upscaler (lib/cover.glsl): what the surface covered, and, where it moves, its motion in pixels (alpha is the write mask of the blend)
+#ifdef HAS_SKIN
+    rk_write_cover(frag_color.a, 1.0);
+#else
+    rk_write_cover(frag_color.a, 0.0);
+#endif
+#ifdef GB_MOTION
+    rk_write_motion(frag_color.a, vary_cur.w > 0.0 && vary_prev.w > 0.0, (vary_prev.xy / vary_prev.w - vary_cur.xy / vary_cur.w) * 0.5 * render_res);
+#endif
+#endif
 }
 
 

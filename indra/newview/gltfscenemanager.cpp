@@ -47,6 +47,22 @@
 #include "llfilesystem.h"
 #include "llviewercontrol.h"
 #include "boost/json.hpp"
+#include "llframetimer.h"
+#include <unordered_map>
+
+// the upscaler's motion for the programs that draw with last frame's matrices (pipeline.cpp): the camera's matrices, the render size
+bool rk_motion_fold_uniforms(RKShaderProgram* program);
+
+namespace
+{
+    // the asset to agent matrix of an object this frame and the frame before (one entry per object; taken once per viewer frame, the scene is drawn more than once in a frame)
+    struct AssetMatrices
+    {
+        LLMatrix4a mCur, mPrev;
+        U32 mFrame = U32_MAX;
+    };
+    std::unordered_map<const LLViewerObject*, AssetMatrices> sAssetMatrices;
+}
 
 #define GLTF_SIM_SUPPORT 1
 
@@ -483,6 +499,7 @@ void GLTFSceneManager::update()
     {
         if (mObjects[i]->isDead() || mObjects[i]->mGLTFAsset == nullptr)
         {
+            sAssetMatrices.erase(mObjects[i].get());
             mObjects.erase(mObjects.begin() + i);
             --i;
             continue;
@@ -614,6 +631,7 @@ void GLTFSceneManager::render(U8 variant)
     {
         if (mObjects[i]->isDead() || mObjects[i]->mGLTFAsset == nullptr)
         {
+            sAssetMatrices.erase(mObjects[i].get());
             mObjects.erase(mObjects.begin() + i);
             --i;
             continue;
@@ -629,13 +647,28 @@ void GLTFSceneManager::render(U8 variant)
         RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, gRenderModelView);
         RKRenderMatrix::multiply(RKRenderMatrix::Kind::Modelview, mat.getF32ptr());
 
-        render(*asset, variant);
+        AssetMatrices& am = sAssetMatrices[mObjects[i].get()];
+        const U32 frame = LLFrameTimer::getFrameCount();
+        if (am.mFrame == U32_MAX)
+        {
+            am.mCur = mat;
+            am.mPrev = mat;
+            am.mFrame = frame;
+        }
+        else if (am.mFrame != frame)
+        {
+            am.mPrev = am.mCur;
+            am.mCur = mat;
+            am.mFrame = frame;
+        }
+
+        render(*asset, variant, &am.mCur, &am.mPrev);
 
         RKRenderMatrix::pop(RKRenderMatrix::Kind::Modelview);
     }
 }
 
-void GLTFSceneManager::render(Asset& asset, U8 variant)
+void GLTFSceneManager::render(Asset& asset, U8 variant, const LLMatrix4a* asset_cur, const LLMatrix4a* asset_prev)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_GLTF;
 
@@ -668,6 +701,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
         bool rigged = variant & RKShaderProgram::GLTFVariant::RIGGED;
 
         bool shader_bound = false;
+        bool motion_on = false;        // the upscaler takes motion vectors: the programs get the matrices of the frame before
 
         for (U32 i = 0; i < batches.size(); ++i)
         {
@@ -693,6 +727,14 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
                 }
 
                 gRender.bindUniformBlock(RKShaderProgram::UB_GLTF_MATERIALS, asset.mMaterialsUBO);
+
+                if (asset_cur && asset_prev && rk_motion_fold_uniforms(RKShaderProgram::sCurBoundShaderPtr))
+                {
+                    static LLStaticHashedString asset_cur_s("gltf_asset_cur"), asset_prev_s("gltf_asset_prev");
+                    RKShaderProgram::sCurBoundShaderPtr->uniformMatrix4fv(asset_cur_s, 1, false, asset_cur->getF32ptr());
+                    RKShaderProgram::sCurBoundShaderPtr->uniformMatrix4fv(asset_prev_s, 1, false, asset_prev->getF32ptr());
+                    motion_on = true;
+                }
 
                 for (U32 i = 0; i < TEXTURE_TYPE_COUNT; ++i)
                 {
@@ -727,16 +769,27 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
                 Mesh& mesh = asset.mMeshes[node.mMesh];
                 Primitive& primitive = mesh.mPrimitives[pdata.mPrimitiveIndex];
 
+                static LLStaticHashedString motion_s("gltf_motion");
+                F32 motion_flag = 0.f, motion_offset = 0.f;      // (1 where this draw moves: the object moved, or its nodes or joints did; and where the matrices of the frame before are in the block)
+                const bool asset_moved = motion_on && memcmp(asset_cur->getF32ptr(), asset_prev->getF32ptr(), 16 * sizeof(F32)) != 0;
                 if (rigged)
                 {
                     LL_PROFILE_ZONE_NAMED_CATEGORY_GLTF("gltfdc - bind skin");
                     llassert(node.mSkin != INVALID_INDEX);
                     Skin& skin = asset.mSkins[node.mSkin];
                     gRender.bindUniformBlock(RKShaderProgram::UB_GLTF_JOINTS, skin.mUBO);
+                    motion_flag = (asset_moved || skin.mMoving) ? 1.f : 0.f;
+                    motion_offset = (F32)skin.mPrevOffset;
                 }
                 else
                 {
                     RKShaderProgram::sCurBoundShaderPtr->uniform1i(LLShaderMgr::GLTF_NODE_ID, pdata.mNodeIndex);
+                    motion_flag = (asset_moved || asset.mNodesMoving) ? 1.f : 0.f;
+                    motion_offset = (F32)asset.mNodesPrevOffset;
+                }
+                if (motion_on)
+                {
+                    RKShaderProgram::sCurBoundShaderPtr->uniform4f(motion_s, motion_flag, motion_offset, 0.f, 0.f);
                 }
 
                 {

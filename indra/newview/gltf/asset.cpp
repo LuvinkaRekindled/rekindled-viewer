@@ -135,7 +135,7 @@ void Asset::uploadTransforms()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_GLTF;
     // prepare matrix palette
-    U32 max_nodes = LLSkinningUtil::getMaxGLTFJointCount();
+    U32 max_nodes = LLSkinningUtil::getMaxGLTFJointCount() / 2;       // (half of the block: the nodes of the frame before follow, for the upscaler's motion)
 
     size_t node_count = llmin<size_t>(max_nodes, mNodes.size());
 
@@ -182,6 +182,22 @@ void Asset::uploadTransforms()
     {
         gRender.genBuffers(1, &mNodesUBO);
     }
+
+    // the matrices of the frame before follow this frame's (the first upload of a frame moves the last one's to "before"; a second one in the same frame keeps it)
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (frame != mNodesFrame)
+    {
+        mNodesPrev = std::move(mNodesCur);
+        mNodesFrame = frame;
+    }
+    mNodesCur = glmp;
+    if (mNodesPrev.size() != mNodesCur.size())
+    {
+        mNodesPrev = mNodesCur;
+    }
+    mNodesMoving = mNodesPrev != mNodesCur;
+    mNodesPrevOffset = (U32)(node_count * 3);
+    glmp.insert(glmp.end(), mNodesPrev.begin(), mNodesPrev.end());
 
     gRender.bufferData(mNodesUBO, BufferKind::Uniform, glmp.size() * sizeof(F32), glmp.data());
 }

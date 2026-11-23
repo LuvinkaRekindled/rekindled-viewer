@@ -81,6 +81,11 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
     vec4 waterFogColor;
     float waterFogDensity;
     float waterFogKS;
+    mat4 view_proj_cur;         // the camera of this frame, unjittered (pipeline.cpp rk_motion_fold_uniforms): the motion of the upscaler
+    vec2 render_res;
+    mat4 gltf_asset_cur;        // the asset to agent matrix of this frame and of the one before (gltfscenemanager.cpp)
+    mat4 gltf_asset_prev;
+    vec4 gltf_motion;           // x: 1 where this draw moves (the object, its nodes or its joints), y: where the matrices of the frame before start in the node or joint block (vec4s)
 };
 layout(std140, set = 0, binding = 5) uniform RKLooseDraw
 {
@@ -871,6 +876,31 @@ mat4 getGLTFTransform()
     return ret;
 }
 
+#ifdef GB_MOTION
+// the same with the palette of the frame before (it follows this frame's in the block: gltf_motion.y vec4s on)
+mat4 getGLTFTransformPrev()
+{
+    const uint off = uint(gltf_motion.y);
+    const vec4 w = weight4;
+
+    const uint i1 = off + joint.x*3u;
+    const uint i2 = off + joint.y*3u;
+    const uint i3 = off + joint.z*3u;
+    const uint i4 = off + joint.w*3u;
+
+    const vec4 v0 = gltf_joints[i1+0u] * w.x + gltf_joints[i2+0u] * w.y + gltf_joints[i3+0u] * w.z + gltf_joints[i4+0u] * w.w;
+    const vec4 v1 = gltf_joints[i1+1u] * w.x + gltf_joints[i2+1u] * w.y + gltf_joints[i3+1u] * w.z + gltf_joints[i4+1u] * w.w;
+    const vec4 v2 = gltf_joints[i1+2u] * w.x + gltf_joints[i2+2u] * w.y + gltf_joints[i3+2u] * w.z + gltf_joints[i4+2u] * w.w;
+
+    mat4 ret;
+    ret[0] = vec4(v0.xyz, 0);
+    ret[1] = vec4(v1.xyz, 0);
+    ret[2] = vec4(v2.xyz, 0);
+    ret[3] = vec4(v0.w, v1.w, v2.w, 1.0);
+    return ret;
+}
+#endif
+
 #else
 
 layout(std140, set = 0, binding = 3) uniform GLTFNodes
@@ -897,6 +927,33 @@ mat4 getGLTFTransform()
     return ret;
 }
 
+#ifdef GB_MOTION
+// the same with the matrices of the frame before (they follow this frame's in the block: gltf_motion.y vec4s on)
+mat4 getGLTFTransformPrev()
+{
+    mat4 ret;
+    int idx = gltf_node_id*3 + int(gltf_motion.y);
+
+    vec4 src0 = gltf_nodes[idx+0];
+    vec4 src1 = gltf_nodes[idx+1];
+    vec4 src2 = gltf_nodes[idx+2];
+
+    ret[0] = vec4(src0.xyz, 0);
+    ret[1] = vec4(src1.xyz, 0);
+    ret[2] = vec4(src2.xyz, 0);
+
+    ret[3] = vec4(src0.w, src1.w, src2.w, 1);
+
+    return ret;
+}
+#endif
+
+#endif
+
+#ifdef GB_MOTION
+// the clip position of the vertex under this frame's camera, with the pose of this frame and with the one before (the fragment shader writes the motion: lib/motion.glsl); w = 0: no motion of its own
+layout(location = 24) out vec4 vary_cur;
+layout(location = 25) out vec4 vary_prev;
 #endif
 
 void main()
@@ -911,6 +968,16 @@ void main()
 
     vec4 vert = projection_matrix * vec4(pos, 1.0);
     gl_Position = vert;
+#ifdef GB_MOTION
+    vary_cur = vec4(0.0);
+    vary_prev = vec4(0.0);
+    if (gltf_motion.x > 0.5)
+    {
+        const vec4 p = vec4(position.xyz, 1.0);
+        vary_cur = view_proj_cur * (gltf_asset_cur * (getGLTFTransform() * p));
+        vary_prev = view_proj_cur * (gltf_asset_prev * (getGLTFTransformPrev() * p));       // (this frame's camera for both poses, as the other programs: lib/motion.glsl)
+    }
+#endif
 
     vec2 bcuv;
     vec2 emuv;
