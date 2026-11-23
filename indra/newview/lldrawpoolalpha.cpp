@@ -128,6 +128,8 @@ static void prepare_alpha_shader(RKShaderProgram* shader, bool deferredEnvironme
     {
         extern bool rk_motion_fold_uniforms(RKShaderProgram* program);
         rk_motion_fold_uniforms(shader);
+        extern void rk_tie_uniform(RKShaderProgram* program);
+        rk_tie_uniform(shader);       // (the tie break of nearly coplanar surfaces, reversed depth only)
     }
 
     if (RKVkBridge::rtShadowMode())

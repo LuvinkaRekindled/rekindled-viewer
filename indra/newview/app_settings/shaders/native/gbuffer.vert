@@ -81,6 +81,9 @@ void main()
 #endif
     // (the table's matrices are GL clip space: see alpha.vert)
     RK_CLIP_Z(gl_Position);
+#ifndef HAS_SKIN
+    RK_TIE(gl_Position, row.flags, rk_tie);
+#endif
 #if defined(GB_MOTION) && !defined(HAS_SKIN)
     {
         // a draw that is not rigged: its slot's model matrix of this frame and of the one before, when the slot moved (else the pixels keep the camera's motion: w = 0 gives the sentinel)

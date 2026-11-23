@@ -20601,6 +20601,21 @@ static F32 sFsrCover = -1000.f;
 static F32 sFsrTrail = -1000.f;
 // rt-debug.txt fsrtrail=T (seconds, 0 = off): a pixel a moving blended surface (hair, shoes, particles) covered stays marked at full strength for T seconds after it is uncovered: they have no depth and no vectors, so the background
 // they reveal is not flagged as disoccluded, and FSR's history would keep the old picture there. (Red: the mask FSR reads, green: the time left; a decay factor on 8 bits never reached zero: 1/255 * 0.6 rounds back to 1/255.)
+// the setting RKDepthTieBreak (Advanced > Debug Settings; a whole number in units of 1e-7: 20 is 0.000002, 0 = off): the tie break of nearly coplanar surfaces with the reversed depth (rkreversez.h)
+F32 rk_rz_tie()
+{
+    static LLCachedControl<S32> tie(gSavedSettings, "RKDepthTieBreak", 20);
+    return rk_reverse_z() ? (F32)tie * 1.0e-7f : 0.f;
+}
+// the uniform of the programs that apply the tie break (alpha_pass.inc): set where their packets are pushed
+void rk_tie_uniform(RKShaderProgram* program)
+{
+    if (program && rk_reverse_z())
+    {
+        static LLStaticHashedString tie_s("rk_tie");
+        program->uniform1f(tie_s, rk_rz_tie());
+    }
+}
 F32 rk_fsr_trail() { return sFsrTrail > -999.f ? sFsrTrail : 0.f; }       // (off by default; fsrtrail=0.25 turns it on)
 // rt-debug.txt fsrcovercond=0 (the coverage counts everywhere, as before) / =1 or no line (only where the pixel behind moves or the surface changes by itself) and fsrcoverstatic= (the share that still counts over a static pixel, 0)
 static F32 sFsrCoverCond = -1000.f, sFsrCoverStatic = -1000.f;

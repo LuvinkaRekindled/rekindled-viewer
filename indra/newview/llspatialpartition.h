@@ -149,6 +149,7 @@ public:
     U64 getSkinHash();
 
     RKVBRef mVertexBuffer;     // <FS> C3.5: a handle (llvertexbuffer.h), not a counted pointer
+    U8 mTieRank = 0;           // 8 * log2(64 m / the radius of the object), 0 to 127: the size rank of the tie break of nearly coplanar surfaces (rkreversez.h, the row's flags bits 16 to 22)
     U16 mStart = 0;
     U16 mEnd = 0;
     U32 mCount = 0;

@@ -70,3 +70,11 @@ layout(std430, set = 2, binding = 4) readonly buffer RkHandleMap { uint rk_hm[];
 #define RK_FAR_CLIP_Z_K(w, k) ((w) * (k))
 #endif
 #define RK_CLIP_Z_STD(p) RK_CLIP_Z_STD_OF(p, p)
+// the tie break of nearly coplanar surfaces (PLAN-reversed-z.md, rt-debug.txt rztie=, 0 = off): with the reversed convention a draw's depth is scaled by 1 + k * rank / 8, where rank (0 to 127,
+// bits 16 to 22 of the row's flags: 8 * log2(64 m / the radius of the object), set by the viewer when it makes the draw batch: llvovolume.cpp) grows as the object gets smaller. Of two surfaces closer together
+// than the noise of the depth the smaller object wins, always, as a poster over its board or lettering over its wall. (Objects of the same size are not told apart.)
+#if RK_REVERSE_Z != 0
+#define RK_TIE(p, flags, k) if ((k) != 0.0) { (p).z *= 1.0 + (k) * float(((flags) >> 16u) & 127u) * 0.125; }
+#else
+#define RK_TIE(p, flags, k)
+#endif

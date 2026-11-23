@@ -6266,6 +6266,12 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         draw_vec.push_back(draw_info);
         draw_info->mTextureMatrix = tex_mat;
         draw_info->mModelMatrix = model_mat;
+        {
+            // the size rank of the tie break (rkreversez.h): of two nearly coplanar surfaces the smaller object wins
+            LLDrawable* rank_drawable = facep->getDrawable();
+            const F32 rank_radius = rank_drawable ? llmax(rank_drawable->getRadius(), 0.001f) : 64.f;
+            draw_info->mTieRank = (U8)llclamp((S32)(8.f * log2f(64.f / rank_radius) + 0.5f), 0, 127);
+        }
 
         draw_info->mBump  = bump;
         draw_info->mShiny = shiny;

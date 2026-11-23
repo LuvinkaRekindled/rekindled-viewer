@@ -2590,6 +2590,17 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>RKDepthTieBreak</key>
+    <map>
+      <key>Comment</key>
+      <string>The tie break of nearly coplanar surfaces with the reversed depth (RK_VK_REVERSEZ): of two surfaces closer together than the noise of the depth, the smaller object wins, always, so lettering stays on its wall and a poster stays in front of its board instead of flickering when the camera moves. The number is in units of 0.0000001 of the distance: 20 is a shift of 0.0002 percent of the distance per halving of the object's size (about 0.6 mm per halving at 300 m). 0 turns it off; larger values are for surfaces that still fight. Surfaces of the same size are not told apart.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>20</integer>
+    </map>
     <key>RKVkMirrorQuality</key>
     <map>
       <key>Comment</key>

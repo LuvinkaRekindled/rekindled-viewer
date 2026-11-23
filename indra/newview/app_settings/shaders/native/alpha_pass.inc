@@ -152,6 +152,9 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
     // a session with ray queries (the manifest option rtquery): the sun shadow of a transparent surface is a ray (lib/shadow_alpha.glsl); the alpha pass sets the sun disc, the samples and the limits by name
 #include "lib/rt_uniforms.inc"
 #endif
+#if RK_REVERSE_Z != 0
+    float rk_tie;           // the tie break of nearly coplanar surfaces (rk_native.glsl RK_TIE; rt-debug.txt rztie=)
+#endif
 };
 
 #ifdef ALPHA_PROBES

@@ -1484,6 +1484,7 @@ bool LLRenderPass::geometryEntry(const RKDrawBatch& params, const RKGeometryPass
             e.mTexcoord2Offset = vb->getOffset(LLVertexBuffer::TYPE_TEXCOORD2);
         }
     }
+    e.mFlags |= (U32)params.mTieRank << 16;       // the size rank of the tie break of nearly coplanar surfaces (rkreversez.h): bits 16 to 22 of the row's flags
     if (!materials && params.mTextureList.size() > 1)
     {
         for (size_t t = 0; t < params.mTextureList.size() && t < 4; ++t)
@@ -1577,6 +1578,8 @@ void LLRenderPass::pushGeometryPackets(U32 type, bool rigged)
         // <FS> velocity fold: the programs that write motion (rigged, and the ones that read the motion table of a moving model matrix) take the camera matrices of this frame and the last from here (the bound program's loose block)
         extern bool rk_motion_fold_uniforms(RKShaderProgram* program);
         rk_motion_fold_uniforms(RKShaderProgram::sCurBoundShaderPtr);
+        extern void rk_tie_uniform(RKShaderProgram* program);
+        rk_tie_uniform(RKShaderProgram::sCurBoundShaderPtr);       // (the tie break of nearly coplanar surfaces, reversed depth only)
     }
     RKVkBridge::ShadowPacketsHeader header;
     header.mKind = 22;
