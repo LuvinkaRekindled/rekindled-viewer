@@ -392,7 +392,9 @@ bool evaluate(VkCommandBuffer cmd, const RKVkUpscale::Params& p)
     {
         static const FfxFsr3UpscalerConfigureKey tune_keys[4] = { FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FVELOCITYFACTOR, FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FSHADINGCHANGESCALE,
                                                                    FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FACCUMULATIONADDEDPERFRAME, FFX_FSR3UPSCALER_CONFIGURE_UPSCALE_KEY_FMINDISOCCLUSIONACCUMULATION };
-        static const float tune_defaults[4] = { 1.f, 1.f, 0.333f, -0.333f };
+        // (what runs without a line in rt-debug.txt: the SDK's defaults but the shading change scale, 0.3 since 2026-11-22 (the user: enough to keep faces and lighting right, with the motion of everything in, and it still calms most of the far jitter;
+        // 1 is the SDK's, 0 turns FSR's detector off); fsrshade= in rt-debug.txt overrides it)
+        static const float tune_defaults[4] = { 1.f, 0.3f, 0.333f, -0.333f };
         {
             const float want = p.mReactScale > -999.f ? p.mReactScale : context->mReactScaleDefault;
             if (want != context->mReactScale)
