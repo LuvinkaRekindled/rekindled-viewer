@@ -343,6 +343,27 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
 
         cloudshader->uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
         cloudshader->uniform1f(LLShaderMgr::CLOUD_VARIANCE, cloud_variance);
+        {
+            // how far the cloud noise scrolled since the frame before (the motion of the layer, written by clouds.frag for the upscaler): the offset the shader adds is the scroll accumulated
+            // by LLEnvironment, its x negated (llsettingsvo.cpp, as the cloud shader's own offset); taken once per viewer frame, the draw runs more than once in a frame (probes, mirrors)
+            static LLVector2 sPrevScroll, sCurScroll;
+            static U32 sScrollFrame = U32_MAX;
+            static LLStaticHashedString scroll_delta_s("cloud_scroll_delta");
+            const U32 frame = LLFrameTimer::getFrameCount();
+            if (frame != sScrollFrame)
+            {
+                sPrevScroll = sCurScroll;
+                sCurScroll = LLEnvironment::instance().getCloudScrollDelta();
+                sScrollFrame = frame;
+            }
+            LLVector2 delta = sCurScroll - sPrevScroll;
+            delta.mV[0] = -delta.mV[0];
+            if (fabsf(delta.mV[0]) > 0.25f || fabsf(delta.mV[1]) > 0.25f)
+            {
+                delta.clear();      // (the first frame, or a jump of the clock: no motion rather than a wrong one)
+            }
+            cloudshader->uniform2f(scroll_delta_s, delta.mV[0], delta.mV[1]);
+        }
         cloudshader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, psky->getSunMoonGlowFactor());
 
         /// Render the skydome

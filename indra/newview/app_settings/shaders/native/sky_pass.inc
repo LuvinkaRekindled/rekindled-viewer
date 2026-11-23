@@ -39,6 +39,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
     vec3 cloud_pos_density1;
     vec3 cloud_pos_density2;
     float cloud_variance;
+    vec2 cloud_scroll_delta;       // how far the cloud noise scrolled since the frame before, in texture coordinates (the motion of the layer: clouds.frag; 0 where it does not scroll)
 
     // the moon, the stars
     vec3 moon_dir;

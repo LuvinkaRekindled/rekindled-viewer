@@ -4,6 +4,7 @@
 
 #include "sky_pass.inc"
 #include "lib/flags.glsl"
+#include "lib/motion.glsl"
 
 layout(location = 0) in vec3 vary_CloudColorSun;
 layout(location = 1) in vec3 vary_CloudColorAmbient;
@@ -20,8 +21,9 @@ layout(location = 2) out vec4 frag_normal;
 #if defined(HAS_EMISSIVE)
 layout(location = 3) out vec4 frag_emissive;
 #endif
-// the motion target (attachment 4 of the world pass, RG16 unorm, only when an upscaler is on; an output no attachment backs is dropped): this surface does not move by itself, so it writes the value the clear holds, 1.0 in x = "no motion of its own" (the motion pass then takes the camera motion)
-layout(location = 4) out vec2 frag_velocity;
+// the motion target (attachment 4 of the world pass, RG16 unorm, only when an upscaler is on; an output no attachment backs is dropped): the layer scrolls, so where there is cloud it writes that motion in pixels (the camera's comes
+// from the depth); alpha is the write mask of the blend (1 = replace, 0 = keep what is there: the sentinel 1.0 in x of "no motion of its own" stays where the cloud is faint)
+layout(location = 4) out vec4 frag_velocity;
 
 vec4 cloudNoise(vec2 uv)
 {
@@ -37,7 +39,7 @@ vec4 cloudNoise(vec2 uv)
 
 void main()
 {
-    frag_velocity = vec2(1.0, 0.0);
+    frag_velocity = vec4(1.0, 0.0, 0.0, 0.0);
     // Set variables
     vec2 uv1 = vary_texcoord0.xy;
     vec2 uv2 = vary_texcoord1.xy;
@@ -110,6 +112,19 @@ void main()
     /// Gamma correct for WL (soft clip effect).
     frag_spec = vec4(0.0, 0.0, 0.0, 0.0);
     frag_normal = vec4(0, 0, 0, GBUFFER_FLAG_SKIP_ATMOS);
+    const vec2 dx = dFdx(vary_texcoord0);       // (taken outside the branch: derivatives need every pixel of the quad to get here)
+    const vec2 dy = dFdy(vary_texcoord0);
+    if (alpha1 >= 0.3 && (cloud_scroll_delta.x != 0.0 || cloud_scroll_delta.y != 0.0))
+    {
+        // the cloud seen at this pixel was, a frame ago, where the texture coordinates differ by the scroll: the pixel step that changes them by that much (the derivatives of the coordinates are the pixel's share of them)
+        const float det = dx.x * dy.y - dy.x * dx.y;
+        if (abs(det) > 1.0e-14)
+        {
+            const vec2 d = cloud_scroll_delta;       // (added to the coordinate after its division by cloud_scale: the same units as its derivatives)
+            const vec2 m = vec2(d.x * dy.y - dy.x * d.y, dx.x * d.y - dx.y * d.x) / det;
+            frag_velocity = vec4(rk_motion_encode_px(m), 0.0, 1.0);
+        }
+    }
 #if defined(HAS_EMISSIVE)
     frag_albedo = vec4(0);
     frag_emissive = vec4(cloud_color_out.rgb, alpha1);
