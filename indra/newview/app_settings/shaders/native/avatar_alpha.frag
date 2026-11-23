@@ -29,5 +29,5 @@ void main()
     mirror_clip(vary_position);
     const vec4 texel = texture(rk_tbl2d[nonuniformEXT(RK_HM(rk_ti_diffuseMap))], vary_texcoord0);
     frag_color = shade_lit(vary_position, vary_normal, texel, vec4(1.0));
-    rk_write_cover(frag_color.a);
+    rk_write_cover(frag_color.a, 1.0);      // (the system avatar's clothing alpha moves with the body)
 }

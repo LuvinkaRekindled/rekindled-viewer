@@ -4,6 +4,7 @@
 
 layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
 {
+    float gain;          // the factor from pixels to colour in mode 2 (0.25: full at 4 pixels; the upscaler rig dumps it at 20: full at 0.05 pixels)
     float show_flag;     // 1: blue = the alpha flag (the avatar target); 0: the target has no alpha; 2: the world pass's motion target (see main)
 };
 
@@ -27,7 +28,7 @@ void main()
         }
         else
         {
-            frag_color = vec4(clamp(abs(rk_motion_decode(v.xy)) * 0.25, 0.0, 1.0), 0.0, 1.0);
+            frag_color = vec4(clamp(abs(rk_motion_decode(v.xy)) * gain, 0.0, 1.0), 0.0, 1.0);
         }
         return;
     }

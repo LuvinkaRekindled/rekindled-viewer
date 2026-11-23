@@ -156,7 +156,7 @@ void rk_frame_palette_prepare(U32 frame);        // <FS> P1 step 2: main thread,
 // <FS> velocity fold: 1.0 when the pose of a palette differs from the frame before's enough to show on screen (the old avatar velocity pass's test: the biggest change of a palette float times a reach of 1.5 m,
 // as pixels at the avatar's distance, at least 0.3 px; not beyond 48 m), else 0.0. It goes into the tail entry of the palette in the frame's list (second row, x), where the rigged G-buffer vertex shaders read it:
 // a palette that did not move skips its previous pose and its pixels keep the camera's motion. 0 without an upscaler.
-F32 rk_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position);
+F32 rk_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position, int census_kind = 1);       // (census_kind: 0 the own avatar, 1 another avatar, 2 an animated object: the diagnostic census in lldrawpool.cpp)
 F32 rk_palette_moving_scale(const LLVector3& avatar_position);      // the factor of the moving flag (0: no flag for this avatar): flag = biggest change x scale >= 0.3
 bool rk_frame_palette_write(const F32* floats, const F32* prev_floats, F32 moving, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell);       // a palette job: writes the palette into the prepared frame's arena (false: the request appends it later)
 // DIAGNOSTIC (the ear blink hunt): the 12 floats of the first joint of the palette at a float offset of this frame's shared list (false when the offset is not in the list)

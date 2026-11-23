@@ -174,6 +174,12 @@ mat4 row_texture_matrix(Row row, TexMatTable table)
     return texture_matrix_at(row.pad.x, table);
 }
 
+// the row's texture matrix slot holds an animation (the matrix's last float is 0: texanim_matrix): the picture of the face changes by itself
+bool row_texture_animated(Row row, TexMatTable table)
+{
+    return row.pad.x != 0u && table.t[row.pad.x][3][3] == 0.0;
+}
+
 // ---- avatar relative skinning (lldrawpool.h, rk_rig_anchor): above a height a rigged palette is relative to an anchor A (a 64 m grid point), the skinned vertex v is relative too, and the
 // camera matrix is applied as M * v + M * (A, 1): the large numbers (the camera is 3800 m up) meet in the second term, which is the same for every vertex of the draw. A is zero for a plain palette.
 vec4 rig_transform(mat4 m, vec3 v, vec3 anchor)

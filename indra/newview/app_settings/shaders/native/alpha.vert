@@ -9,6 +9,7 @@ layout(location = 0) out vec3 vary_position;
 layout(location = 1) out vec4 vertex_color;
 layout(location = 2) out vec2 vary_texcoord0;
 layout(location = 3) flat out uint vary_slot;
+layout(location = 15) out vec3 vary_cover_motion;     // xy: the screen motion of a skinned vertex in pixels; z: flags (1 = the picture of this draw changes by itself: a particle, an animated texture, a rigged draw; 2 = xy is a motion): lib/cover.glsl
 #ifdef DEBUG_ROW
 layout(location = 5) flat out uint vary_debug_color;        // the Batch Size view's colour of the draw (the row's skinPad0) and its texture matrix slot (pad.x: 0 = none)
 layout(location = 6) flat out uint vary_debug_texmat;
@@ -109,6 +110,51 @@ void main()
     vertex_color = unpackUnorm4x8(RowWords(row.colors).w[color_index]);
 #endif
     vary_slot = row_texture_slot(row, position.w);
+    float cover_flags = ((row.flags & 16u) != 0u || row_texture_animated(row, TexMatTable(rk_packet_texmats))) ? 1.0 : 0.0;
+    vec2 cover_motion = vec2(0.0);
+#ifdef HAS_SKIN
+    cover_flags = 1.0;      // a rigged draw (hair, shoes, clothes) moves with the body: it counts as changing by itself, whatever is behind it
+#ifdef GB_MOTION
+    if (skin_palette_moving(row_palette(row), row.joints))
+    {
+        // the screen motion of the vertex under this frame's camera (see alpha_pbr.vert and gbuffer.vert: the pose of the last frame and of this one, both under this frame's camera)
+        mat3 prev_rotation;
+        vec3 prev_translation;
+        skin_vertex_prev(row.weights, row_palette(row), row.joints, index, prev_rotation, prev_translation);
+        const vec4 cur_clip = rig_transform(view_proj_cur, vertex, rig_anchor);
+        const vec4 prev_clip = rig_transform(view_proj_cur, prev_rotation * position.xyz + prev_translation, skin_rig_anchor_prev(row_palette(row), row.joints));
+        if (cur_clip.w > 0.0 && prev_clip.w > 0.0)
+        {
+            cover_motion = (prev_clip.xy / prev_clip.w - cur_clip.xy / cur_clip.w) * 0.5 * render_res;
+            cover_flags = 3.0;
+        }
+    }
+#endif
+#endif
+#if defined(GB_MOTION) && !defined(HAS_SKIN)
+    if (!particle)
+    {
+        // a draw that is not rigged: its slot's model matrix of this frame and of the one before, when the slot moved (the table of the pass: rkvkworker.cpp geo_alpha_draw); else the camera's motion stays
+        // (a draw whose record does not set the table, the transient alpha entries among them, has the address 0: no motion, and no read through a null address: that hung the GPU on 2026-11-22)
+        MotionTable motion_table = MotionTable(rk_packet_motion);
+        mat4 prev_model = mat4(0.0);
+        if (rk_packet_motion != uvec2(0u))
+        {
+            prev_model = motion_table.m[2u * row.model + 1u];
+        }
+        if (prev_model[3][3] != 0.0)
+        {
+            const vec4 cur_clip = view_proj_cur * (motion_table.m[2u * row.model] * vec4(vertex, 1.0));
+            const vec4 prev_clip = view_proj_cur * (prev_model * vec4(vertex, 1.0));
+            if (cur_clip.w > 0.0 && prev_clip.w > 0.0)
+            {
+                cover_motion = (prev_clip.xy / prev_clip.w - cur_clip.xy / cur_clip.w) * 0.5 * render_res;
+                cover_flags = cover_flags >= 1.0 ? 3.0 : 2.0;
+            }
+        }
+    }
+#endif
+    vary_cover_motion = vec3(cover_motion, cover_flags);
 #ifdef DEBUG_ROW
     vary_debug_color = row.skinPad0;
     vary_debug_texmat = row.pad.x;

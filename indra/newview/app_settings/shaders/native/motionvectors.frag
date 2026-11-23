@@ -12,6 +12,7 @@ layout(std140, set = 0, binding = 0) uniform RKLooseUniforms
     float use_blend;        // 1: the specularRect holds the reactive mask (reactive_mask.frag); where it is above blend_cut, blended surfaces changed the pixel after the opaque pass and the motion kept there is the opaque thing behind
     float own_scale;        // the rig's calibration (rt-debug.txt fsrown=): a factor on the world pass's own motion, 1 normally
     float blend_cut;        // the mask value from which the pixel takes the camera's motion (RK_VK_MOTIONBLEND_CUT, default 0.1: a faint blended surface over a moving thing still drags it)
+    float use_bmotion;      // 1: the normalRect is the blended pass's motion attachment (RG16, x = 1.0: none): where a skinned blended surface wrote its motion, that is the pixel's motion
     float hair_gap;         // > 0 (the rig's fsrhairmv=2): a pixel drawn over after the world pass whose surface is within this many metres of the world pass's surface (rigged blended hair writes depth just above the head) keeps the motion of the world pass
     float proj_c;           // the projection's [2][2] and [3][2] (view distance from depth: d / (2 depth - 1 + c))
     float proj_d;
@@ -23,6 +24,7 @@ layout(std140, set = 0, binding = 5) uniform RKLooseDraw
     uint rk_ti_diffuseRect;     // the avatar velocity target: rg = total screen motion of an avatar pixel, a = 1 where an avatar wrote
     uint rk_ti_emissiveRect;    // the world pass's depth (R32F, depth_snap.frag), read when use_snapshot is set
     uint rk_ti_specularRect;    // the reactive mask (R8, reactive_mask.frag), read when use_blend is set
+    uint rk_ti_normalMap;      // the blended pass's motion attachment (screen target attachment 2), read when use_bmotion is set
 };
 
 layout(location = 0) in vec2 vary_fragcoord;
@@ -64,6 +66,19 @@ void main()
             // two absolute camera matrices made 0.1 px of random motion on every rigged pixel: the avatar rippled under FSR); the camera's own motion, from the depth in double precision, is added here
             mv += rk_motion_decode(e) * own_scale;
         }
+    }
+    if (use_avatar > 1.5 && use_bmotion > 0.5)
+    {
+        // a skinned blended surface (hair, shoes with alpha parts, clothes) is what is seen here: its own motion replaces the camera's and the opaque thing behind it
+        const vec2 bm = texture(rk_tbl2d[RK_HM(rk_ti_normalMap)], vary_fragcoord).rg;
+        if (bm.x < 0.99995)
+        {
+            mv = (prev_ndc - cur_ndc) * 0.5 * render_res + rk_motion_decode(bm) * own_scale;
+        }
+    }
+    if (use_avatar > 1.5)
+    {
+        // (nothing more here: the branches above and below are the older paths)
     }
     else if (use_avatar > 0.5)
     {

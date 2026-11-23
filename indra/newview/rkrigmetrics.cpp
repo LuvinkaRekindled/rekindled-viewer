@@ -18,6 +18,9 @@
 
 #include "llframetimer.h"
 #include "llmotioncontroller.h"
+#include "llagent.h"
+#include "llvoavatarself.h"
+#include "llviewerregion.h"
 #include "llrender.h"
 #include "llrendertarget.h"
 #include "llviewercamera.h"
@@ -33,9 +36,17 @@ F32 rk_fsr_phases_raw();        // pipeline.cpp: the jitter sequence length (fsr
 F32 rk_fsr_movereact_raw();     // pipeline.cpp: the reactive value of pixels with motion of their own (fsrmovreact), -1000 = none
 F32 rk_fsr_react_raw();         // pipeline.cpp: FSR's reactiveness scale (fsrreact), -1000 = the creation default
 F32 rk_fsr_mask_raw();          // pipeline.cpp: 0 = no reactive mask (fsrmask), -1000 = on
+bool rk_rig_read_motion(std::vector<F32>& rgba, S32& w, S32& h);       // pipeline.cpp: the motion map of this frame as RGBA floats (render size), false when it is not there
+bool rk_rig_last_reset();               // pipeline.cpp: the upscale of this frame was told to reset its history
+bool rk_rig_shift_reset_on();           // pipeline.cpp: the history is reset on a shift frame (the runner's setting, or rt-debug.txt fsrshiftreset)
+void rk_rig_set_shift_reset(int on);    // pipeline.cpp: the runner's setting (0 off, 1 on, -1 not set)
+bool rk_rig_shift_now();                // pipeline.cpp: the origin moved this frame (the movement-complete message, or the agent's region changed)
+LLRenderTarget* rk_rig_ownmotion_view(F32 gain);      // pipeline.cpp: the world pass's own-motion view drawn into a target (blue = none), nullptr when it cannot
 bool rk_rig_read_blend(std::vector<U8>& out, S32 w, S32 h);     // pipeline.cpp: this frame's reactive mask as bytes (the blended pixels), false when there is none
 F32 rk_fsr_tc_raw();            // pipeline.cpp: 1 = the mask is also FSR's transparency and composition mask (fsrtc), -1000 = not
 F32 rk_fsr_gain_raw();          // pipeline.cpp: a factor on the mask as written (fsrgain), -1000 = 1
+F32 rk_fsr_movedist_raw();        // pipeline.cpp: the distance limit of the own motion of a rigged avatar (fsrmovedist), -1000 = 48 m
+F32 rk_fsr_movepx_raw();          // pipeline.cpp: the size limit of it in pixels (fsrmovepx), -1000 = 0.3
 F32 rk_fsr_cover_raw();          // pipeline.cpp: 0 = the reactive mask from the colour difference, -1000 or 1 = from the blended pass's coverage (fsrcover)
 F32 rk_fsr_hairmv_raw();        // pipeline.cpp: 1 = blended pixels keep the motion of the surface behind them (fsrhairmv), -1000 = off
 
@@ -53,7 +64,7 @@ struct RigState
     F32 mCamPrev[6] = {};
     bool mCamHave = false;
     U32 mStable = 0;
-    S32 mKey[19] = {};                           // the input and output sizes and the RCAS strength (thousandths): a change of any of them restarts the wait
+    S32 mKey[21] = {};                           // the input and output sizes and the RCAS strength (thousandths): a change of any of them restarts the wait
     U32 mKeyFrames = 0;
 
     // the reference
@@ -144,8 +155,12 @@ struct AnimState
     std::vector<U8> mBlend[kPoses];
     std::vector<U8> mBlendAcc;
     F64 mBlSsStill = 0.0, mBlSsPlay = 0.0, mBlFlk = 0.0;
+    // the static edges (far lines: window frames, railings, curbs): pixels that do not move between the poses and are not within 6 px of what does, where the reference's gradient is above 0.08; their still error and flicker
+    std::vector<U8> mStaticEdge[kPoses];
+    F64 mSeSsStill = 0.0, mSeFlk = 0.0;
+    U64 mSeNStill = 0, mSeNFlk = 0;
     U64 mBlNStill = 0, mBlNPlay = 0, mBlNFlk = 0;
-    bool mShotRef = false, mShotOut = false, mShotMask = false;      // the one picture of each kind written to D:/claude/run-logs/ (rig-shot-*.ppm / .pgm) per run
+    bool mShotRef = false, mShotOut = false, mShotMask = false, mShotOwn = false;      // the one picture of each kind written to D:/claude/run-logs/ (rig-shot-*.ppm / .pgm) per run
     U32 mCycles = 0;                            // the still and play cycles done since the last change of scale: the first one is still settling (its still error is up to 3 times the later ones')
 };
 
@@ -316,6 +331,14 @@ std::string tune_text(const S32* key)
     if (key[18] > -900000)
     {
         o << " cover " << std::fixed << std::setprecision(1) << key[18] / 1000.0;
+    }
+    if (key[19] > -900000)
+    {
+        o << " movedist " << std::fixed << std::setprecision(1) << key[19] / 1000.0;
+    }
+    if (key[20] > -900000)
+    {
+        o << " movepx " << std::fixed << std::setprecision(2) << key[20] / 1000.0;
     }
     return o.str();
 }
@@ -641,6 +664,27 @@ void anim_build_categories(S32 w, S32 h)
                 cat[k] = 3;
             }
         }
+        // the static edges: category 0 where the reference has a gradient above 0.08 (the picture's far lines)
+        std::vector<U8>& se = sAnim.mStaticEdge[p];
+        se.assign(count, 0);
+        size_t se_count = 0;
+        for (S32 j = 1; j < h - 1; ++j)
+        {
+            for (S32 i = 1; i < w - 1; ++i)
+            {
+                const size_t k = (size_t)j * w + i;
+                if (cat[k] == 0)
+                {
+                    const F32 g = fabsf(ref[k + 1] - ref[k - 1]) + fabsf(ref[k + w] - ref[k - w]);
+                    if (g > 0.08f)
+                    {
+                        se[k] = 1;
+                        ++se_count;
+                    }
+                }
+            }
+        }
+        LL_INFOS("RigMetrics") << "animation static edge pixels of pose " << p << " (static, gradient of the reference above 0.08): " << se_count << " of " << count << LL_ENDL;
     }
 }
 
@@ -691,6 +735,8 @@ void anim_begin_freeze(int pose)
         memset(sAnim.mFlkN, 0, sizeof(sAnim.mFlkN));
         sAnim.mBlSsStill = sAnim.mBlFlk = 0.0;
         sAnim.mBlNStill = sAnim.mBlNFlk = 0;
+        sAnim.mSeSsStill = sAnim.mSeFlk = 0.0;
+        sAnim.mSeNStill = sAnim.mSeNFlk = 0;
     }
     sAnim.mBlendAcc.clear();
     sAnim.mStillPrevValid = false;
@@ -898,6 +944,26 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
         sAnim.mAccSharp += sharpness(y, w, h);
         anim_accum_categories(y, sAnim.mPose, sAnim.mCatSsStill, sAnim.mCatNStill);
         anim_accum_blend(y, sAnim.mPose, sAnim.mBlSsStill, sAnim.mBlNStill);
+        if (sAnim.mPose >= 1 && sAnim.mStaticEdge[sAnim.mPose].size() == y.size())
+        {
+            const std::vector<U8>& se = sAnim.mStaticEdge[sAnim.mPose];
+            const std::vector<F32>& ref = sAnim.mRef[sAnim.mPose];
+            const bool have_prev = sAnim.mStillPrevValid && sAnim.mStillPrev.size() == y.size();
+            for (size_t k = 0; k < y.size(); ++k)
+            {
+                if (se[k])
+                {
+                    const F64 e = (F64)y[k] - (F64)ref[k];
+                    sAnim.mSeSsStill += e * e;
+                    ++sAnim.mSeNStill;
+                    if (have_prev)
+                    {
+                        sAnim.mSeFlk += fabsf(y[k] - sAnim.mStillPrev[k]);
+                        ++sAnim.mSeNFlk;
+                    }
+                }
+            }
+        }
         if (sAnim.mStillPrevValid && sAnim.mStillPrev.size() == y.size() && sAnim.mPose >= 1 && sAnim.mCat[sAnim.mPose].size() == y.size())
         {
             const std::vector<U8>& cat = sAnim.mCat[sAnim.mPose];
@@ -994,6 +1060,37 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
         ++sAnim.mPlayN[dir][i];
         sAnim.mPlaySharp += sharpness(y, w, h);
         ++sAnim.mPlaySharpN;
+        if (!sAnim.mShotOwn && !native && i >= 1 && sAnim.mCycles >= 1)
+        {
+            // one picture of the own-motion view while the animation plays (the motion the world pass wrote: blue = none): are the shoes and the other attachments in it?
+            sAnim.mShotOwn = true;
+            if (LLRenderTarget* v = rk_rig_ownmotion_view(20.f))
+            {
+                dump_ppm(*v, (S32)v->getWidth(), (S32)v->getHeight(), "D:/claude/run-logs/rig-shot-ownmotion.ppm");
+            }
+            dump_ppm(out, w, h, "D:/claude/run-logs/rig-shot-playframe.ppm");       // (the same frame's picture: which colour is which part)
+            {
+                // the final motion map of this frame (camera still: every pixel with a vector is something that moves): how many pixels, and how long the vectors are, in render pixels
+                std::vector<F32> mv;
+                S32 mw = 0, mh = 0;
+                if (rk_rig_read_motion(mv, mw, mh) && mw > 0 && mh > 0)
+                {
+                    std::vector<F32> mag;
+                    for (size_t k = 0; k + 3 < mv.size(); k += 4)
+                    {
+                        const F32 m = sqrtf(mv[k] * mv[k] + mv[k + 1] * mv[k + 1]);
+                        if (m > 1.0e-4f)
+                        {
+                            mag.push_back(m);
+                        }
+                    }
+                    std::sort(mag.begin(), mag.end());
+                    const size_t n = mag.size();
+                    LL_INFOS("RigMetrics") << "own motion in the motion map (play stage, one frame): " << n << " of " << (size_t)mw * mh << " pixels have a vector above 0.0001 px; length in px: median "
+                                           << (n ? mag[n / 2] : 0.f) << " p90 " << (n ? mag[(n * 9) / 10] : 0.f) << " p99 " << (n ? mag[(n * 99) / 100] : 0.f) << " max " << (n ? mag[n - 1] : 0.f) << LL_ENDL;
+                }
+            }
+        }
         if (native)
         {
             // at 100 percent the input at this pose against the frozen reference: the clock repeats the pose if this is near the jitter floor
@@ -1080,10 +1177,257 @@ void anim_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h,
               << std::setprecision(5) << ": still rmse " << sqrt(ms) << " play rmse " << sqrt(mp) << " flicker " << fl << " (" << sAnim.mBlNStill / 120 << " pixels a frame, about)";
             LL_INFOS("RigMetrics") << b.str() << LL_ENDL;
         }
+        {
+            // the static edges (far lines): still error and flicker
+            std::ostringstream b;
+            const F64 ms = sAnim.mSeNStill ? sAnim.mSeSsStill / (F64)sAnim.mSeNStill : 0.0;
+            const F64 fl = sAnim.mSeNFlk ? sAnim.mSeFlk / (F64)sAnim.mSeNFlk : 0.0;
+            b << std::fixed << std::setprecision(5) << "animation static edge region" << (sAnim.mCycles == 0 ? " [settling cycle: ignore]" : "") << ", scale " << std::setprecision(3) << scale << " rcas " << std::setprecision(2) << key[4] / 1000.0 << tune_text(key)
+              << std::setprecision(5) << ": still rmse " << sqrt(ms) << " flicker " << fl << " (" << sAnim.mSeNStill / 120 << " pixels a frame, about)";
+            LL_INFOS("RigMetrics") << b.str() << LL_ENDL;
+        }
         ++sAnim.mCycles;
         sAnim.mStage = 2;
         anim_begin_freeze(0);
     }
+}
+
+
+// ---------------------------------------------------------------------------------------------------------------------------------------
+// The shift events (rt-debug.txt rigshift=1): the avatar walks across a region border (an autopilot to a spot 38 m east of where it starts: London City West 235,228 to London City 17,227) and is teleported
+// back, over and over; the frames around each shift (gShiftFrame: the movement-complete message of a crossing or a teleport) are measured one by one, with no reference render: the deviation of the upscaled picture
+// from the upscale of the same frame's input (what the history adds or drags in: the ghost) and the motion vectors' median and 90th percentile length in pixels (are they right at the shift?). Cycles alternate the
+// reset on the shift off and on (the runner sets it itself).
+// ---------------------------------------------------------------------------------------------------------------------------------------
+struct ShiftRec { F64 mGhost = 0.0; F64 mVecMed = 0.0, mVecP90 = 0.0; bool mReset = false; };
+
+struct ShiftState
+{
+    bool mEngaged = false;
+    S32 mStage = 0;                 // 0 waiting for the world, 1 still at A, 2 walking, 3 watching after a crossing, 4 settling at B, 5 teleporting, 6 watching after the teleport, 7 settling at A, 8 done
+    U32 mStageFrames = 0;
+    U32 mCycle = 0;
+    U32 mEngagedFrames = 0;
+    U32 mEvent = 0;
+    S32 mK = 0;                     // the frame since the shift
+    LLVector3d mA, mB;
+    std::vector<ShiftRec> mRing;    // the last 8 measured frames before the shift
+    F64 mStillGhost = 0.0, mStillVecMed = 0.0;
+    U32 mStillN = 0;
+    std::chrono::steady_clock::time_point mStageStart;
+};
+ShiftState sShift;
+
+void shift_poll()
+{
+    static std::chrono::steady_clock::time_point last;
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last < std::chrono::milliseconds(500))
+    {
+        return;
+    }
+    last = now;
+    bool on = false;
+    std::ifstream in("D:/claude/rt-debug.txt");
+    std::string line;
+    while (std::getline(in, line))
+    {
+        if (line.compare(0, 9, "rigshift=") == 0)
+        {
+            on = atoi(line.c_str() + 9) != 0;
+        }
+    }
+    sShift.mEngaged = on;
+}
+
+// the upscaled picture against the bilinear upscale of its own input, and the vectors' length
+bool shift_measure(LLRenderTarget& out, LLRenderTarget& in, S32 w, S32 h, ShiftRec& r)
+{
+    std::vector<F32> yo, yi;
+    read_lum(out, w, h, yo);
+    const S32 iw = (S32)in.getWidth(), ih = (S32)in.getHeight();
+    read_lum(in, iw, ih, yi);
+    if ((S32)yo.size() != w * h || (S32)yi.size() != iw * ih)
+    {
+        return false;
+    }
+    F64 se = 0.0;
+    for (S32 j = 0; j < h; ++j)
+    {
+        const F32 fy = ((F32)j + 0.5f) * (F32)ih / (F32)h - 0.5f;
+        const S32 y0 = std::max(0, std::min(ih - 1, (S32)floorf(fy))), y1 = std::min(ih - 1, y0 + 1);
+        const F32 ty = std::max(0.f, std::min(1.f, fy - (F32)y0));
+        for (S32 i = 0; i < w; ++i)
+        {
+            const F32 fx = ((F32)i + 0.5f) * (F32)iw / (F32)w - 0.5f;
+            const S32 x0 = std::max(0, std::min(iw - 1, (S32)floorf(fx))), x1 = std::min(iw - 1, x0 + 1);
+            const F32 tx = std::max(0.f, std::min(1.f, fx - (F32)x0));
+            const F32 a = yi[(size_t)y0 * iw + x0] * (1.f - tx) + yi[(size_t)y0 * iw + x1] * tx;
+            const F32 b = yi[(size_t)y1 * iw + x0] * (1.f - tx) + yi[(size_t)y1 * iw + x1] * tx;
+            const F64 e = (F64)yo[(size_t)j * w + i] - (F64)(a * (1.f - ty) + b * ty);
+            se += e * e;
+        }
+    }
+    r.mGhost = sqrt(se / (F64)(w * h));
+    std::vector<F32> mv;
+    S32 mw = 0, mh = 0;
+    r.mVecMed = r.mVecP90 = -1.0;
+    if (rk_rig_read_motion(mv, mw, mh) && mw > 0 && mh > 0)
+    {
+        std::vector<F32> mag;
+        mag.reserve((size_t)(mw / 5 + 1) * (mh / 5 + 1));
+        for (S32 j = 0; j < mh; j += 5)
+        {
+            for (S32 i = 0; i < mw; i += 5)
+            {
+                const F32* p = &mv[((size_t)j * mw + i) * 4];
+                mag.push_back(sqrtf(p[0] * p[0] + p[1] * p[1]));
+            }
+        }
+        if (!mag.empty())
+        {
+            std::nth_element(mag.begin(), mag.begin() + mag.size() / 2, mag.end());
+            r.mVecMed = mag[mag.size() / 2];
+            std::nth_element(mag.begin(), mag.begin() + (mag.size() * 9) / 10, mag.end());
+            r.mVecP90 = mag[(mag.size() * 9) / 10];
+        }
+    }
+    r.mReset = rk_rig_last_reset();
+    return true;
+}
+
+void shift_log(const char* kind, S32 k, const ShiftRec& r)
+{
+    LL_INFOS("RigShift") << std::fixed << std::setprecision(5) << "shift event " << sShift.mEvent << " (" << kind << ", reset on the shift " << (rk_rig_shift_reset_on() ? "on" : "off") << ") k=" << k
+                         << ": ghost " << r.mGhost << " vector median " << std::setprecision(3) << r.mVecMed << " p90 " << r.mVecP90 << " px, reset " << (r.mReset ? 1 : 0) << LL_ENDL;
+}
+
+// returns true when the runner is engaged (the rest of the rig then does nothing)
+bool shift_step(LLRenderTarget& out, LLRenderTarget& in, U32 frame, S32 w, S32 h)
+{
+    shift_poll();
+    if (!sShift.mEngaged)
+    {
+        sShift.mStage = 0;
+        sShift.mEngagedFrames = 0;
+        rk_rig_set_shift_reset(-1);
+        return false;
+    }
+    ++sShift.mEngagedFrames;
+    ++sShift.mStageFrames;
+    const U32 kSettle = 600, kStill = 60, kWatch = 40;
+    auto secs = [&]() { return std::chrono::duration<double>(std::chrono::steady_clock::now() - sShift.mStageStart).count(); };
+    auto go = [&](S32 stage) { sShift.mStage = stage; sShift.mStageFrames = 0; sShift.mStageStart = std::chrono::steady_clock::now(); };
+    if (sShift.mStage == 0)
+    {
+        if (sShift.mEngagedFrames >= 600 && isAgentAvatarValid() && gAgent.getRegion())
+        {
+            sShift.mA = gAgent.getPositionGlobal();
+            sShift.mB = sShift.mA + LLVector3d(38.0, -1.0, 0.0);
+            LL_INFOS("RigShift") << "shift runner: start at " << gAgent.getRegion()->getName() << " " << gAgent.getPositionAgent() << ", the other side is 38 m east and 1 m south" << LL_ENDL;
+            sShift.mCycle = 0;
+            sShift.mEvent = 0;
+            go(1);
+            sShift.mStillGhost = sShift.mStillVecMed = 0.0;
+            sShift.mStillN = 0;
+        }
+        return true;
+    }
+    ShiftRec r;
+    if (sShift.mStage == 1)
+    {
+        rk_rig_set_shift_reset(sShift.mCycle & 1);
+        if (sShift.mStageFrames > 30 && shift_measure(out, in, w, h, r))
+        {
+            sShift.mStillGhost += r.mGhost;
+            sShift.mStillVecMed += r.mVecMed;
+            ++sShift.mStillN;
+        }
+        if (sShift.mStageFrames >= 30 + kStill)
+        {
+            LL_INFOS("RigShift") << std::fixed << std::setprecision(5) << "shift cycle " << sShift.mCycle << " (reset on the shift " << (sShift.mCycle & 1 ? "on" : "off") << "): standing still: ghost " << sShift.mStillGhost / std::max<U32>(1, sShift.mStillN)
+                                 << " vector median " << std::setprecision(3) << sShift.mStillVecMed / std::max<U32>(1, sShift.mStillN) << " px" << LL_ENDL;
+            sShift.mRing.clear();
+            gAgent.startAutoPilotGlobal(sShift.mB, "rig", nullptr, nullptr, nullptr, 0.5f, 0.03f, false);
+            go(2);
+        }
+        return true;
+    }
+    if (sShift.mStage == 2 || sShift.mStage == 5)
+    {
+        const bool walking = sShift.mStage == 2;
+        if (shift_measure(out, in, w, h, r))
+        {
+            sShift.mRing.push_back(r);
+            if (sShift.mRing.size() > 8)
+            {
+                sShift.mRing.erase(sShift.mRing.begin());
+            }
+        }
+        if (rk_rig_shift_now())
+        {
+            ++sShift.mEvent;
+            const char* kind = walking ? "walk across the border" : "teleport";
+            for (size_t i = 0; i < sShift.mRing.size(); ++i)
+            {
+                shift_log(kind, (S32)i - (S32)sShift.mRing.size(), sShift.mRing[i]);
+            }
+            sShift.mK = 0;
+            if (shift_measure(out, in, w, h, r))
+            {
+                shift_log(kind, 0, r);
+            }
+            go(walking ? 3 : 6);
+        }
+        else if (secs() > 90.0)
+        {
+            LL_WARNS("RigShift") << "shift runner: no shift within 90 s in stage " << sShift.mStage << ", giving up" << LL_ENDL;
+            go(8);
+        }
+        return true;
+    }
+    if (sShift.mStage == 3 || sShift.mStage == 6)
+    {
+        ++sShift.mK;
+        if (shift_measure(out, in, w, h, r))
+        {
+            shift_log(sShift.mStage == 3 ? "walk across the border" : "teleport", sShift.mK, r);
+        }
+        if (sShift.mK >= (S32)kWatch)
+        {
+            go(sShift.mStage == 3 ? 4 : 7);
+        }
+        return true;
+    }
+    if (sShift.mStage == 4 || sShift.mStage == 7)
+    {
+        if (sShift.mStageFrames >= kSettle)
+        {
+            if (sShift.mStage == 4)
+            {
+                gAgent.teleportViaLocation(sShift.mA);
+                sShift.mRing.clear();
+                go(5);
+            }
+            else
+            {
+                ++sShift.mCycle;
+                if (sShift.mCycle >= 4)
+                {
+                    LL_INFOS("RigShift") << "shift runner: done (" << sShift.mEvent << " events)" << LL_ENDL;
+                    go(8);
+                }
+                else
+                {
+                    sShift.mStillGhost = sShift.mStillVecMed = 0.0;
+                    sShift.mStillN = 0;
+                    go(1);
+                }
+            }
+        }
+        return true;
+    }
+    return true;       // 8: done, the rig stays out of the way
 }
 
 }
@@ -1127,9 +1471,13 @@ void rk_rig_metrics(LLRenderTarget& out, LLRenderTarget& in, U32 frame)
     {
         return;
     }
+    if (shift_step(out, in, frame, w, h))
+    {
+        return;
+    }
 
     // the camera and the picture sizes must have been unchanged for WARM frames (a moving camera, a changed render scale and the history that follows both spoil every number); with the sway the camera is its base pose
-    const S32 key[19] = {(S32)in.getWidth(), (S32)in.getHeight(), w, h, (S32)(rk_fsr_sharp_now() * 1000.f + 0.5f), (S32)(rk_fsr_tune(0) * 1000.f), (S32)(rk_fsr_tune(1) * 1000.f), (S32)(rk_fsr_tune(2) * 1000.f), (S32)(rk_fsr_tune(3) * 1000.f), (S32)(rk_fsr_own_raw() * 1000.f), (S32)(rk_fsr_lod_raw() * 1000.f), (S32)rk_fsr_phases_raw(), (S32)(rk_fsr_movereact_raw() * 1000.f), (S32)(rk_fsr_react_raw() * 1000.f), (S32)(rk_fsr_mask_raw() * 1000.f), (S32)(rk_fsr_tc_raw() * 1000.f), (S32)(rk_fsr_gain_raw() * 1000.f), (S32)(rk_fsr_hairmv_raw() * 1000.f), (S32)(rk_fsr_cover_raw() * 1000.f) };
+    const S32 key[21] = {(S32)in.getWidth(), (S32)in.getHeight(), w, h, (S32)(rk_fsr_sharp_now() * 1000.f + 0.5f), (S32)(rk_fsr_tune(0) * 1000.f), (S32)(rk_fsr_tune(1) * 1000.f), (S32)(rk_fsr_tune(2) * 1000.f), (S32)(rk_fsr_tune(3) * 1000.f), (S32)(rk_fsr_own_raw() * 1000.f), (S32)(rk_fsr_lod_raw() * 1000.f), (S32)rk_fsr_phases_raw(), (S32)(rk_fsr_movereact_raw() * 1000.f), (S32)(rk_fsr_react_raw() * 1000.f), (S32)(rk_fsr_mask_raw() * 1000.f), (S32)(rk_fsr_tc_raw() * 1000.f), (S32)(rk_fsr_gain_raw() * 1000.f), (S32)(rk_fsr_hairmv_raw() * 1000.f), (S32)(rk_fsr_cover_raw() * 1000.f), (S32)(rk_fsr_movedist_raw() * 1000.f), (S32)(rk_fsr_movepx_raw() * 1000.f) };
     F32 cam[6];
     cam_now(cam);
     F64 dp = 0.0, da = 0.0;

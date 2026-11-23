@@ -221,6 +221,8 @@ public:
     bool                    mWorldDepthValid = false;           // <FS> the snapshot was made this frame
     LLRenderTarget          mOpaqueColorMap;                    // <FS> the screen's format, render size: the lit scene colour before the post-deferred geometry (snapshotOpaqueColor)
     LLRenderTarget          mReactiveMap;                       // <FS> R8, render size: the upscaler's reactive mask (generateReactiveMask)
+    LLRenderTarget          mReactivePrev;                      // <FS> R8, render size: last frame's reactive mask (a pixel a moving blended surface has just left stays marked for a few frames: fsrtrail)
+    bool                    mReactiveHave = false;              // <FS> mReactivePrev holds the mask of the frame before
     bool                    mOpaqueColorValid = false;          // <FS> the opaque colour was copied this frame
     bool                    mReactiveValid = false;             // <FS> the mask was made this frame (applyUpscale hands it over)
     LLRenderTarget          mUpscaledMap;

@@ -26,6 +26,8 @@
 
 #include "llviewerprecompiledheaders.h"
 #include <atomic>
+#include <sstream>
+#include "rkdiag.h"
 
 #include "lldrawpool.h"
 #include "llrender.h"
@@ -911,6 +913,15 @@ void rk_frame_palette_prepare(U32 frame)
 // <FS> velocity fold (PLAN-velocity-fold-and-skin-once.md): every palette in the list is followed by the palette of the frame before (same size, same anchor: mPrevGLMp, equal to the current one when there is no history): the
 // rigged G-buffer vertex shaders read both and write the motion of the surface. prev_floats null: the current palette is written twice.
 // (D3: the one definition of the scale, the palette arithmetic on the GPU takes it from here too) 0 = no flag for this avatar: no DLSS, nearer than 48 m only
+// the limits of the own motion of a rigged avatar (item 5 of PLAN-fsr-specialised.md): the distance beyond which an avatar gets none (48 m) and the smallest motion of its palette, in pixels, that counts (0.3);
+// rt-debug.txt fsrmovedist= (0 = no limit) and fsrmovepx= (0 = every avatar with a previous palette counts) change them live for the upscaler rig (set from the main thread, read by the palette jobs)
+static std::atomic<F32> sMoveDist{ 0.f }, sMovePx{ 0.f };       // (2026-11-22: no distance limit: it was 48 m; the plaza lap found no cost, +0.004 ms of 6.5, and a far full-mesh avatar without its own motion has 48 percent more error on its moving edges; rt-debug.txt fsrmovedist=48 brings it back)
+void rk_set_palette_moving_limits(F32 dist, F32 px)
+{
+    sMoveDist = dist;
+    sMovePx = px;
+}
+
 F32 rk_palette_moving_scale(const LLVector3& avatar_position)
 {
     if (!LLPipeline::sDLSS || !gPipeline.mRT)
@@ -918,7 +929,25 @@ F32 rk_palette_moving_scale(const LLVector3& avatar_position)
         return 0.f;
     }
     const F32 distance = (avatar_position - LLViewerCamera::getInstance()->getOrigin()).length();
-    if (distance > 48.f)
+    const F32 limit = sMoveDist.load();
+    {
+        // the census of the limit (RK_VK_DIAG): how many of the palette checks are beyond it (a rigged item of an avatar that is drawn as a full mesh and gets no motion of its own), how many of those beyond 100 m
+        static std::atomic<U32> checks{ 0 }, beyond{ 0 }, beyond_100{ 0 };
+        const U32 n = ++checks;
+        if (distance > 48.f)
+        {
+            ++beyond;
+            if (distance > 100.f)
+            {
+                ++beyond_100;
+            }
+        }
+        if (n % 6000 == 0)
+        {
+            RK_DIAG("VkMotion") << "own motion limit " << limit << " m: palette checks " << n << ", beyond 48 m " << beyond.load() << ", beyond 100 m " << beyond_100.load() << " (a check is one rigged palette of an avatar drawn as a full mesh, once a frame)" << LL_ENDL;
+        }
+    }
+    if (limit > 0.f && distance > limit)
     {
         return 0.f;
     }
@@ -926,15 +955,47 @@ F32 rk_palette_moving_scale(const LLVector3& avatar_position)
     return 1.5f * focal_px / llmax(distance, 0.5f);
 }
 
-F32 rk_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position)
+// the census of the moving flag (RK_VK_DIAG, a temporary diagnostic: which rigged palettes get a motion of their own and why the others do not): by whose palette it is (0 the own avatar, 1 another avatar, 2 an animated object)
+// and by the reason (0 flagged, 1 no previous palette, 2 beyond the distance limit, 3 below the size floor); the mean size in pixels of the ones below the floor
+void rk_palette_census(int kind, int reason, F32 px)
+{
+    static std::atomic<U64> count[3][4];
+    static std::atomic<U64> px_sum_milli[3];
+    static std::atomic<U64> total{ 0 };
+    if (kind < 0 || kind > 2 || reason < 0 || reason > 3)
+    {
+        return;
+    }
+    ++count[kind][reason];
+    if (reason == 3)
+    {
+        px_sum_milli[kind] += (U64)(llclamp(px, 0.f, 1000.f) * 1000.f);
+    }
+    const U64 n = ++total;
+    if (n % 20000 == 0)
+    {
+        static const char* kinds[3] = { "own avatar", "other avatars", "animated objects" };
+        std::ostringstream o;
+        for (int k = 0; k < 3; ++k)
+        {
+            const U64 c0 = count[k][0], c1 = count[k][1], c2 = count[k][2], c3 = count[k][3];
+            o << " | " << kinds[k] << ": flagged " << c0 << ", no previous palette " << c1 << ", beyond the limit " << c2 << ", below the floor " << c3 << " (mean " << (c3 ? (F64)px_sum_milli[k] / 1000.0 / (F64)c3 : 0.0) << " px)";
+        }
+        RK_DIAG("VkMotion") << "moving flag census of the rigged palettes" << o.str() << LL_ENDL;
+    }
+}
+
+F32 rk_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVector3& avatar_position, int census_kind)
 {
     if (!prev || prev == cur)
     {
+        rk_palette_census(census_kind, 1, 0.f);
         return 0.f;
     }
     const F32 scale = rk_palette_moving_scale(avatar_position);
     if (scale <= 0.f)
     {
+        rk_palette_census(census_kind, 2, 0.f);
         return 0.f;
     }
     F32 biggest = 0.f;
@@ -942,7 +1003,9 @@ F32 rk_palette_moving(const F32* cur, const F32* prev, U32 floats, const LLVecto
     {
         biggest = llmax(biggest, fabsf(cur[k] - prev[k]));
     }
-    return biggest * scale >= 0.3f ? 1.f : 0.f;
+    const bool flagged = biggest * scale >= sMovePx.load();
+    rk_palette_census(census_kind, flagged ? 0 : 3, biggest * scale);
+    return flagged ? 1.f : 0.f;
 }
 
 bool rk_frame_palette_write(const F32* floats, const F32* prev_floats, F32 moving, U32 count, U32 frame, U32& offset, std::atomic<U32>& id_cell)
@@ -1053,7 +1116,7 @@ bool rk_frame_palette(LLVOAvatar* avatar, const LLMeshSkinInfo* skin, U32& offse
     }
     const size_t need = (size_t)(joints + 1) * 12;
     const F32* prev_data = mpc.mPrevGLMp.size() >= need ? mpc.mPrevGLMp.data() : mpc.mGLMp.data();       // (the previous palette follows the current one: see rk_frame_palette_write)
-    const F32 moving = rk_palette_moving(mpc.mGLMp.data(), prev_data, (U32)need, avatar->getRenderPosition());
+    const F32 moving = rk_palette_moving(mpc.mGLMp.data(), prev_data, (U32)need, avatar->getRenderPosition(), avatar->isSelf() ? 0 : (avatar->isControlAvatar() ? 2 : 1));
     U32 at = 0;
     bool in_arena = false;
     if (sFramePal.mArenaOn)

@@ -1040,9 +1040,15 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
 
     if (!mRT->screen.allocate(resX, resY, TexelFormat::RGBA16F)) return false;
     // <FS> the blended pass's coverage (lib/cover.glsl): attachment 1 of the screen target, R8, written by the post-deferred pass only (setPassColorCount: every other pass on the target uses attachment 0 alone)
-    if (sDLSS && !gCubeSnapshot && !mRT->screen.addColorAttachment(TexelFormat::R8))
+    if (sDLSS && !gCubeSnapshot && !mRT->screen.addColorAttachment(TexelFormat::RG8))
     {
         LL_WARNS("VkMotion") << "the coverage attachment of the screen target could not be added" << LL_ENDL;
+        return false;
+    }
+    // <FS> attachment 2: the blended pass's own motion (RG16 unorm, the world pass's encoding, lib/motion.glsl): skinned blended surfaces (hair, shoes, clothes) write the motion of what is seen, the motion pass takes it
+    if (sDLSS && !gCubeSnapshot && !mRT->screen.addColorAttachment(TexelFormat::RG16))
+    {
+        LL_WARNS("VkMotion") << "the motion attachment of the screen target could not be added" << LL_ENDL;
         return false;
     }
 
@@ -1157,11 +1163,13 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             if (!mMotionMap.allocate(resX, resY, TexelFormat::RG16F)) return false;
             if (!mWorldDepthMap.allocate(resX, resY, TexelFormat::R32F)) return false;     // <FS> the world pass's depth for the motion pass (snapshotWorldDepth)
             // <FS> the reactive mask (snapshotOpaqueColor, generateReactiveMask); without them the upscaler runs as before
-            if (!mOpaqueColorMap.allocate(resX, resY, screenFormat) || !mReactiveMap.allocate(resX, resY, TexelFormat::R8))
+            if (!mOpaqueColorMap.allocate(resX, resY, screenFormat) || !mReactiveMap.allocate(resX, resY, TexelFormat::RG8) || !mReactivePrev.allocate(resX, resY, TexelFormat::RG8))
             {
                 mOpaqueColorMap.release();
                 mReactiveMap.release();
+                mReactivePrev.release();
             }
+            mReactiveHave = false;
             if (!mUpscaledMap.allocate(window_res_x, window_res_y, TexelFormat::RGBA8)) return false;
             // <FS> DLSS-NR (doc/vulkan/PLAN-dlss-nr.md step two): the neural renderer's output, window size
             if (neuralRenderMode() != 0 && RKVkBridge::neuralRenderAvailable())
@@ -1186,6 +1194,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             mWorldDepthValid = false;
             mOpaqueColorMap.release();
             mReactiveMap.release();
+            mReactivePrev.release();
+            mReactiveHave = false;
             mOpaqueColorValid = false;
             mReactiveValid = false;
             mUpscaledMap.release();
@@ -1576,6 +1586,8 @@ void LLPipeline::releaseScreenBuffers()
     mWorldDepthValid = false;
     mOpaqueColorMap.release();
     mReactiveMap.release();
+    mReactivePrev.release();
+    mReactiveHave = false;
     mOpaqueColorValid = false;
     mReactiveValid = false;
     mRtBlocker.release();
@@ -20583,6 +20595,38 @@ F32 rk_fsr_mask_raw() { return sFsrMask; }
 static F32 sFsrTc = -1000.f, sFsrGain = -1000.f, sFsrHairMv = -1000.f;
 // rt-debug.txt fsrcover=0 (the reactive mask from the colour difference against a copy of the opaque picture, the old way) / =1 or no line (from the blended pass's own coverage, attachment 1 of the screen target)
 static F32 sFsrCover = -1000.f;
+static F32 sFsrTrail = -1000.f;
+// rt-debug.txt fsrtrail=T (seconds, 0 = off): a pixel a moving blended surface (hair, shoes, particles) covered stays marked at full strength for T seconds after it is uncovered: they have no depth and no vectors, so the background
+// they reveal is not flagged as disoccluded, and FSR's history would keep the old picture there. (Red: the mask FSR reads, green: the time left; a decay factor on 8 bits never reached zero: 1/255 * 0.6 rounds back to 1/255.)
+F32 rk_fsr_trail() { return sFsrTrail > -999.f ? sFsrTrail : 0.f; }       // (off by default; fsrtrail=0.25 turns it on)
+// rt-debug.txt fsrcovercond=0 (the coverage counts everywhere, as before) / =1 or no line (only where the pixel behind moves or the surface changes by itself) and fsrcoverstatic= (the share that still counts over a static pixel, 0)
+static F32 sFsrCoverCond = -1000.f, sFsrCoverStatic = -1000.f;
+bool rk_fsr_covercond_on() { return sFsrCoverCond < -999.f || sFsrCoverCond > 0.5f; }
+F32 rk_fsr_coverstatic() { return sFsrCoverStatic > -999.f ? sFsrCoverStatic : 0.f; }
+F32 rk_fsr_covercond_raw() { return sFsrCoverCond; }
+// rt-debug.txt fsrshiftreset=1: the upscaler's history is reset on a frame the movement-complete message was handled (a region crossing or a teleport arrival: gShiftFrame; the world's origin moved, the previous matrices
+// and poses are in the old one); the rig's shift runner sets it itself (rk_rig_set_shift_reset)
+static F32 sFsrShiftReset = -1000.f;
+// rt-debug.txt fsrmovedist= / fsrmovepx= : the limits of the own motion of a rigged avatar (lldrawpool.cpp rk_palette_moving_scale: 48 m, 0.3 px); no line = those; 0 = no limit
+void rk_set_palette_moving_limits(F32 dist, F32 px);
+static F32 sFsrMoveDist = -1000.f, sFsrMovePx = -1000.f;
+F32 rk_fsr_movedist_raw() { return sFsrMoveDist; }
+F32 rk_fsr_movepx_raw() { return sFsrMovePx; }
+static int sRigShiftReset = -1;
+static bool sLastReset = false;
+bool rk_rig_shift_reset_on()
+{
+    if (sRigShiftReset >= 0)
+    {
+        return sRigShiftReset > 0;
+    }
+    return sFsrShiftReset > -999.f ? sFsrShiftReset > 0.5f : false;
+}
+void rk_rig_set_shift_reset(int on) { sRigShiftReset = on; }
+bool rk_rig_last_reset() { return sLastReset; }
+static bool sShiftThisFrame = false;       // the origin moved this frame: the movement-complete message (gShiftFrame) or the agent's region changed since the last upscaled frame
+bool rk_rig_shift_now() { return sShiftThisFrame; }
+static bool sBlendMotionThisFrame = false;       // the post-deferred pass of this frame wrote the motion attachment (the motion pass reads it)
 static bool sCoverageThisFrame = false;       // the post-deferred pass of this frame ran with the coverage attachment (generateReactiveMask reads it)
 bool rk_fsr_cover_on() { return sFsrCover < -999.f || sFsrCover > 0.5f; }
 F32 rk_fsr_cover_raw() { return sFsrCover; }
@@ -20606,7 +20650,7 @@ static bool pollDlssqOverride()
     S32 v = -1;
     F32 sharp = -1.f;
     F32 tune[4] = { -1000.f, -1000.f, -1000.f, -1000.f };
-    F32 own = -1000.f, lod = -1000.f, move_react = -1000.f, react = -1000.f, mask = -1000.f, tc = -1000.f, gain = -1000.f, hairmv = -1000.f, cover = -1000.f;
+    F32 own = -1000.f, lod = -1000.f, move_react = -1000.f, react = -1000.f, mask = -1000.f, tc = -1000.f, gain = -1000.f, hairmv = -1000.f, cover = -1000.f, shiftreset = -1000.f, movedist = -1000.f, movepx = -1000.f, covercond = -1000.f, coverstatic = -1000.f, trail = -1000.f;
     S32 phases = -1000;
     std::ifstream in("D:/claude/rt-debug.txt");
     std::string line;
@@ -20676,9 +20720,40 @@ static bool pollDlssqOverride()
         {
             cover = (F32)atof(line.c_str() + 9);
         }
+        else if (line.compare(0, 14, "fsrshiftreset=") == 0)
+        {
+            shiftreset = (F32)atof(line.c_str() + 14);
+        }
+        else if (line.compare(0, 9, "fsrtrail=") == 0)
+        {
+            trail = (F32)atof(line.c_str() + 9);
+        }
+        else if (line.compare(0, 13, "fsrcovercond=") == 0)
+        {
+            covercond = (F32)atof(line.c_str() + 13);
+        }
+        else if (line.compare(0, 15, "fsrcoverstatic=") == 0)
+        {
+            coverstatic = (F32)atof(line.c_str() + 15);
+        }
+        else if (line.compare(0, 12, "fsrmovedist=") == 0)
+        {
+            movedist = (F32)atof(line.c_str() + 12);
+        }
+        else if (line.compare(0, 10, "fsrmovepx=") == 0)
+        {
+            movepx = (F32)atof(line.c_str() + 10);
+        }
     }
     sFsrHairMv = hairmv;
     sFsrCover = cover;
+    sFsrShiftReset = shiftreset;
+    sFsrMoveDist = movedist;
+    sFsrCoverCond = covercond;
+    sFsrTrail = trail;
+    sFsrCoverStatic = coverstatic;
+    sFsrMovePx = movepx;
+    rk_set_palette_moving_limits(movedist > -999.f ? movedist : 0.f, movepx > -999.f ? movepx : 0.f);       // (no size floor: a palette with a previous pose gets its real vector however small: faces with subtle movement)
     sFsrReact = react;
     sFsrMask = mask;
     sFsrTc = tc;
@@ -20790,6 +20865,7 @@ bool rk_motion_fold_uniforms(RKShaderProgram* program)
     return true;
 }
 
+static F32 sMotionViewGain = 0.25f;       // (pixels to colour in the own-motion view; the upscaler rig draws it at 20)
 void LLPipeline::visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool show_flag)
 {
     if (!gAvatarVelocityDebugProgram.isComplete())
@@ -20803,6 +20879,8 @@ void LLPipeline::visualizeMotion(LLRenderTarget* src, LLRenderTarget* dst, bool 
     gAvatarVelocityDebugProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT, fold_target ? 4 : 0);
     static LLStaticHashedString show_flag_s("show_flag");
     gAvatarVelocityDebugProgram.uniform1f(show_flag_s, fold_target ? 2.f : (show_flag ? 1.f : 0.f));
+    static LLStaticHashedString motion_gain_s("gain");
+    gAvatarVelocityDebugProgram.uniform1f(motion_gain_s, sMotionViewGain);
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     gAvatarVelocityDebugProgram.unbind();
@@ -20865,7 +20943,7 @@ bool LLPipeline::reactiveMaskWanted() const
 {
     static const bool on = !getenv("RK_VK_FSR_REACTIVE") || atoi(getenv("RK_VK_FSR_REACTIVE")) != 0;
     // <FS> from the blended pass's own coverage (the screen target's attachment 1) or, with fsrcover=0 or without that attachment, from the colour difference against a copy of the opaque picture
-    const bool coverage = rk_fsr_cover_on() && mRT && mRT->screen.getNumTextures() == 2 && gCoverageClearProgram.isComplete();
+    const bool coverage = rk_fsr_cover_on() && mRT && mRT->screen.getNumTextures() >= 2 && gCoverageClearProgram.isComplete();
     return on && rk_fsr_mask_raw() != 0.f && sDLSS && sRenderDeferred && !gCubeSnapshot && RKVkBridge::upscaleAvailable() && RKVkBridge::upscalerIsFsr()
            && mReactiveMap.isComplete() && gReactiveMaskProgram.isComplete()
            && (coverage ? (mRT->screen.getWidth() == mReactiveMap.getWidth() && mRT->screen.getHeight() == mReactiveMap.getHeight())
@@ -20879,6 +20957,10 @@ void LLPipeline::snapshotOpaqueColor()
     if (!reactiveMaskWanted())
     {
         return;
+    }
+    if (rk_fsr_cover_on() && mRT && mRT->screen.getNumTextures() >= 2 && gCoverageClearProgram.isComplete())
+    {
+        return;     // the mask is made from the blended pass's own coverage: no copy of the opaque picture to compare against (only the fsrcover=0 fallback needs it)
     }
     LL_PROFILE_GPU_ZONE("opaque colour snapshot");
     RenderPassScope pass(mOpaqueColorMap);
@@ -20901,17 +20983,26 @@ void LLPipeline::generateReactiveMask()
     mOpaqueColorValid = false;
     if (!(have_opaque || have_cover) || !reactiveMaskWanted())
     {
+        mReactiveHave = false;
         return;
     }
     // RK_VK_FSR_REACTIVE_LOW / HIGH: the relative change of the colour that starts to count and the one that counts fully
     static const F32 low = getenv("RK_VK_FSR_REACTIVE_LOW") ? (F32)atof(getenv("RK_VK_FSR_REACTIVE_LOW")) : 0.01f;
     static const F32 high = getenv("RK_VK_FSR_REACTIVE_HIGH") ? (F32)atof(getenv("RK_VK_FSR_REACTIVE_HIGH")) : 0.15f;
     LL_PROFILE_GPU_ZONE("reactive mask");
+    // last frame's mask: the two targets change places (mReactivePrev is then the mask of the frame before, mReactiveMap is written now)
+    const F32 trail = rk_fsr_trail();
+    const bool have_prev = mReactiveHave && mReactivePrev.isComplete() && mReactivePrev.getWidth() == mReactiveMap.getWidth() && mReactivePrev.getHeight() == mReactiveMap.getHeight();
+    if (have_prev)
+    {
+        mReactiveMap.swapFBORefs(mReactivePrev);
+    }
+    const bool use_prev = have_prev && have_cover && trail > 0.f;
     RenderPassScope pass(mReactiveMap);
     RKRenderState::DepthScope depth(false, false);
     RKRenderState::BlendScope blend(false);
     gReactiveMaskProgram.bind();
-    gReactiveMaskProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &mRT->screen, false, LLTexUnit::TFO_POINT);
+    gReactiveMaskProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, use_prev ? &mReactivePrev : &mRT->screen, false, LLTexUnit::TFO_POINT);       // (with the coverage the scene colour is not used: that slot holds last frame's mask)
     if (have_cover)
     {
         gReactiveMaskProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &mRT->screen, false, LLTexUnit::TFO_POINT, 1);       // (the coverage: attachment 1)
@@ -20923,7 +21014,8 @@ void LLPipeline::generateReactiveMask()
     // rt-debug.txt fsrmovreact=R (the upscaler rig): every pixel that has motion of its own in the world pass's target gets at least this reactive value (a direction test: does FSR trust its history too much on moving surfaces?)
     const F32 move_react = rk_fsr_movereact_raw() > 0.f ? llclamp(rk_fsr_movereact_raw(), 0.f, 1.f) : 0.f;
     const bool use_move = move_react > 0.f && motion_fold_active();
-    if (use_move)
+    const bool use_behind = have_cover && rk_fsr_covercond_on() && motion_fold_active();
+    if (use_move || use_behind)
     {
         gReactiveMaskProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mRT->deferredScreen, false, LLTexUnit::TFO_POINT, 4);
     }
@@ -20936,10 +21028,19 @@ void LLPipeline::generateReactiveMask()
     static LLStaticHashedString use_cover_s("use_cover");
     gReactiveMaskProgram.uniform1f(gain_s, rk_fsr_gain_raw() > -999.f ? rk_fsr_gain_raw() : (have_cover ? 2.f : 1.f));      // (a surface that covers half the pixel counts fully)
     gReactiveMaskProgram.uniform1f(use_cover_s, have_cover ? 1.f : 0.f);
+    static LLStaticHashedString use_behind_s("use_behind"), cover_static_s("cover_static");
+    gReactiveMaskProgram.uniform1f(use_behind_s, use_behind ? 1.f : 0.f);
+    gReactiveMaskProgram.uniform1f(cover_static_s, rk_fsr_coverstatic());
+    static LLStaticHashedString use_prev_s("use_prev"), prev_decay_s("prev_decay");
+    gReactiveMaskProgram.uniform1f(use_prev_s, use_prev ? 1.f : 0.f);
+    static LLStaticHashedString trail_hold_s("trail_hold");
+    gReactiveMaskProgram.uniform1f(prev_decay_s, trail > 0.f ? llclamp(gFrameIntervalSeconds.value(), 0.001f, 0.1f) / trail : 1.f);       // (the share of the trail a frame uses up)
+    gReactiveMaskProgram.uniform1f(trail_hold_s, 0.7f);
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     gReactiveMaskProgram.unbind();
     mReactiveValid = true;
+    mReactiveHave = true;
 }
 
 // the upscaler rig (rkrigmetrics.cpp): this frame's reactive mask as bytes (the red channel, w x h as asked), false when it was not made this frame or has another size; called after the upscale of a frame
@@ -20962,6 +21063,46 @@ bool rk_rig_read_blend(std::vector<U8>& out, S32 w, S32 h)
     {
         out[k] = rgba[4 * k];
     }
+    return true;
+}
+
+// the upscaler rig: the world pass's own-motion view (buffer visualization 10: blue = no motion of its own, red / green = a motion of its own) drawn into a target of its own, render size
+LLRenderTarget* rk_rig_ownmotion_view(F32 gain)
+{
+    LLPipeline& pl = gPipeline;
+    if (!pl.mRT || pl.mRT->deferredScreen.getNumTextures() != 5 || !gAvatarVelocityDebugProgram.isComplete())
+    {
+        return nullptr;
+    }
+    static LLRenderTarget view;
+    const U32 w = pl.mRT->deferredScreen.getWidth(), h = pl.mRT->deferredScreen.getHeight();
+    if (!view.isComplete() || view.getWidth() != w || view.getHeight() != h)
+    {
+        view.release();
+        if (!view.allocate(w, h, TexelFormat::RGBA8))
+        {
+            return nullptr;
+        }
+    }
+    sMotionViewGain = gain;
+    pl.visualizeMotion(&pl.mRT->deferredScreen, &view, true);
+    sMotionViewGain = 0.25f;
+    return &view;
+}
+
+// the upscaler rig (rkrigmetrics.cpp): the motion map of the last frame as RGBA floats (render size)
+bool rk_rig_read_motion(std::vector<F32>& rgba, S32& w, S32& h)
+{
+    LLPipeline& pl = gPipeline;
+    if (!pl.mMotionMap.isComplete())
+    {
+        return false;
+    }
+    w = (S32)pl.mMotionMap.getWidth();
+    h = (S32)pl.mMotionMap.getHeight();
+    rgba.resize((size_t)w * h * 4);
+    RenderPassScope pass(pl.mMotionMap);
+    gRender.readPixels(0, 0, w, h, PixelFormat::RGBA, ComponentType::F32, rgba.data());
     return true;
 }
 
@@ -21013,6 +21154,14 @@ void LLPipeline::generateMotionVectors(LLRenderTarget* dst)
     static const F32 blend_cut = getenv("RK_VK_MOTIONBLEND_CUT") ? (F32)atof(getenv("RK_VK_MOTIONBLEND_CUT")) : 0.1f;
     gMotionVectorProgram.uniform1f(use_blend_s, blend_motion ? 1.f : 0.f);
     gMotionVectorProgram.uniform1f(blend_cut_s, blend_cut);
+    // the blended pass's motion (screen attachment 2): where a skinned blended surface wrote its own motion, that is the pixel's motion
+    const bool blend_att = fold && sBlendMotionThisFrame && mRT->screen.getNumTextures() >= 3;
+    if (blend_att)
+    {
+        gMotionVectorProgram.bindTexture(LLShaderMgr::NORMAL_MAP, &mRT->screen, false, LLTexUnit::TFO_POINT, 2);
+    }
+    static LLStaticHashedString use_bmotion_s("use_bmotion");
+    gMotionVectorProgram.uniform1f(use_bmotion_s, blend_att ? 1.f : 0.f);
     static LLStaticHashedString hair_gap_s("hair_gap"), proj_c_s("proj_c"), proj_d_s("proj_d");
     gMotionVectorProgram.uniform1f(hair_gap_s, hair_core ? 0.3f : 0.f);
     gMotionVectorProgram.uniform1f(proj_c_s, LLViewerCamera::sJitteredProjection[2][2]);
@@ -21491,6 +21640,17 @@ bool LLPipeline::applyUpscale(LLRenderTarget* src, LLRenderTarget* dst)
     // <FS> a snapshot renders several times within one frame number: those renders continue each other's history
     const bool continues = frame == last_frame + 1 || (gSnapshot && frame == last_frame);
     a.mReset = (!mViewProjPrevValid || !continues || last_size[0] != a.mRenderWidth || last_size[1] != a.mRenderHeight) ? 1 : 0;
+    {
+        static LLViewerRegion* last_region = nullptr;
+        LLViewerRegion* region_now = gAgent.getRegion();
+        sShiftThisFrame = gShiftFrame || (last_region && region_now != last_region);
+        last_region = region_now;
+    }
+    if (sShiftThisFrame && rk_rig_shift_reset_on())
+    {
+        a.mReset = 1;       // (a region crossing or a teleport arrival: the origin moved)
+    }
+    sLastReset = a.mReset != 0;
     last_frame = frame;
     last_size[0] = a.mRenderWidth;
     last_size[1] = a.mRenderHeight;
@@ -24815,15 +24975,16 @@ void LLPipeline::renderDeferredLighting()
     // copy and opened again on the same target with its content kept
     mOpaqueColorValid = false;
     sCoverageThisFrame = false;
+    sBlendMotionThisFrame = false;
     bool coverage_pass = false;
     if (reactiveMaskWanted() && screen_target == &mRT->screen)
     {
-        coverage_pass = rk_fsr_cover_on() && mRT->screen.getNumTextures() == 2 && gCoverageClearProgram.isComplete();
+        coverage_pass = rk_fsr_cover_on() && mRT->screen.getNumTextures() >= 2 && gCoverageClearProgram.isComplete();
         screen_pass.end();
         if (coverage_pass)
         {
             // <FS> the blended draws of this pass write the screen target's attachment 1 too (lib/cover.glsl): it starts at 0, and the pass uses both attachments from here to its end
-            mRT->screen.setPassColorCount(2);
+            mRT->screen.setPassColorCount((U32)mRT->screen.getNumTextures());
             screen_pass.begin(*screen_target, RenderPass::LoadOp::Load);
             {
                 RKRenderState::DepthScope depth(false, false);
@@ -24834,6 +24995,7 @@ void LLPipeline::renderDeferredLighting()
                 gCoverageClearProgram.unbind();
             }
             sCoverageThisFrame = true;
+            sBlendMotionThisFrame = mRT->screen.getNumTextures() >= 3 && motion_fold_active();
         }
         else
         {

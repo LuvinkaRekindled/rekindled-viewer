@@ -11,20 +11,20 @@ override | Deferred Sun Shader | fullscreen.vert | sun_lightmap.frag | sun | def
 # ssrTraceMode is a float (bit 0: the improved trace for water, bit 1: for other surfaces, bit 2: the water trace adaptive); a `when` compares the float's bits: the native resolve only has the original marcher for surfaces, so it stands in for the modes without bit 1: 0, 1, 4, 5
 override | Deferred Soften Shader | fullscreen.vert | resolve.frag | resolve | define RESOLVE_PASS=1 | default on
 # family 2: the transparent surfaces (doc/vulkan/SHADERS-F2-alpha.md). Fullbright first (rt-debug.txt alphauber=0 keeps the fullbright draws in their own program); native_alpha=1 turns it on.
-override | Deferred Fullbright Alpha Pull Shader | alpha.vert | alpha_fullbright.frag | alpha | default on
-override | Deferred Fullbright Alpha Pull Skin Shader | alpha.vert | alpha_fullbright.frag | alpha | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | Deferred Fullbright Alpha Pull Shader | alpha.vert | alpha_fullbright.frag | alpha | define GB_MOTION=1 | default on
+override | Deferred Fullbright Alpha Pull Skin Shader | alpha.vert | alpha_fullbright.frag | alpha | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 # the lit case (plain diffuse), two variants of each program by the sky: classic_mode=1 (small: the ambient light is the sky's) and classic_mode=0 (ALPHA_PROBES: the ambient light comes from the reflection probes)
-override | Deferred Alpha Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | default on | rtquery
-override | Deferred Alpha Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
+override | Deferred Alpha Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define GB_MOTION=1 | default on | rtquery
+override | Deferred Alpha Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on | rtquery
 # the merged lit + fullbright program (the row's fullbright flag picks the branch): the program the alpha runs use when alphamat is 0 (the material draws have their own programs then)
-override | Deferred Alpha Uber Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | default on | rtquery
-override | Deferred Alpha Uber Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
+override | Deferred Alpha Uber Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define GB_MOTION=1 | default on | rtquery
+override | Deferred Alpha Uber Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on | rtquery
 # the merged program with the material draws too (the program the alpha runs use by default): fullbright, lit and material draws in one native program; the probes are used by the material path in every sky
-override | Deferred Alpha Uber Material Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rtquery
-override | Deferred Alpha Uber Material Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
+override | Deferred Alpha Uber Material Pull Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define GB_MOTION=1 | default on | rtquery
+override | Deferred Alpha Uber Material Pull Skin Shader | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on | rtquery
 # the glTF (PBR) blend surfaces: lit with the probes in every sky (classic skies keep their own mixing at run time), static and rigged, and the HUD's fullbright form
-override | Deferred PBR Alpha Pull Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | default on | rtquery
-override | Deferred PBR Alpha Pull Skin Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
+override | Deferred PBR Alpha Pull Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define GB_MOTION=1 | default on | rtquery
+override | Deferred PBR Alpha Pull Skin Shader | alpha_pbr.vert | alpha_pbr.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_PBR=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on | rtquery
 override | HUD PBR Alpha Pull Shader | alpha_pbr.vert | alpha_pbr_hud.frag | alpha | define ALPHA_PBR=1 | define ALPHA_PBR_HUD=1 | default on
 # family 3: the G-buffer fill (doc/vulkan/SHADERS-F3-gbuffer.md). The glTF opaque and mask pass from the scene table: the same vertex program as the blend surfaces (PBR_OPAQUE adds the material's cutoff), a small fragment program that writes the three targets (the emissive one with RenderEnableEmissiveBuffer); static, rigged and the HUD's fullbright form
 override | Deferred PBR Opaque Pull Shader | alpha_pbr.vert | pbr_opaque.frag | gbuffer | define ALPHA_PBR=1 | define PBR_OPAQUE=1 | define GB_MOTION=1 | default on
@@ -65,14 +65,14 @@ override | Material Pull Skin Shader 12 | gbuffer.vert | gbuffer_material.frag |
 override | Material Pull Skin Shader 14 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=2 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 override | Material Pull Skin Shader 15 | gbuffer.vert | gbuffer_material.frag | gbuffer | define GB_MATERIAL=1 | define MAT_ALPHA_MODE=3 | define MAT_NORMAL_MAP=1 | define MAT_SPEC_MAP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 # the material blend variants of the old programs (1, 5, 9, 13): the alpha runs draw them where the merged program is not used (the depth only passes, the HUD, the impostor render, alphauber=0); the merged lit program with the material path draws them too, from the same rows. rt: the stock blend variant has the ray traced sun shadow
-override | Material Pull Shader 1 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rtquery
-override | Material Pull Shader 5 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rtquery
-override | Material Pull Shader 9 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rtquery
-override | Material Pull Shader 13 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | default on | rtquery
-override | Material Pull Skin Shader 1 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
-override | Material Pull Skin Shader 5 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
-override | Material Pull Skin Shader 9 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
-override | Material Pull Skin Shader 13 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on | rtquery
+override | Material Pull Shader 1 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define GB_MOTION=1 | default on | rtquery
+override | Material Pull Shader 5 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define GB_MOTION=1 | default on | rtquery
+override | Material Pull Shader 9 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define GB_MOTION=1 | default on | rtquery
+override | Material Pull Shader 13 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define GB_MOTION=1 | default on | rtquery
+override | Material Pull Skin Shader 1 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on | rtquery
+override | Material Pull Skin Shader 5 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on | rtquery
+override | Material Pull Skin Shader 9 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on | rtquery
+override | Material Pull Skin Shader 13 | alpha.vert | alpha_lit.frag | alpha | define ALPHA_LIT=1 | define ALPHA_PROBES=1 | define ALPHA_UBER=1 | define ALPHA_MAT=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on | rtquery
 override | Deferred Bump Pull Shader | gbuffer.vert | gbuffer_bump.frag | gbuffer | define GB_BUMP=1 | define GB_MOTION=1 | default on
 override | Deferred Bump Pull Skin Shader | gbuffer.vert | gbuffer_bump.frag | gbuffer | define GB_BUMP=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 override | Deferred Emboss Pull Shader | gbuffer.vert | emboss.frag | gbuffer | define GB_EMBOSS=1 | default on
@@ -129,8 +129,8 @@ override | Deferred Windlight Moon Program pull | moon.vert | moon.frag | gbuffe
 override | Deferred Windlight Sun Program pull | sundisc.vert | sundisc.frag | gbuffer | default on
 override | Deferred Star Program pull | stars.vert | stars.frag | gbuffer | default on
 override | Deferred Fullbright Mask Alpha Pull Shader | alpha.vert | fullbright_mask.frag | post | define CUTOFF_UNIFORM=1 | default on
-override | Deferred Fullbright Alpha Mask Pull Shader | gbuffer.vert | fullbright_mask.frag | post | default on
-override | Deferred Fullbright Alpha Mask Pull Skin Shader | gbuffer.vert | fullbright_mask.frag | post | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | Deferred Fullbright Alpha Mask Pull Shader | gbuffer.vert | fullbright_mask.frag | post | define GB_MOTION=1 | default on
+override | Deferred Fullbright Alpha Mask Pull Skin Shader | gbuffer.vert | fullbright_mask.frag | post | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 override | Skinned Deferred Fullbright Alpha Mask Pull Shader | alpha.vert | fullbright_mask.frag | post | define CUTOFF_UNIFORM=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
 override | HUD Fullbright Alpha Mask Pull Shader | gbuffer.vert | fullbright_mask.frag | post | define IS_HUD=1 | default on
 override | Deferred Emissive Pull Shader | alpha.vert | emissive.frag | post | define GLOW_EMISSIVE=1 | default on
@@ -147,11 +147,11 @@ override | Deferred Shadow Alpha Pull Shader | shadow_alpha.vert | shadow_alpha.
 override | Deferred Avatar Shadow Shader pull | avatar_shadow.vert | avatar_shadow.frag | shadow | default on
 override | Deferred Avatar Alpha Shadow Shader pull | avatar_shadow.vert | avatar_shadow.frag | shadow | define SHADOW_ALPHA=1 | define SHADOW_COLOR_ALPHA=1 | default on
 override | Deferred Avatar Alpha Mask Shadow Shader pull | avatar_shadow.vert | avatar_shadow.frag | shadow | define SHADOW_ALPHA=1 | default on
-override | Deferred Fullbright Pull Shader | gbuffer.vert | fullbright_mask.frag | gbuffer | define NO_MASK=1 | default on
-override | Deferred Fullbright Pull Skin Shader | gbuffer.vert | fullbright_mask.frag | gbuffer | define NO_MASK=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | Deferred Fullbright Pull Shader | gbuffer.vert | fullbright_mask.frag | gbuffer | define NO_MASK=1 | define GB_MOTION=1 | default on
+override | Deferred Fullbright Pull Skin Shader | gbuffer.vert | fullbright_mask.frag | gbuffer | define NO_MASK=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 override | HUD Fullbright Pull Shader | gbuffer.vert | fullbright_mask.frag | gbuffer | define NO_MASK=1 | define IS_HUD=1 | default on
-override | Deferred Fullbright Shiny Pull Shader | gbuffer.vert | fullbright_shiny.frag | gbuffer | define ALPHA_PROBES=1 | default on
-override | Deferred Fullbright Shiny Pull Skin Shader | gbuffer.vert | fullbright_shiny.frag | gbuffer | define ALPHA_PROBES=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | default on
+override | Deferred Fullbright Shiny Pull Shader | gbuffer.vert | fullbright_shiny.frag | gbuffer | define ALPHA_PROBES=1 | define GB_MOTION=1 | default on
+override | Deferred Fullbright Shiny Pull Skin Shader | gbuffer.vert | fullbright_shiny.frag | gbuffer | define ALPHA_PROBES=1 | define HAS_SKIN=1 | define HAS_INDEXED_DRAW=1 | define GB_MOTION=1 | default on
 override | HUD Fullbright Shiny Pull Shader | gbuffer.vert | fullbright_shiny.frag | gbuffer | define IS_HUD=1 | default on
 override | HUD Fullbright Alpha Pull Shader | alpha.vert | alpha_fullbright.frag | alpha | define IS_HUD=1 | default on
 override | PBR Glow Pull Shader | alpha_pbr.vert | pbr_glow.frag | post | define ALPHA_PBR=1 | define ALPHA_PBR_HUD=1 | define GLOW_EMISSIVE=1 | default on
@@ -253,22 +253,22 @@ override | Deferred PBR Alpha Shader | alpha_pbr_preview.vert | alpha_pbr.frag |
 override | Deferred RT Reflection Shader | fullscreen.vert | rt_reflection.frag | post | define HAS_SUN_SHADOW=1 | define RK_RT_REFLECTIONS=1 | define RK_RT_QUERY=1 | default on
 # the glTF scene programs (the glTF objects of the scene manager; PLAN-native-only-end-state.md): the stock text of pbrmetallicroughnessV / F and the library files of the stock loader, 16 variants by define; the blended
 # variants have the ray traced sun shadow in a session with ray queries (rtquery). The names are the variants' (llviewershadermgr.cpp make_gltf_variant)
-override | GLTF PBR Metallic Roughness Shader | gltf_scene.vert | gltf_scene.frag | gbuffer | default on
-override | GLTF PBR Metallic Roughness Shader blend | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | default on | rtquery
-override | GLTF PBR Metallic Roughness Shader rigged | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | default on
-override | GLTF PBR Metallic Roughness Shader blend rigged | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | default on | rtquery
-override | GLTF PBR Metallic Roughness Shader unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define UNLIT=1 | default on
-override | GLTF PBR Metallic Roughness Shader blend unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define UNLIT=1 | default on | rtquery
-override | GLTF PBR Metallic Roughness Shader rigged unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define UNLIT=1 | default on
-override | GLTF PBR Metallic Roughness Shader blend rigged unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define UNLIT=1 | default on | rtquery
-override | GLTF PBR Metallic Roughness Shader multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define MULTI_UV=1 | default on
-override | GLTF PBR Metallic Roughness Shader blend multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define MULTI_UV=1 | default on | rtquery
-override | GLTF PBR Metallic Roughness Shader rigged multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define MULTI_UV=1 | default on
-override | GLTF PBR Metallic Roughness Shader blend rigged multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define MULTI_UV=1 | default on | rtquery
-override | GLTF PBR Metallic Roughness Shader unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define UNLIT=1 | define MULTI_UV=1 | default on
-override | GLTF PBR Metallic Roughness Shader blend unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define UNLIT=1 | define MULTI_UV=1 | default on | rtquery
-override | GLTF PBR Metallic Roughness Shader rigged unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define UNLIT=1 | define MULTI_UV=1 | default on
-override | GLTF PBR Metallic Roughness Shader blend rigged unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define UNLIT=1 | define MULTI_UV=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader | gltf_scene.vert | gltf_scene.frag | gbuffer | define GB_MOTION=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define GB_MOTION=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader rigged | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define GB_MOTION=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend rigged | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define GB_MOTION=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define UNLIT=1 | define GB_MOTION=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define UNLIT=1 | define GB_MOTION=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader rigged unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define UNLIT=1 | define GB_MOTION=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend rigged unlit | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define UNLIT=1 | define GB_MOTION=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define MULTI_UV=1 | define GB_MOTION=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define MULTI_UV=1 | define GB_MOTION=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader rigged multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define MULTI_UV=1 | define GB_MOTION=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend rigged multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define MULTI_UV=1 | define GB_MOTION=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define UNLIT=1 | define MULTI_UV=1 | define GB_MOTION=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define UNLIT=1 | define MULTI_UV=1 | define GB_MOTION=1 | default on | rtquery
+override | GLTF PBR Metallic Roughness Shader rigged unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define HAS_SKIN=1 | define UNLIT=1 | define MULTI_UV=1 | define GB_MOTION=1 | default on
+override | GLTF PBR Metallic Roughness Shader blend rigged unlit multiuv | gltf_scene.vert | gltf_scene.frag | gbuffer | define ALPHA_BLEND=1 | define HAS_SKIN=1 | define UNLIT=1 | define MULTI_UV=1 | define GB_MOTION=1 | default on | rtquery
 # SMAA (the anti-aliasing option): three passes in four presets, the stock library text in lib/smaa.glsl (PLAN-native-only-end-state.md)
 override | SMAA Edge Detection (Low) | smaa_edge.vert | smaa_edge.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_LOW=1 | default on
 override | SMAA Blending Weights (Low) | smaa_weights.vert | smaa_weights.frag | post | define SMAA_GLSL_4=1 | define SMAA_PREDICATION=0 | define SMAA_REPROJECTION=0 | define SMAA_PRESET_LOW=1 | default on

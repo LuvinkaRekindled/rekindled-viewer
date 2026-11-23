@@ -3,8 +3,10 @@
 
 layout(location = 0) in vec2 vary_fragcoord;
 layout(location = 1) out vec4 frag_cover;
+layout(location = 2) out vec4 frag_motion;       // the blended pass's motion attachment (RG16): 1.0 in x = no motion of its own (lib/motion.glsl)
 
 void main()
 {
     frag_cover = vec4(0.0);
+    frag_motion = vec4(1.0, 0.0, 0.0, 0.0);
 }

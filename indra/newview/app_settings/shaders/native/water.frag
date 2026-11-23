@@ -230,5 +230,5 @@ void main()
     color = mix(fb.rgb, color, min(1.0, fade * 60.0));
 
     frag_color = min(vec4(1.0), max(vec4(color, 0.0), vec4(0.0)));      // (the alpha of the old shader was min(brightest glint, 0) times the mask: always 0)
-    rk_write_cover(1.0);        // (the water replaces the pixel: its shading changes by itself, waves and reflections)
+    rk_write_cover(1.0, 1.0);        // (the water replaces the pixel: its shading changes by itself, waves and reflections)
 }

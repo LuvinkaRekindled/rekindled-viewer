@@ -85,8 +85,13 @@ void main()
 #if defined(GB_MOTION) && !defined(HAS_SKIN)
     {
         // a draw that is not rigged: its slot's model matrix of this frame and of the one before, when the slot moved (else the pixels keep the camera's motion: w = 0 gives the sentinel)
+        // (a draw whose record does not set the table, the transient alpha entries among them, has the address 0: no motion, and no read through a null address: that hung the GPU on 2026-11-22)
         MotionTable motion_table = MotionTable(rk_packet_motion);
-        const mat4 prev_model = motion_table.m[2u * row.model + 1u];
+        mat4 prev_model = mat4(0.0);
+        if (rk_packet_motion != uvec2(0u))
+        {
+            prev_model = motion_table.m[2u * row.model + 1u];
+        }
         if (prev_model[3][3] != 0.0)
         {
             vary_cur = view_proj_cur * (motion_table.m[2u * row.model] * vec4(vertex, 1.0));

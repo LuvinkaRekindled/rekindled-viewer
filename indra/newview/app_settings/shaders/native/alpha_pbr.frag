@@ -30,6 +30,11 @@ layout(location = 9) flat in uvec4 vary_slots;
 layout(location = 10) flat in vec2 vary_factors;
 layout(location = 11) flat in vec3 vary_emissive;
 
+#ifdef GB_MOTION
+layout(location = 14) in vec4 vary_cur;
+layout(location = 15) in vec4 vary_prev;
+#endif
+
 layout(location = 0) out vec4 frag_color;
 #include "lib/cover.glsl"
 
@@ -109,5 +114,13 @@ void main()
     color = apply_sky_and_water_fog(pos, additive, atten, color);
 
     frag_color = max(vec4(color * (classic_mode > 0 ? 1.1 : 1.0), base.a * vertex_color.a), vec4(0.0));
-    rk_write_cover(frag_color.a);
+#ifdef HAS_SKIN
+    rk_write_cover(frag_color.a, 1.0);      // (a rigged draw moves with the body: see alpha.vert)
+#else
+    rk_write_cover(frag_color.a, 0.0);
+#endif
+#ifdef GB_MOTION
+    // the motion of this surface under this frame's camera (alpha_pbr.vert: the clip positions of this pose and the last; w = 0: no motion of its own)
+    rk_write_motion(frag_color.a, vary_cur.w > 0.0 && vary_prev.w > 0.0, (vary_prev.xy / vary_prev.w - vary_cur.xy / vary_cur.w) * 0.5 * render_res);
+#endif
 }

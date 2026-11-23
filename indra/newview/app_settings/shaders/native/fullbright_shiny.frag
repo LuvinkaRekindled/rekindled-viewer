@@ -20,7 +20,13 @@ layout(location = 2) in vec2 vary_texcoord0;
 layout(location = 3) flat in uint vary_slot;
 layout(location = 4) in vec3 vary_normal;
 
+#ifdef GB_MOTION
+layout(location = 14) in vec4 vary_cur;
+layout(location = 15) in vec4 vary_prev;
+#endif
+
 layout(location = 0) out vec4 frag_color;
+#include "lib/cover.glsl"
 
 void main()
 {
@@ -43,4 +49,8 @@ void main()
 #endif
     color.a = 1.0;
     frag_color = max(color, vec4(0.0));
+    rk_write_cover(frag_color.a, 0.0);
+#ifdef GB_MOTION
+    rk_write_motion(frag_color.a, vary_cur.w > 0.0 && vary_prev.w > 0.0, (vary_prev.xy / vary_prev.w - vary_cur.xy / vary_cur.w) * 0.5 * render_res);
+#endif
 }

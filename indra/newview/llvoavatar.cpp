@@ -14443,7 +14443,7 @@ void LLVOAvatar::buildPalettesInJob()
             // <FS> P1 step 2: the palette goes straight into the coming frame's arena (the request at render time finds the slot stamped: no copy under the list's mutex)
             U32 at = 0;
             const F32* prev_pose = entry.mPrevGLMp.size() == entry.mGLMp.size() ? entry.mPrevGLMp.data() : nullptr;
-            const F32 moving = rk_palette_moving(entry.mGLMp.data(), prev_pose, (U32)entry.mGLMp.size(), getRenderPosition());
+            const F32 moving = rk_palette_moving(entry.mGLMp.data(), prev_pose, (U32)entry.mGLMp.size(), getRenderPosition(), isSelf() ? 0 : (isControlAvatar() ? 2 : 1));
             if (rk_frame_palette_write(entry.mGLMp.data(), prev_pose, moving, (U32)entry.mGLMp.size(), target, at, entry.mPaletteId))
             {
                 entry.mListSlot.store(((U64)target << 32) | at, std::memory_order_release);

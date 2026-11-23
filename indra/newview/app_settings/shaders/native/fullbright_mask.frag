@@ -15,6 +15,11 @@ layout(location = 3) flat in uint vary_slot;
 layout(location = 5) flat in float vary_cutoff;
 #endif
 
+#if defined(GB_MOTION) && !defined(CUTOFF_UNIFORM)
+layout(location = 14) in vec4 vary_cur;
+layout(location = 15) in vec4 vary_prev;
+#endif
+
 layout(location = 0) out vec4 frag_color;
 #include "lib/cover.glsl"
 
@@ -47,5 +52,8 @@ void main()
 #endif
 
     frag_color = max(color, vec4(0));
-    rk_write_cover(frag_color.a);
+    rk_write_cover(frag_color.a, 0.0);
+#if defined(GB_MOTION) && !defined(CUTOFF_UNIFORM)
+    rk_write_motion(frag_color.a, vary_cur.w > 0.0 && vary_prev.w > 0.0, (vary_prev.xy / vary_prev.w - vary_cur.xy / vary_cur.w) * 0.5 * render_res);
+#endif
 }

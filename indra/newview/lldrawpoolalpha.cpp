@@ -124,6 +124,11 @@ static void prepare_alpha_shader(RKShaderProgram* shader, bool deferredEnvironme
     shader->mUniformsDirty = true;
     shader->bind();
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
+    // <FS> a skinned blended program (GB_MOTION in the native manifest: lib/cover.glsl writes its own screen motion into the blended pass's motion attachment) takes this frame's and last frame's unjittered view projection and the render size
+    {
+        extern bool rk_motion_fold_uniforms(RKShaderProgram* program);
+        rk_motion_fold_uniforms(shader);
+    }
 
     if (RKVkBridge::rtShadowMode())
     {

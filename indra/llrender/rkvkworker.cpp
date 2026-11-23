@@ -10567,7 +10567,7 @@ static struct AlphaPass
 {
     U64 mFrame = ~0ull, mPrepares = ~0ull;
     F32 mVP[32] = {};
-    Renderer::ScratchAlloc mModels, mTexmats;
+    Renderer::ScratchAlloc mModels, mTexmats, mMotion;        // (mMotion: the model matrices of the slots that moved, this frame's and last frame's: the not rigged blended programs with GB_MOTION read it as the G-buffer ones do)
 } sAlphaPass;
 
 // <FS> item C (doc/vulkan/PLAN-crowd-worker-and-gpu.md): the rows the runs of a frame draw are copies (the table is read by frames in flight). Each run used to copy its own into a scratch of its own, so the
@@ -10689,12 +10689,29 @@ void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
         const U32 slots = std::max(sGeo.mMaxSlot, sGeo.mMaxSlotAll) + 1;       // (every slot a fragment names: the alpha groups are not all in the G-buffer list)
         pass.mModels = r.allocVertexScratch(176 * (size_t)slots);
         pass.mTexmats = r.allocVertexScratch(64 * (size_t)slots);
-        if (!pass.mModels.mPtr || !pass.mModels.mAddress || !pass.mTexmats.mPtr || !pass.mTexmats.mAddress)
+        pass.mMotion = r.allocVertexScratch(128 * (size_t)slots);
+        if (!pass.mModels.mPtr || !pass.mModels.mAddress || !pass.mTexmats.mPtr || !pass.mTexmats.mAddress || !pass.mMotion.mPtr || !pass.mMotion.mAddress)
         {
             pass.mModels = Renderer::ScratchAlloc();
             pass.mTexmats = Renderer::ScratchAlloc();
+            pass.mMotion = Renderer::ScratchAlloc();
             ++a.mScratchFail;
             return;
+        }
+        {
+            // the slots that moved since the viewer frame before (as geo_draw makes it for the G-buffer programs): slot s at 2s (this frame's matrix) and 2s + 1 (last frame's, the 1 in its corner flags it), all zero for the others
+            F32* tab = (F32*)pass.mMotion.mPtr;
+            memset(tab, 0, 128 * (size_t)slots);
+            for (U32 slot = 1; slot < slots; ++slot)
+            {
+                if (sGeo.have(slot) && memcmp(sGeo.region(slot), sGeo.prevRegion(slot), 64) != 0)
+                {
+                    F32* entry = tab + 32 * (size_t)slot;
+                    memcpy(entry, sGeo.region(slot), 64);
+                    memcpy(entry + 16, sGeo.prevRegion(slot), 64);
+                    entry[16 + 15] = 1.f;
+                }
+            }
         }
         F32* out = (F32*)pass.mModels.mPtr;
         F32* tex = (F32*)pass.mTexmats.mPtr;
@@ -10722,7 +10739,7 @@ void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
         if (timed) a.mNsTables += geo_ns(t0);
         return;
     }
-    if (pass.mFrame != frame_now || pass.mPrepares != s.mPrepares || !pass.mModels.mPtr || !pass.mTexmats.mPtr)
+    if (pass.mFrame != frame_now || pass.mPrepares != s.mPrepares || !pass.mModels.mPtr || !pass.mTexmats.mPtr || !pass.mMotion.mPtr)
     {
         ++a.mStale;         // (a run without the pass's begin record of this frame)
         return;
@@ -10964,6 +10981,12 @@ void geo_alpha_draw(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
         program->setFloatsAt(pu.mPalIds, reinterpret_cast<const F32*>(palids_words), 2, 1);
     }
     program->setFloatsAt(pu.mModels, reinterpret_cast<const F32*>(models_words), 2, 1);
+    if (pu.mMotion != ~0u)
+    {   // a not rigged blended program with GB_MOTION: the motion table of the pass
+        const U64 motion_address = (U64)pass.mMotion.mAddress;
+        const S32 motion_words[2] = { (S32)(U32)motion_address, (S32)(U32)(motion_address >> 32) };
+        program->setFloatsAt(pu.mMotion, reinterpret_cast<const F32*>(motion_words), 2, 1);
+    }
     if (pu.mTexmats != ~0u)
     {
         program->setFloatsAt(pu.mTexmats, reinterpret_cast<const F32*>(texmats_words), 2, 1);

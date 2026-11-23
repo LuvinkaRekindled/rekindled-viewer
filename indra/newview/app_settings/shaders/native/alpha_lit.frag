@@ -44,6 +44,8 @@ layout(location = 13) flat in vec4 vary_specular;
 layout(location = 14) flat in vec2 vary_matparams;
 #endif
 
+layout(location = 15) in vec3 vary_cover_motion;
+
 layout(location = 0) out vec4 frag_color;
 #include "lib/cover.glsl"
 
@@ -75,5 +77,7 @@ void main()
         result = shade_lit(vary_position, vary_norm, texel, vertex_color);       // (lib/shade_lit.glsl, shared with avatar_alpha.frag)
     }
     frag_color = result;
-    rk_write_cover(result.a);
+    const uint cover_flags = uint(vary_cover_motion.z + 0.5);
+    rk_write_cover(result.a, (cover_flags & 1u) != 0u ? 1.0 : 0.0);
+    rk_write_motion(result.a, (cover_flags & 2u) != 0u, vary_cover_motion.xy);
 }
