@@ -1879,6 +1879,28 @@ static bool rk_kill_wanted(LLVOCacheEntry* entry, const LLVector3& camera, S64 f
     {
         return false;
     }
+    // <FS> Rekindled 2026-11-24: only the root is asked (the children go with it), so what a CHILD prim needs has to protect the root: a light child of a linkset whose root is not a light, media, a sound or particle
+    // source on a child, a selected child, an avatar sitting on it. The setting RKObjectExpiry promises all of these ("not selected, no sound, particles, light or media"), the test above looked at the root's flags only,
+    // so the root of a linkset with a light prim was killed once it was 60 s unseen, with the camera still, and the light went with it.
+    for (const LLPointer<LLViewerObject>& child : object->getChildren())
+    {
+        if (child.isNull() || child->isDead())
+        {
+            continue;
+        }
+        if (child->isAvatar() || child->isSelected() || child->isAudioSource() || child->isParticleSource())
+        {
+            return false;
+        }
+        if (child->getPCode() == LL_PCODE_VOLUME)
+        {
+            LLVOVolume* child_volume = (LLVOVolume*)child.get();
+            if (child_volume->getIsLight() || child_volume->hasMedia())
+            {
+                return false;
+            }
+        }
+    }
     return (object->getPositionAgent() - camera).length() - drawable->getRadius() > LLVOCacheEntry::sNearRadius;
 }
 
