@@ -883,12 +883,19 @@ void FSPanelLogin::loadLoginPage()
 
     LL_DEBUGS("AppInit") << "login_page: " << login_page << LL_ENDL;
 
-    // <FS> Rekindled: the start page replaces the grid's login page content. It is a static page, so no
-    // login parameters (OS, version, grid) are sent to it. ForceLoginURL still wins, and an empty setting
-    // gives the grid's own page back.
+    // <FS> Rekindled: the start page replaces the grid's login page content. No login parameters (account,
+    // OS, grid) are sent to it. The only thing added to its address is the viewer's version number (digits and
+    // dots, e.g. 0.99.01.1381), and only when the page is on our own host: the page shows it under the logo and
+    // offers the newest release when the viewer is older. ForceLoginURL still wins, and an empty setting gives
+    // the grid's own page back.
     if (gSavedSettings.getString("ForceLoginURL").empty())
     {
-        const std::string start_page = gSavedSettings.getString("RKRekindledStartPage");
+        std::string start_page = gSavedSettings.getString("RKRekindledStartPage");
+        static const std::string own_host("https://sl-op.com/");
+        if (start_page.compare(0, own_host.size(), own_host) == 0)
+        {
+            start_page += (start_page.find('?') == std::string::npos ? "?v=" : "&v=") + LLVersionInfo::getInstance()->getVersion();
+        }
         if (!start_page.empty())
         {
             LLMediaCtrl* start_browser = sInstance->getChild<LLMediaCtrl>("login_html");

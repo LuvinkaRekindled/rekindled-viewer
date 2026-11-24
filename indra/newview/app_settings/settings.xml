@@ -6767,7 +6767,7 @@
       <key>Type</key>
       <string>String</string>
       <key>Value</key>
-      <string>https://sl-op.com/rekindled/start.html</string>
+      <string>https://sl-op.com/rekindled/start.php</string>
     </map>
     <key>ForceLoginURL</key>
     <map>
