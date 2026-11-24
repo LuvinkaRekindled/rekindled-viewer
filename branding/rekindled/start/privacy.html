@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy - Rekindled Viewer</title>
+<link rel="icon" href="favicon.ico" sizes="48x48">
+<link rel="icon" href="favicon.svg" type="image/svg+xml" sizes="any">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+  :root {
+    --bg-top: #070b1f;
+    --bg-bottom: #14103f;
+    --text: #aab2d8;
+    --text-strong: #dfe3ff;
+    --text-dim: #7e86b0;
+    --link: #8f9bff;
+    --rule: rgba(143, 155, 255, 0.18);
+    --card: rgba(143, 155, 255, 0.07);
+    --card-edge: rgba(143, 155, 255, 0.2);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: linear-gradient(180deg, var(--bg-top), var(--bg-bottom)) fixed;
+    color: var(--text);
+    font: 15px/1.6 "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+    min-height: 100vh;
+  }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .hero { display: flex; flex-direction: column; align-items: center; padding: 20px 16px 0; }
+  .hero a { display: block; }
+  .hero img { width: min(420px, 70vw); height: auto; display: block; }
+
+  main { max-width: 780px; margin: 0 auto; padding: 40px 16px 8px; }
+  h1 { color: var(--text-strong); font-size: 30px; font-weight: 600; margin: 0 0 6px; }
+  h2 { color: var(--text-strong); font-size: 22px; font-weight: 600; margin: 40px 0 8px; }
+  h3 { color: var(--text-strong); font-size: 16px; font-weight: 600; margin: 22px 0 4px; }
+  p { margin: 8px 0; }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 5px 0; }
+  .fine { font-size: 13px; color: var(--text-dim); }
+  .summary { background: var(--card); border: 1px solid var(--card-edge); border-radius: 12px; padding: 6px 20px 10px; margin-top: 26px; }
+  .summary h2 { margin-top: 14px; }
+  code { font: 13px/1.4 Consolas, "Cascadia Mono", monospace; color: var(--text-strong); background: rgba(143, 155, 255, 0.12); padding: 1px 5px; border-radius: 4px; word-break: break-word; }
+
+  footer { margin-top: 56px; border-top: 1px solid var(--rule); padding: 20px 16px 24px; text-align: center; color: var(--text-dim); font-size: 13px; }
+</style>
+</head>
+<body>
+<header class="hero">
+  <a href="https://sl-op.com/rekindled/"><img src="rekindled-logo.svg" alt="Rekindled Viewer"></a>
+</header>
+
+<main>
+  <h1>Privacy Policy</h1>
+  <p class="fine">Last updated November 24, 2026. This covers the Rekindled Viewer and the pages at sl-op.com/rekindled and sl-op.com/releases.</p>
+
+  <div class="summary">
+    <h2>The short version</h2>
+    <ul>
+      <li>The Rekindled project has no accounts and runs no analytics. The viewer sends us no usage statistics, no crash reports and no update checks. We do not collect, store, use or share any user data from the viewer: we never receive your account name, password, chat, inventory, location or computer details.</li>
+      <li>Downloading, installing and uninstalling Rekindled needs no account and no personal information.</li>
+      <li>Rekindled is a viewer for Second Life. To work, it talks to the grid you log in to and sends it what every Second Life viewer sends. That data goes to the grid's operator (Linden Lab, for Second Life), not to us. It is listed below so you can see exactly what it is.</li>
+      <li>The one server of ours the viewer contacts is for the start page on the login screen.</li>
+      <li>What the viewer saves on your computer stays on your computer.</li>
+    </ul>
+  </div>
+
+  <h2>Who this is from</h2>
+  <p>Rekindled is a free, open source viewer based on <a href="https://www.firestormviewer.org/" target="_blank" rel="noopener">Firestorm Viewer</a>, made by Luvinka Resident (in-world). "We" on this page means the Rekindled project. To reach us, see <a href="#contact">Contact</a>.</p>
+
+  <h2>What the Rekindled project can see</h2>
+
+  <h3>Our website and downloads</h3>
+  <p>The pages at sl-op.com/rekindled and the downloads at sl-op.com/releases are plain pages. They have no accounts, no cookies, no analytics or advertising scripts, and they load nothing from other sites. Like any web server, the one that hosts them records standard request details in its logs: your IP address, the time, the page or file you asked for, and your browser's identification. We use them only to run the site, find and fix technical problems and keep it secure. We do not share or sell them or combine them with anything else. The host keeps them under its own rules, and we do not keep copies.</p>
+
+  <h3>The start page on the login screen</h3>
+  <p>The login screen shows a page from <code>https://sl-op.com/rekindled/start.html</code> (the Rekindled logo and credits). The viewer asks for it each time the login screen opens, so our server sees your IP address and the viewer's browser identification, which includes the viewer's name and version. The viewer does not send your account name, your password, your operating system, your grid or any other login details with that request.</p>
+  <p>If you would rather not load it, clear the setting <code>RKRekindledStartPage</code> in the viewer's Debug Settings. The login screen then shows the grid's own page instead.</p>
+
+  <h3>Nothing else</h3>
+  <ul>
+    <li><strong>No usage statistics or analytics</strong> are sent to us.</li>
+    <li><strong>No crash reports</strong> are sent to us. Crash reporting is not built into Rekindled. If the viewer crashes, any crash dump stays in the logs folder on your computer.</li>
+    <li><strong>No update check.</strong> The viewer does not look for updates. New releases are on our downloads page.</li>
+    <li><strong>No Firestorm project servers.</strong> Rekindled switches off the Firestorm data service (client tags and agent lists), the download of its grid list and its grid status query. Links you click yourself, such as help pages and release notes, open in your browser as in Firestorm.</li>
+  </ul>
+
+  <h2>What goes to the grid</h2>
+  <p>As a Second Life viewer, Rekindled sends the grid what it needs to log you in and run, plus some information about your computer. Rekindled has not changed this: it is how the standard Second Life and Firestorm viewers behave. What the grid does with it is covered by its operator's own privacy policy. Your Second Life name and password go only to Linden Lab's login servers, and the viewer keeps them only on your computer, and only if you choose to save them.</p>
+  <ul>
+    <li><strong>At login:</strong> your account name and password (sent as an MD5 hash for Second Life style accounts; on some other grids the password is sent as you typed it), the viewer's name and version, your operating system and its version, a hashed identifier for your computer, and a hashed identifier for your system drive.</li>
+    <li><strong>While you are logged in:</strong> about every five minutes, and when you quit, the viewer posts a performance report to the region you are in. It contains your frame rate, how long you have run, the viewer version, your language, network delay, memory use, operating system, processor and graphics card descriptions, the network adapter's MAC address (not hashed) and a hash of your drive's serial number. There is no setting in the viewer to turn this report off. It is Linden Lab's standard viewer statistics report, which its policy for Third-Party Viewers based on its code requires to be sent.</li>
+    <li><strong>About every ten minutes:</strong> texture and asset download timings, tagged with your agent ID and session ID.</li>
+    <li><strong>Voice:</strong> if voice chat is on (it is on by default), voice goes through the grid's voice service, which the grid provides.</li>
+    <li><strong>Normal use of the world:</strong> your chat, instant messages, location, name tag and avatar appearance go to the grid and to the residents around you. That is what the product does.</li>
+  </ul>
+
+  <h2>Other services the viewer may contact</h2>
+  <p>We do not run these, and each has its own privacy policy.</p>
+  <ul>
+    <li>Linden Lab services for login, search (a search sends your session ID), the marketplace, maps, web profiles, help and the grid status feed. Welcome and destination pages are hosted on Amazon S3.</li>
+    <li>Web content in the viewer's built in browser (profiles, web pages and media on objects). It stores cookies by default and identifies itself with the viewer's name, version and skin.</li>
+    <li>Voice servers, if the grid's own voice service uses Vivox.</li>
+    <li>Only if you use them: chat translation (Google Translate), Flickr uploads and Primfeed.</li>
+  </ul>
+
+  <h2>What the viewer keeps on your computer</h2>
+  <ul>
+    <li><strong>Settings, account folders and logs:</strong> in <code>%APPDATA%\Rekindled_x64</code> on Windows and <code>~/.rekindled_x64</code> on Linux. The cache is in a folder named after the viewer under <code>%LOCALAPPDATA%</code> on Windows.</li>
+    <li><strong>Saved logins:</strong> "Remember me" and "Remember password" are on by default. A saved login is kept in <code>bin_conf.dat</code> in the settings folder: your account name and a password hash (on some other grids, the password itself). The file is scrambled using your computer's identifiers. That is obfuscation, not the operating system's protected storage, so do not save logins on a shared computer. Untick the options at login to stop saving.</li>
+    <li><strong>Logs:</strong> <code>Rekindled.log</code> records the account name you logged in as, the addresses of the region servers, a machine identifier, and the performance report above including your MAC address. Look through a log before you share it with anyone.</li>
+    <li><strong>Chat and instant message logs:</strong> kept on your computer according to your Privacy preferences.</li>
+    <li><strong>On first run:</strong> on Windows, if you have used Firestorm before, Rekindled copies the Firestorm settings folder (except its logs) into its own. A login saved in Firestorm comes with it.</li>
+    <li><strong>Crash dumps:</strong> stored in the logs folder, never sent anywhere.</li>
+  </ul>
+  <p>You can delete these folders at any time.</p>
+
+  <h2>Your choices</h2>
+  <ul>
+    <li>Untick "Remember me" and "Remember password" at login, and clear saved logins.</li>
+    <li>Turn voice chat off in Preferences &gt; Sound &amp; Media.</li>
+    <li>Leave chat translation off (it is off by default).</li>
+    <li>Clear <code>RKRekindledStartPage</code> to stop loading our start page.</li>
+    <li>Ask the grid's operator about the data the grid holds about you.</li>
+  </ul>
+
+  <h2>Source code and GitHub</h2>
+  <p>The viewer's source code and the issue tracker are hosted on GitHub, which has its own privacy policy and its own logs. Issues and comments you post there are public, so please do not put personal information in them.</p>
+
+  <h2>Links to other sites</h2>
+  <p>This page and the viewer link to sites we do not run. If you follow a link you leave ours, and that site's own policy applies.</p>
+
+  <h2>Do Not Track</h2>
+  <p>Our pages do not track you with cookies, scripts or third party services, so there is nothing for a Do Not Track signal to switch off.</p>
+
+  <h2>Your rights</h2>
+  <p>If you want to know what the web server logs hold about you, or want them deleted, contact us and we will ask the host. Because the viewer sends us no user data, we hold nothing else about you.</p>
+
+  <h2>Children</h2>
+  <p>Our service does not address anyone under 18, and we do not knowingly collect personal information from anyone under 18. Rekindled is a viewer for Second Life and other grids, and their own age rules apply. We do not collect personal information from anyone through the viewer.</p>
+
+  <h2>Changes to this page</h2>
+  <p>When the viewer's behaviour changes, we update this page and its date. The viewer's source code is public, so you can check any of this yourself at <a href="https://github.com/LuvinkaRekindled/rekindled-viewer" target="_blank" rel="noopener">github.com/LuvinkaRekindled/rekindled-viewer</a>.</p>
+
+  <h2 id="contact">Contact</h2>
+  <p>For questions about this page or about data, email <a href="mailto:luvinka.rekindled@gmail.com">luvinka.rekindled@gmail.com</a>, message Luvinka Resident in-world (<a href="secondlife:///app/agent/6d9f8eaa-ee1c-4761-98fe-e0f0a38f09e4/about">open the profile in your Second Life viewer</a>), or open an issue at <a href="https://github.com/LuvinkaRekindled/rekindled-viewer/issues" target="_blank" rel="noopener">github.com/LuvinkaRekindled/rekindled-viewer/issues</a>. Please do not send passwords or other secrets.</p>
+</main>
+
+<footer>
+  <div><a href="https://sl-op.com/rekindled/">Rekindled Viewer</a> &middot; Based on <a href="https://www.firestormviewer.org/" target="_blank" rel="noopener">Firestorm Viewer</a></div>
+</footer>
+</body>
+</html>
