@@ -65,6 +65,8 @@
 #include "lluictrlfactory.h"
 #include "llweb.h"
 #include "llmediactrl.h"
+#include "llpluginclassmedia.h"     // <FS> Rekindled: forceRenderRefresh, textureValid
+#include "rkdiag.h"
 #include "llrootview.h"
 
 #include "llfloatertos.h"
@@ -313,6 +315,12 @@ FSPanelLogin::FSPanelLogin(const LLRect &rect,
     forgot_password_text->setClickedCallback(onClickForgotPassword, NULL);
 
     loadLoginPage();
+
+    // <FS> Rekindled: hear the login browser's media events (see handleMediaEvent); the observer list removes this panel when it is destroyed
+    if (LLMediaCtrl* login_browser = findChild<LLMediaCtrl>("login_html"))
+    {
+        login_browser->addObserver(this);
+    }
 
     LLComboBox* username_combo(getChild<LLComboBox>("username_combo"));
     username_combo->setTextChangedCallback(boost::bind(&FSPanelLogin::onUsernameTextChanged, this));
@@ -991,8 +999,57 @@ void FSPanelLogin::loadLoginPage()
     }
 }
 
-void FSPanelLogin::handleMediaEvent(LLPluginClassMedia* /*self*/, EMediaEvent event)
+// <FS> Rekindled 2026-11-24: the login browser's gray page. LLMediaCtrl::draw paints the page only while the plugin's texture is valid, which is false from the moment a size is requested until the
+// browser has delivered a frame at that size; if that frame does not come (the off-screen rendering stall of Linden Lab's #5607 and #5704, seen on the first start after an install) the control stays
+// gray. Linden Lab's workaround, a repaint of the page 2 s after the size changed, was in LLPanelLogin, which Firestorm compiles out (#if 0), and this panel was never registered to hear media events
+// at all. It now is (postBuild), and the repaint also runs after the page has finished loading. RK_VK_DIAG: a LoginMedia line for every event, with the plugin's size and texture state.
+namespace
 {
+const char* login_media_event_name(LLPluginClassMediaOwner::EMediaEvent event)
+{
+    switch (event)
+    {
+        case LLPluginClassMediaOwner::MEDIA_EVENT_SIZE_CHANGED:       return "size changed";
+        case LLPluginClassMediaOwner::MEDIA_EVENT_NAVIGATE_BEGIN:     return "navigate begin";
+        case LLPluginClassMediaOwner::MEDIA_EVENT_NAVIGATE_COMPLETE:  return "navigate complete";
+        case LLPluginClassMediaOwner::MEDIA_EVENT_PLUGIN_FAILED:      return "plugin failed";
+        default:                                                      return nullptr;
+    }
+}
+}
+
+void FSPanelLogin::handleMediaEvent(LLPluginClassMedia* self, EMediaEvent event)
+{
+    constexpr F32 REFRESH_DELAY = 2.f;
+    const char* name = login_media_event_name(event);
+    if (name)
+    {
+        RK_DIAG("LoginMedia") << "login browser event: " << name << " at " << LLTimer::getElapsedSeconds() << " s; plugin size "
+            << (self ? self->getWidth() : -1) << "x" << (self ? self->getHeight() : -1) << ", texture valid " << (self && self->textureValid()) << LL_ENDL;
+    }
+    if (event == MEDIA_EVENT_SIZE_CHANGED || event == MEDIA_EVENT_NAVIGATE_COMPLETE)
+    {
+        mForceRefreshTimer.reset();
+        mForceRefreshTimer.setTimerExpirySec(REFRESH_DELAY);
+        mForceRefresh = true;
+    }
+}
+
+void FSPanelLogin::draw()
+{
+    LLPanel::draw();
+
+    if (mForceRefresh && mForceRefreshTimer.hasExpired())
+    {
+        mForceRefresh = false;
+        LLMediaCtrl* web_browser = findChild<LLMediaCtrl>("login_html");
+        LLPluginClassMedia* plugin = web_browser ? web_browser->getMediaPlugin() : nullptr;
+        if (plugin)
+        {
+            RK_DIAG("LoginMedia") << "login browser repaint forced at " << LLTimer::getElapsedSeconds() << " s; texture valid before: " << plugin->textureValid() << LL_ENDL;
+            plugin->forceRenderRefresh();
+        }
+    }
 }
 
 //---------------------------------------------------------------------------

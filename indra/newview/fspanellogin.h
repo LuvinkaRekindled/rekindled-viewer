@@ -32,6 +32,7 @@
 #include "llpanel.h"
 #include "llpointer.h"          // LLPointer<>
 #include "llmediactrl.h"    // LLMediaCtrlObserver
+#include "lltimer.h"        // <FS> Rekindled: mForceRefreshTimer
 
 class LLLineEditor;
 class LLSLURL;
@@ -78,6 +79,9 @@ public:
 
     // inherited from LLViewerMediaObserver
     /*virtual*/ void handleMediaEvent(LLPluginClassMedia* self, EMediaEvent event);
+
+    // <FS> Rekindled: runs the forced repaint of the login browser (see handleMediaEvent)
+    /*virtual*/ void draw();
     static void updateServer();  // update the combo box, change the login page to the new server, clear the combo
 
     /// to be called from LLStartUp::setStartSLURL
@@ -90,6 +94,10 @@ public:
 
     void gridListChanged(bool success);
 private:
+    // <FS> Rekindled: the login browser is repainted 2 s after its size changed or its page finished loading (Linden Lab's workaround for #5607, which only existed in the compiled out LLPanelLogin)
+    LLTimer mForceRefreshTimer;
+    bool mForceRefresh {false};
+
     void addFavoritesToStartLocation();
     void addUsersToCombo(bool show_server);
     void onSelectUser();
