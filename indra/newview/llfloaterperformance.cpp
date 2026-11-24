@@ -50,6 +50,7 @@
 #include "llvoavatarself.h"
 #include "llworld.h"
 #include "pipeline.h"
+#include "llviewerstats.h" // <FS> rk_frame_rate
 
 const F32 REFRESH_INTERVAL = 1.0f;
 const S32 BAR_LEFT_PAD = 2;
@@ -514,7 +515,7 @@ void LLFloaterPerformance::populateNearbyList()
 void LLFloaterPerformance::setFPSText()
 {
     const S32 NUM_PERIODS = 50;
-    S32 current_fps = (S32)llround(LLTrace::get_frame_recording().getPeriodMedianPerSec(LLStatViewer::FPS, NUM_PERIODS));
+    S32 current_fps = (S32)llround(rk_frame_rate(NUM_PERIODS)); // <FS> frames over their time, see llviewerstats.h
     mTextFPSValue->setValue(current_fps);
 
     std::string fps_text = getString("fps_text");

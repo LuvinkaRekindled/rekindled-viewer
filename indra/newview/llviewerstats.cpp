@@ -525,7 +525,7 @@ void update_statistics()
 
     if (LLViewerStats::instance().getRecording().getSum(LLStatViewer::FPS))
     {
-        sample(LLStatViewer::FPS_SAMPLE, LLTrace::get_frame_recording().getPeriodMeanPerSec(LLStatViewer::FPS));
+        sample(LLStatViewer::FPS_SAMPLE, rk_frame_rate()); // <FS> the real rate (frames over their time), not the mean of each frame's own rate
     }
     add(LLStatViewer::FPS, 1);
 
@@ -1050,4 +1050,23 @@ bool LLViewerStats::PhaseMap::getPhaseValues(const std::string& phase_name, F32&
     }
 
     return found;
+}
+
+// <FS> Rekindled 2026-11-24: see llviewerstats.h. The frame periods are recorded one a frame, so the frames counted over their total duration is the real rate.
+F64 rk_frame_rate(size_t num_periods)
+{
+    LLTrace::PeriodicRecording& recording = LLTrace::get_frame_recording();
+    num_periods = llmin(num_periods, (size_t)recording.getNumRecordedPeriods());
+    F64 frames = 0.0, seconds = 0.0;
+    for (size_t i = 1; i <= num_periods; ++i)
+    {
+        LLTrace::Recording& period = recording.getPrevRecording(i);
+        const F64 duration = period.getDuration().value();
+        if (duration > 0.0)
+        {
+            frames += period.getSum(LLStatViewer::FPS);
+            seconds += duration;
+        }
+    }
+    return seconds > 0.0 ? frames / seconds : 0.0;
 }

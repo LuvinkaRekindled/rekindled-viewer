@@ -57,6 +57,7 @@
 #include "llwindow.h"
 #include "fslslbridge.h"
 #include "llbutton.h"
+#include "llviewerstats.h" // <FS> rk_frame_rate
 
 extern F32 gSavedDrawDistance;
 
@@ -243,7 +244,7 @@ void FSFloaterPerformance::draw()
     {
         LLStringUtil::format_map_t args;
 
-        auto fps = LLTrace::get_frame_recording().getPeriodMedianPerSec(LLStatViewer::FPS, NUM_PERIODS);
+        auto fps = rk_frame_rate(NUM_PERIODS); // <FS> frames over their time, see llviewerstats.h
         getChild<LLTextBox>("fps_value")->setValue((S32)llround(fps));
 
         auto target_frame_time_ns = NANOS/(targetFPS==0?1:targetFPS);

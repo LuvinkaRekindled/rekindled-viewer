@@ -38,6 +38,7 @@
 #define LL_LLFLEXIBLEOBJECT_H
 
 #include "llprimitive.h"
+#include "llframetimer.h"
 #include "llvovolume.h"
 #include "llwind.h"
 
@@ -119,7 +120,7 @@ private:
         //--------------------------------------
         // Backlink only; don't make this an LLPointer.
         LLViewerObject*             mVO;
-        LLTimer                     mTimer;
+        LLFrameTimer                mTimer;     // <FS> was a wall-clock LLTimer: the frame timer follows the simulation clock (llframetimer.cpp), so the step of the flexi simulation is even under vsync
         LLVector3                   mAnchorPosition;
         LLVector3                   mParentPosition;
         LLQuaternion                mParentRotation;

@@ -1330,7 +1330,7 @@ protected:
     bool            processSingleAnimationStateChange(const LLUUID &anim_id, bool start);
     void            resetAnimations();
 private:
-    LLTimer         mAnimTimer;
+    LLFrameTimer    mAnimTimer;     // <FS> was a wall-clock LLTimer: the frame timer follows the simulation clock (llframetimer.cpp)
     F32             mTimeLast;
 
     //--------------------------------------------------------------------

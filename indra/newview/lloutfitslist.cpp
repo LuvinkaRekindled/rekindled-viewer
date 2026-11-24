@@ -61,6 +61,7 @@
 
 #include "rlvactions.h"
 #include "rlvlocks.h"
+#include "llviewerstats.h" // <FS> rk_frame_rate
 
 static bool is_tab_header_clicked(LLOutfitAccordionCtrlTab* tab, S32 y);
 
@@ -1388,7 +1389,7 @@ void LLOutfitListBase::onIdleRefreshList()
     F64 MAX_TIME = 0.005f;
     constexpr F64 min_time = 0.001f;
     constexpr F64 threshold_fps = 30.0;
-    const auto current_fps = LLTrace::get_frame_recording().getPeriodMedianPerSec(LLStatViewer::FPS,10);
+    const auto current_fps = rk_frame_rate(10); // <FS> frames over their time, see llviewerstats.h
     if (current_fps < threshold_fps)
     {
         MAX_TIME = min_time + (current_fps / threshold_fps) * (MAX_TIME - min_time);

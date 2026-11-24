@@ -1631,7 +1631,13 @@ void LLViewerObjectList::update(LLAgent &agent)
 
     // update global timer
     F32 last_time = gFrameTimeSeconds;
+    // <FS> Rekindled 2026-11-24: the simulation clock (llframetimer.cpp), the same one the frame timers use: the frame start with even steps under vsync, not the real time at this call
+    U64 sim_time = LLFrameTimer::getSimTotalTime();
     U64Microseconds time = totalTime();              // this will become the new gFrameTime when the update is done
+    if (sim_time)
+    {
+        time = U64Microseconds(sim_time);
+    }
     // Time _can_ go backwards, for example if the user changes the system clock.
     // It doesn't cause any fatal problems (just some oddness with stats), so we shouldn't assert here.
 //  llassert(time > gFrameTime);

@@ -3966,11 +3966,6 @@ bool Swapchain::create(VkSurfaceKHR surface, HWND window)
         }
     }
 
-    U32 image_count = caps.minImageCount + 1;
-    if (caps.maxImageCount > 0 && image_count > caps.maxImageCount)
-    {
-        image_count = caps.maxImageCount;
-    }
     VkPresentModeKHR present_mode = VK_PRESENT_MODE_FIFO_KHR;
     {
         const VkPresentModeKHR want = wanted_present_mode();
@@ -3980,6 +3975,27 @@ bool Swapchain::create(VkSurfaceKHR surface, HWND window)
         std::vector<VkPresentModeKHR> modes(mcount);
         vkGetPhysicalDeviceSurfacePresentModesKHR(phys, surface, &mcount, modes.data());
         for (VkPresentModeKHR pm : modes) if (pm == want) present_mode = want;
+    }
+
+    // <FS> Rekindled 2026-11-24: how many swapchain images: the minimum plus one (3), so a scene that needs more than one vblank still falls gradually (triple buffering) and not to half the rate. In a light
+    // scene under vsync (FIFO) the acquire then returns at once and the vsync wait shows up in the frame fence, where the frames come in short and long pairs (3.5 and 13 ms at 120 Hz; the simulation clock in
+    // llframetimer.cpp evens the steps the simulation sees). RK_VK_SC_IMAGES=2 asks for double buffering: the acquire blocks at the vblank, the presents are even (8.3 ms, spread 1.5 ms, measured), at the price of
+    // dropping to 60 when a frame needs more than 8.3 ms. 2..4 are accepted.
+    U32 image_count = caps.minImageCount + 1;
+    {
+        char buf[16] = {};
+        if (GetEnvironmentVariableA("RK_VK_SC_IMAGES", buf, sizeof(buf)) > 0)
+        {
+            const int n = atoi(buf);
+            if (n >= 2 && n <= 4)
+            {
+                image_count = std::max((U32)n, caps.minImageCount);
+            }
+        }
+    }
+    if (caps.maxImageCount > 0 && image_count > caps.maxImageCount)
+    {
+        image_count = caps.maxImageCount;
     }
 
     VkSwapchainCreateInfoKHR sc = { VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR };
@@ -4037,7 +4053,7 @@ bool Swapchain::create(VkSurfaceKHR surface, HWND window)
         mRenderDone.push_back(sem);
     }
 
-    LL_INFOS("Vulkan") << "swapchain " << extent.width << "x" << extent.height << " format " << (S32)chosen.format << " images " << icount << LL_ENDL;
+    LL_INFOS("Vulkan") << "swapchain " << extent.width << "x" << extent.height << " format " << (S32)chosen.format << " images " << icount << " present mode " << (S32)present_mode << LL_ENDL;
     return true;
 }
 

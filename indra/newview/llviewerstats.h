@@ -332,5 +332,9 @@ void update_texture_time();
 
 extern U32Bytes gTotalTextureData;
 extern U32Bytes  gTotalObjectData;
+
+// <FS> Rekindled 2026-11-24: the frame rate over the last num_periods frame periods: the frames counted divided by the time they took. The viewer's own readers took the median (or the mean) of each frame's
+// own rate, which reads far above the real rate when frames come in short and long pairs (3.5 and 13 ms under vsync read 200 for a real 120).
+F64 rk_frame_rate(size_t num_periods = (size_t)-1);
 extern U32Bytes  gTotalTextureBytesPerBoostLevel[] ;
 #endif // LL_LLVIEWERSTATS_H

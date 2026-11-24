@@ -524,7 +524,7 @@ public:
             // <FS:Ansariel> FIRE-9746: Show FPS with DebugShowTime
             {
                 const U32 y_inc2 = 15;
-                addText(xpos, ypos, llformat("FPS: %3.1f", LLTrace::get_frame_recording().getPeriodMeanPerSec(LLStatViewer::FPS))); ypos += y_inc2;
+                addText(xpos, ypos, llformat("FPS: %3.1f", rk_frame_rate())); ypos += y_inc2;
             }
             // </FS:Ansariel>
 

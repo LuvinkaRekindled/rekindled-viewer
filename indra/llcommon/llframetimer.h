@@ -49,6 +49,14 @@ public:
         return sFrameTime;
     }
 
+    // <FS> Rekindled 2026-11-24: the frame start in the simulation clock, microseconds since epoch (the same scale as getTotalTime). sFrameTime and the frame delta are this clock: it
+    // advances by the average of the last few real frame deltas (never ahead of the real time, never more than 16 ms behind it), so frames that alternate between a short and a long step under
+    // vsync still step the animation, the physics and the object update evenly. RK_VK_SIMCLOCK=0 makes it the real clock again, RK_VK_SIMCLOCK=N averages N frames (default 4); it is also pulled gently toward the real time.
+    static U64 getSimTotalTime()
+    {
+        return sSimTotalTime ? sSimTotalTime : sTotalTime;
+    }
+
     // Return a low precision usec since epoch
     static U64 getTotalTime()
     {
@@ -122,6 +130,9 @@ protected:
 
     // Total microseconds since epoch.
     static U64 sTotalTime;
+
+    // <FS> the smoothed simulation clock, microseconds since epoch (0 before the first frame)
+    static U64 sSimTotalTime;
 
     // Seconds since epoch.
     static F64 sTotalSeconds;

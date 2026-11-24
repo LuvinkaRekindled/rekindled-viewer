@@ -1814,9 +1814,9 @@ void LLEnvironment::updateCloudScroll()
 {
     // This is a function of the environment rather than the sky, since it should
     // persist through sky transitions.
-    static LLTimer s_cloud_timer;
+    static LLFrameTimer s_cloud_timer; // <FS> was a wall-clock LLTimer: the frame timer follows the simulation clock (llframetimer.cpp)
 
-    F64 delta_t = s_cloud_timer.getElapsedTimeAndResetF64();
+    F64 delta_t = (F64)s_cloud_timer.getElapsedTimeAndResetF32();
 
     if (mCurrentEnvironment->getSky() && !mCloudScrollPaused)
     {

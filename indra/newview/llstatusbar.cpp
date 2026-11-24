@@ -624,7 +624,7 @@ void LLStatusBar::refresh()
         static auto       current_fps_color         = fps_uncapped_color;
 
         mFPSUpdateTimer.reset();
-        const auto fps = LLTrace::get_frame_recording().getPeriodMedianPerSec(LLStatViewer::FPS);
+        const auto fps = rk_frame_rate(); // <FS> frames over their time (the median of each frame's own rate read 200 for a real 120 when frames came in short and long pairs)
         mFPSText->setText(llformat("%.1f", fps));
 
         auto fps_color{ fps_uncapped_color };
@@ -644,14 +644,17 @@ void LLStatusBar::refresh()
                     vsync_freq = window->getRefreshRate();
                 }
 
+                // <FS> Rekindled 2026-11-24: the count is the real rate now (frames over time) and it moves a little more than the old median did, so the colour only goes to "below the limit"
+                // when the rate is more than 10 under the limit (it was 1)
+                static const F32 kBelowLimitMargin = 10.f;
                 if (limit_fps_enabled && max_fps > 0)
                 {
-                    fps_color = (fps >= max_fps - 1) ? fps_limit_reached_color : fps_below_limit_color;
+                    fps_color = (fps >= max_fps - kBelowLimitMargin) ? fps_limit_reached_color : fps_below_limit_color;
                 }
                 // use vsync if enabled and the freq is lower than the max_fps
                 if (vsync_enabled && vsync_freq > 0 && (!limit_fps_enabled || vsync_freq < (S32)max_fps))
                 {
-                    fps_color = (fps >= vsync_freq - 1) ? vsync_limit_reached_color : fps_below_limit_color;
+                    fps_color = (fps >= vsync_freq - kBelowLimitMargin) ? vsync_limit_reached_color : fps_below_limit_color;
                 }
             }
         }
