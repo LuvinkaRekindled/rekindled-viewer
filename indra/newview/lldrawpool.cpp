@@ -1528,6 +1528,18 @@ bool LLRenderPass::geometryEntry(const RKDrawBatch& params, const RKGeometryPass
         // J1 K4: the deferred bump pass: the tangent array and the bump image of the draw (made when the pass draws: LLDrawPoolBump::refreshBumpImage; here only the entry of it, a null one is the stand-in)
         e.mTangentOffset = vb->getOffset(LLVertexBuffer::TYPE_TANGENT);
         textures[4] = LLDrawPoolBump::bumpImageFor(params.mBump, params.mTexture.get(), false);
+        {
+            // <FS> Rekindled 2026-11-24 (RK_VK_DIAG "BumpRow"): the bump pass row of a draw is made: the state of the bump image it names at that moment (the first 300)
+            static U32 bump_row_logged = 0;
+            if (bump_row_logged < 300)
+            {
+                ++bump_row_logged;
+                const LLViewerTexture* bump_dbg = textures[4];
+                RK_DIAG("BumpRow") << "bump pass row for picture " << (params.mTexture.notNull() ? params.mTexture->getID().asString() : std::string("none")) << ", bump code " << (S32)params.mBump << ", bump image "
+                    << (bump_dbg ? (bump_dbg->hasImageTexture() ? "with an image, " : "WITHOUT an image, ") + std::to_string(bump_dbg->getWidth()) + "x" + std::to_string(bump_dbg->getHeight()) : std::string("none"))
+                    << ", tangent offset " << e.mTangentOffset << ", at " << LLTimer::getElapsedSeconds() << " s" << LL_ENDL;
+            }
+        }
     }
     if (arrays & RK_PASS_ARRAY_EMBOSS)
     {

@@ -6780,6 +6780,23 @@ void LLVolumeGeometryManager::rebuildGeom(LLSpatialGroup* group)
                         {
                             LLGLTFMaterial* gltf_mat = te->getGLTFRenderMaterial();
 
+                            // <FS> Rekindled 2026-11-24 (RK_VK_DIAG "BumpClass"): which pass a face with a legacy bump preset is put into each time its geometry is built, and the state of its picture at that moment: the first 300
+                            if (te->getBumpmap() && gltf_mat == nullptr)
+                            {
+                                static U32 bump_class_logged = 0;
+                                if (bump_class_logged < 300)
+                                {
+                                    ++bump_class_logged;
+                                    LLMaterial* mat_dbg = te->getMaterialParams().get();
+                                    const char* where = mat_dbg ? ((mat_dbg->getNormalID().notNull() || te->getBumpmap() < 18) ? (mat_dbg->getSpecularID().notNull() ? "normal and specular map pass" : "normal map pass")
+                                                                                                                                : (mat_dbg->getSpecularID().notNull() ? "specular map pass" : "simple pass")) : "bump pass";
+                                    LLViewerTexture* diffuse_dbg = facep->getTexture();
+                                    RK_DIAG("BumpClass") << "face of " << (vobj ? vobj->getID().asString() : std::string("?")) << ": bump code " << (S32)te->getBumpmap() << ", legacy material " << (mat_dbg ? "yes" : "no")
+                                        << ", goes to the " << where << ", picture " << (diffuse_dbg ? diffuse_dbg->getID().asString() : std::string("none")) << (diffuse_dbg && diffuse_dbg->hasImageTexture() ? " (has a texture)" : " (no texture yet)")
+                                        << ", rebuild volume " << (drawablep->isState(LLDrawable::REBUILD_VOLUME) ? 1 : 0) << ", at " << LLTimer::getElapsedSeconds() << " s" << LL_ENDL;
+                                }
+                            }
+
                             if (gltf_mat != nullptr || (te->getMaterialParams().notNull()))
                             {
                                 if (gltf_mat != nullptr)

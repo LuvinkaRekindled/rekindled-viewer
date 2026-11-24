@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "lldrawpoolbump.h"
+#include "rkdiag.h"
 
 #include "llstl.h"
 #include "llviewercontrol.h"
@@ -632,6 +633,16 @@ void LLBumpImageList::addTextureStats(U8 bump, const LLUUID& base_image_id, F32 
 }
 
 
+// <FS> Rekindled 2026-11-24: does the picture a bump map was made from still have a texture (it is in the texture list and resident)? The test below for a map in use was "bound in the last 10 s", which the GL draws
+// kept true by binding it every frame. The Vulkan draws read a texture through its cached handle and bind nothing, so a bump map was bound once, when it was generated, and 10 s later it was destroyed and made
+// again (BumpGen log: the same 512x512 source every 10 s to the second; the map blinks back to blank until it is rebuilt; selecting the object rebuilds it). A map now lives as long as its source has a texture:
+// the texture list throws that out when nothing uses it, and the map goes with it.
+static bool bump_source_alive(const LLUUID& src_id)
+{
+    LLViewerFetchedTexture* src = LLViewerTextureManager::findFetchedTexture(src_id, TEX_LIST_STANDARD);
+    return src && src->hasImageTexture();
+}
+
 void LLBumpImageList::updateImages()
 {
     llassert(LLCoros::on_main_thread_main_coro()); // This code is not thread safe
@@ -644,7 +655,7 @@ void LLBumpImageList::updateImages()
             bool destroy = true;
             if( image->hasImageTexture())
             {
-                if( image->getBoundRecently() )
+                if( image->getBoundRecently() || bump_source_alive(iter->first) )
                 {
                     destroy = false;
                 }
@@ -673,7 +684,7 @@ void LLBumpImageList::updateImages()
             bool destroy = true;
             if( image->hasImageTexture())
             {
-                if( image->getBoundRecently() )
+                if( image->getBoundRecently() || bump_source_alive(curiter->first) )
                 {
                     destroy = false;
                 }
@@ -852,6 +863,10 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
     {
         //convert to normal map
         LL_PROFILE_ZONE_NAMED("bil - create normal map");
+        // <FS> Rekindled 2026-11-24 (RK_VK_DIAG "BumpGen"): every generation of a normal map from a picture (bump Brightness / Darkness): which texture, the size of the source and of the map it replaces, and when. A map that
+        // works for a second and then goes blank is a second generation (a larger source arrived), or the same one over and over.
+        RK_DIAG("BumpGen") << "normal map generation for " << src_id << ", bump code " << (S32)bump_code << ", source " << src->getWidth() << "x" << src->getHeight() << ", map until now " << bump->getWidth() << "x" << bump->getHeight()
+                           << ", at " << LLTimer::getElapsedSeconds() << " s" << LL_ENDL;
 
         bump->setExplicitFormat(TexelFormat::RGBA8, PixelFormat::RGBA);
 
@@ -931,6 +946,39 @@ void LLBumpImageList::onSourceUpdated(LLViewerTexture* src, EBumpEffect bump_cod
         gRender.getTexUnit(0)->bind(bump);
         gRender.generateMipmap(bump->getImageTexture()->getTexName());
         gRender.getTexUnit(0)->bindWhite();
+        RK_DIAG("BumpGen") << "normal map for " << src_id << " drawn and mipmapped, now " << bump->getWidth() << "x" << bump->getHeight() << " (texture name " << bump->getImageTexture()->getTexName() << ")" << LL_ENDL;
+
+        // <FS> Rekindled 2026-11-24: the faces that use this picture with this bump are made again. A face is built once into a cached draw record, and the bump pass builds its row with the entry of the map, which is the empty
+        // 1x1 placeholder until the first pass that draws it makes the map (this function, a few frames later): the old pass bound the map on every draw, the cached row keeps the state it was built in. A prim with a
+        // bump preset therefore showed no bump until something rebuilt it (selecting it, walking close enough for another level of detail). Once per generation: a map is only made again when its source changes size.
+        {
+            const LLViewerTexture::ll_face_list_t* faces = src->getFaceList(LLRender::DIFFUSE_MAP);
+            const S32 face_count = src->getNumFaces(LLRender::DIFFUSE_MAP);
+            S32 marked = 0;
+            for (S32 i = 0; faces && i < face_count && i < (S32)faces->size(); ++i)
+            {
+                LLFace* face = (*faces)[i];
+                LLDrawable* drawable = face ? face->getDrawable() : nullptr;
+                if (!drawable || drawable->isDead())
+                {
+                    continue;
+                }
+                const LLTextureEntry* te = face->getTextureEntry();
+                if (!te || te->getBumpmap() != (U8)bump_code)
+                {
+                    continue;
+                }
+                gPipeline.markRebuild(drawable, LLDrawable::REBUILD_ALL);
+                // the group's draw records are rebuilt by LLVolumeGeometryManager::rebuildGeom, which runs for a dirty group in the rebuild queue (the drawable flag alone does not reach it)
+                if (LLSpatialGroup* group = drawable->getSpatialGroup())
+                {
+                    group->dirtyGeom();
+                    gPipeline.markRebuild(group);
+                }
+                ++marked;
+            }
+            RK_DIAG("BumpGen") << "normal map for " << src_id << ": " << marked << " of " << face_count << " faces using the picture marked for rebuild" << LL_ENDL;
+        }
     }
 
     iter->second = bump; // derefs (and deletes) old image
