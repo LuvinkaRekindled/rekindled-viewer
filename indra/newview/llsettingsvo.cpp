@@ -38,6 +38,7 @@
 #include "v3colorutil.h"
 
 #include "rkshaderprogram.h"
+#include "rkdiag.h"
 #include "llviewershadermgr.h"
 
 #include "llagent.h"
@@ -822,9 +823,47 @@ void LLSettingsVOSky::applySpecial(void *ptarget, bool force)
 
     F32 probe_ambiance = getReflectionProbeAmbiance();
 
+    // <FS> Rekindled 2026-11-23: what the three branches below hand to the shaders (for the RK_VK_DIAG "SkyDiag" line at the end)
+    const char* diag_branch = "irradiance pass";
+    F32 diag_hdr = 1.f;
+    LLColor3 diag_ambient = ambient;
+
     if (irradiance_pass)
     { // during an irradiance map update, disable ambient lighting (direct lighting only) and desaturate sky color (avoid tinting the world blue)
-        shader->uniform3fv(LLShaderMgr::AMBIENT, LLVector3::zero.mV);
+        // <FS> Rekindled 2026-11-23, a test: RK_VK_AMBPASS_KEEP=1 leaves the ambient colour as it is in this pass. The sky takes its light from that colour as well, so a pass with it zeroed captures a sky
+        // that is nearly black at a low sun (the irradiance maps came out about three times dimmer than the radiance they average)
+        static const bool keep_ambient = std::getenv("RK_VK_AMBPASS_KEEP") != nullptr;
+        if (keep_ambient)
+        {
+            shader->uniform3fv(LLShaderMgr::AMBIENT, LLVector3(ambient.mV));
+            diag_branch = "ambient capture pass (ambient KEPT by RK_VK_AMBPASS_KEEP, hdr scale not written)";
+            diag_ambient = ambient;
+        }
+        else
+        {
+            shader->uniform3fv(LLShaderMgr::AMBIENT, LLVector3::zero.mV);
+            diag_branch = "ambient capture pass (ambient zero, hdr scale not written)";
+            diag_ambient = LLColor3(0.f, 0.f, 0.f);
+        }
+        diag_hdr = -1.f;
+        // <FS> Rekindled 2026-11-23, a test: RK_VK_AMBPASS_HDR=1 writes the sky's HDR scale in this pass as the main view does (the irradiance maps came out at about 1 / 2.449 of the radiance they average even with
+        // the ambient kept). Earlier it changed nothing because the ambient was zero, so the sky was black and any scale of it too.
+        static const bool write_hdr = std::getenv("RK_VK_AMBPASS_HDR") != nullptr;
+        if (write_hdr)
+        {
+            F32 cube_hdr = 1.f;
+            if (psky->getReflectionProbeAmbiance() != 0.f)
+            {
+                cube_hdr = sqrtf(g) * 2.0f;
+            }
+            else if (psky->canAutoAdjust() && should_auto_adjust)
+            {
+                cube_hdr = auto_adjust_hdr_scale;
+            }
+            shader->uniform1f(LLShaderMgr::SKY_HDR_SCALE, cube_hdr);
+            diag_hdr = cube_hdr;
+            diag_branch = "ambient capture pass (RK_VK_AMBPASS_HDR: hdr scale written as the main view's)";
+        }
     }
     else
     {
@@ -832,6 +871,8 @@ void LLSettingsVOSky::applySpecial(void *ptarget, bool force)
         {
             shader->uniform3fv(LLShaderMgr::AMBIENT, LLVector3(ambient.mV));
             shader->uniform1f(LLShaderMgr::SKY_HDR_SCALE, sqrtf(g)*2.0f); // use a modifier here so 1.0 maps to the "most desirable" default and the maximum value doesn't go off the rails
+            diag_branch = "pbr (probe ambiance set)";
+            diag_hdr = sqrtf(g) * 2.0f;
 
             // Low quality setting
             if (!LLPipeline::sReflectionProbesEnabled)
@@ -850,15 +891,46 @@ void LLSettingsVOSky::applySpecial(void *ptarget, bool force)
             shader->uniform3fv(LLShaderMgr::BLUE_HORIZON, blue_horizon.mV);
 
             probe_ambiance = sAutoAdjustProbeAmbiance;
+            diag_branch = "legacy sky auto-adjusted";
+            diag_hdr = auto_adjust_hdr_scale;
+            diag_ambient = ambient * auto_adjust_ambient_scale;
         }
         else
         {
             shader->uniform1f(LLShaderMgr::SKY_HDR_SCALE, 1.f);
             shader->uniform3fv(LLShaderMgr::AMBIENT, LLVector3(ambient.mV));
+            diag_branch = "legacy sky as it is";
         }
     }
 
     shader->uniform1f(LLShaderMgr::REFLECTION_PROBE_AMBIANCE, probe_ambiance);
+
+    // <FS> Rekindled 2026-11-23: RK_VK_DIAG sky line, once at the start and whenever any of the numbers changes (applySpecial runs often, so the line is compared to the last one)
+    if (rk_diag_on())
+    {
+        // two kinds of call: the main view and the probes' ambient capture pass (each compared to its own last line)
+        static std::string last_lines[2];
+        static F64 last_times[2] = { -100.0, -100.0 };
+        std::string& last_line = last_lines[irradiance_pass ? 1 : 0];
+        F64& last_time = last_times[irradiance_pass ? 1 : 0];
+        std::string line = llformat(
+            "sky '%s': %s, classic %d, hdr %d, probes %d | probe ambiance raw %.3f used %.3f, hdr scale %.3f, gamma %.3f, ambient %.3f %.3f %.3f (total %.3f %.3f %.3f), "
+            "sunlight %.3f %.3f %.3f x %.2f, moonlight %.3f %.3f %.3f, ambient scale %.2f, tonemap mix %.2f, sun up %d, scene light %.2f",
+            psky->getName().c_str(), diag_branch, (int)classic_mode, (int)(bool)hdr, (int)LLPipeline::sReflectionProbesEnabled,
+            psky->getReflectionProbeAmbiance(), probe_ambiance, diag_hdr, g,
+            diag_ambient.mV[0], diag_ambient.mV[1], diag_ambient.mV[2], ambient.mV[0], ambient.mV[1], ambient.mV[2],
+            sun_light_color.mV[0], sun_light_color.mV[1], sun_light_color.mV[2], (F32)(hdr ? sunlight_hdr_scale : sunlight_scale),
+            moon_light_color.mV[0], moon_light_color.mV[1], moon_light_color.mV[2], (F32)ambient_scale, (F32)tonemap_mix_setting,
+            (int)getIsSunUp(), mSceneLightStrength);
+        // a moving day cycle changes the numbers all the time: at most one line a second, and the last line is only replaced when one is written (so the final state always arrives)
+        const F64 now = LLTimer::getElapsedSeconds();
+        if (line != last_line && now - last_time >= 1.0)
+        {
+            last_line = line;
+            last_time = now;
+            RK_DIAG("SkyDiag") << line << LL_ENDL;
+        }
+    }
 
     shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, getIsSunUp() ? 1 : 0);
     shader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, getSunMoonGlowFactor());

@@ -7,7 +7,8 @@ layout(location = 0) out vec2 vary_texcoord0;
 
 void main()
 {
-    gl_Position = vec4(position.x * 2.0 - 1.0, position.y * 2.0 - 1.0, -1.0, 1.0);
-    RK_CLIP_Z(gl_Position);      // (GL clip space to Vulkan's, as the old programs get it appended)
+    // z 0: a quad over the whole target at a depth inside Vulkan's clip volume (0 to w). The old text put -1 here and remapped it with RK_CLIP_Z; since the reversed depth that macro takes the z as it is, and -1 is
+    // outside the volume: the quad was clipped away and no normal map was drawn (found 2026-11-24 with the same defect in radiance.vert)
+    gl_Position = vec4(position.x * 2.0 - 1.0, position.y * 2.0 - 1.0, 0.0, 1.0);
     vary_texcoord0 = texcoord0;
 }

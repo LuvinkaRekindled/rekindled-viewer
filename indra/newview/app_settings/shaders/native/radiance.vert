@@ -13,6 +13,8 @@ layout(location = 0) out vec3 vary_dir;
 
 void main()
 {
-    gl_Position = vec4(position, 1.0);
+    // the quad's z is -1 (it is the forward part of the direction): inside OpenGL's clip volume (-w to w) but outside Vulkan's (0 to w), where the whole quad was clipped away and every copy of the pass target
+    // took what the target held before: the picture of the last captured face, in all six faces of every probe map (the cube dump of 2026-11-24)
+    gl_Position = vec4(position.xy, 0.0, 1.0);
     vary_dir = vec3(modelview_matrix * vec4(position, 1.0)).xyz;
 }

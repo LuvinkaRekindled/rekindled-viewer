@@ -139,6 +139,132 @@ void main()
         sunlit *= 1.35;
     }
 
+    // live views of the probes' ambient light (rt-debug.txt resolve_dbg=N, no restart; values above 1 are kept: 4.0 is white, 1.0 a quarter grey, so the 3 times of the probe ambiance shows):
+    // 15 the ambient light of the probes (irradiance maps x ambiance, what the lighting gets before the occlusion), 16 the same after the occlusion adjust (what the lighting uses),
+    // 17 the sky's own ambient colour (amblit, the part the probes replace), 18 the ambient light of the probes relative to the sky's (probe / sky, 4.0 = white)
+    // 19..23: the reflection term of a legacy surface (the gloss environment): 19 what the probes' radiance gives it at its gloss (the sample the lighting takes, 0 to 10, x 0.25), 20 what apply_gloss_env adds to the colour
+    // (after the specular colour, the fresnel and the energy balance, x 2, on a grey of half the albedo), 21 the specular colour (linear), 22 the gloss (the specular's alpha), 23 the environment intensity (the normal target's blue)
+    // 24, 25, 26: the default probe's RADIANCE cube toward the surface normal at the blurriest mip, at mip 2 and at mip 0 (x 0.25): to set beside view 15, which holds the irradiance map (x the ambiance). The irradiance map is
+    // an average of the radiance over the hemisphere, so at the same direction the two should be of about the same size once the ambiance is divided out
+    // 27, 28: the spare layer 257 (the default probe's AMBIANCE pass cube kept by RK_VK_AMBPASS_COPY=1) toward the surface normal at mip 0 and at the blurriest mip (x 0.25): the same direction as 26 and 24, so the two
+    // passes can be compared as numbers
+    // 29: the gloss environment after the hero probe's blend (x 0.25, what the lighting would take with the planar mirror's view mixed in), 30: how much of it the hero probe takes (the weight w, 0 to 1)
+    // 31, 32: the nearest probe's own maps toward the surface normal (no mixing, no parallax): 31 its irradiance map (x 3, the ambiance, then x 0.25), 32 its radiance map at the blurriest mip (x 0.25)
+    // 33, 34, 35: view 31 with the direction's z (up), y or x flipped: is the cube read upside down or mirrored?
+    // 36 / 37: the default probe's radiance (mip 3) straight up / straight down in the cube (a constant colour over the screen: up should be the sky, down the ground), 38 / 39: the same for the nearest probe's irradiance (x 3)
+    // 40 .. 45 (needs RK_VK_AMBPASS_COPY=1): the cube's mip 3 straight up, toward +x (the horizon) and straight down: 40 / 41 / 42 the AMBIANCE pass's cube of the default probe (the layer the irradiance maps are made from), 43 / 44 / 45 its RADIANCE pass cube
+    // 46 / 47: all six cube directions in six screen columns, left to right +x, -x, +y, -y, +z, -z: 46 the default probe's radiance (mip 3), 47 the nearest probe's irradiance (x 3)
+    if (resolve_dbg >= 15 && resolve_dbg <= 47)
+    {
+        probe_gather(pos);
+        const vec3 probe_amb = probe_ambient(pos, norm, amblit);
+        vec3 shown = probe_amb;
+        float scale = 0.25;
+        if (resolve_dbg == 16) { shown = adjust_irradiance(probe_amb, ambocc); }
+        if (resolve_dbg == 17) { shown = amblit; }
+        if (resolve_dbg == 18) { shown = probe_amb / max(amblit, vec3(1.0e-4)); }
+        if (resolve_dbg >= 19)
+        {
+            const vec4 dbg_spec = vec4(srgb_to_linear(spec.rgb), spec.a);
+            const vec3 dbg_reflect = normalize(reflect(pos, norm));
+            const vec3 dbg_glossenv = clamp(probe_reflection(pos, dbg_reflect, (1.0 - spec.a) * max_probe_lod), vec3(0.0), vec3(10.0));
+            if (resolve_dbg == 19) { shown = dbg_glossenv; }
+            if (resolve_dbg == 20)
+            {
+                const vec3 base = srgb_to_linear(albedo.rgb) * 0.5;
+                vec3 lit = base;
+                apply_gloss_env(lit, dbg_glossenv, dbg_spec, pos, norm);
+                shown = lit - base;
+                scale = 2.0;
+            }
+            if (resolve_dbg == 21) { shown = dbg_spec.rgb; scale = 1.0; }
+            if (resolve_dbg == 22) { shown = vec3(dbg_spec.a); scale = 1.0; }
+            if (resolve_dbg == 23) { shown = vec3(normal_info.b); scale = 1.0; }
+#ifdef HERO_PROBES
+            if (resolve_dbg == 29) { shown = probe_hero(dbg_glossenv, pos, norm, spec.a); }
+            if (resolve_dbg == 30)
+            {
+                // mix(0, tex, w) and mix(1, tex, w) differ by 1 - w
+                shown = vec3(1.0) - (probe_hero(vec3(1.0), pos, norm, spec.a) - probe_hero(vec3(0.0), pos, norm, spec.a));
+                scale = 1.0;
+            }
+#endif
+        }
+        if (resolve_dbg == 31 || resolve_dbg == 32)
+        {
+            const int own = probe_count > 0 ? probe_list[0] : 0;
+            if (resolve_dbg == 31)
+            {
+                shown = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_irradianceProbes))], vec4(env_mat * norm, float(refIndex[own].x)), 0.0).rgb * 3.0;
+            }
+            else
+            {
+                shown = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_reflectionProbes))], vec4(env_mat * norm, float(refIndex[own].x)), max_probe_lod).rgb;
+            }
+        }
+        if (resolve_dbg == 46 || resolve_dbg == 47)
+        {
+            const int col6 = clamp(int(tc.x * 6.0), 0, 5);
+            const float sgn = (col6 & 1) == 0 ? 1.0 : -1.0;
+            const vec3 dir6 = col6 < 2 ? vec3(sgn, 0.0, 0.0) : (col6 < 4 ? vec3(0.0, sgn, 0.0) : vec3(0.0, 0.0, sgn));
+            const int own6 = probe_count > 0 ? probe_list[0] : 0;
+            if (resolve_dbg == 46)
+            {
+                shown = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_reflectionProbes))], vec4(dir6, float(refIndex[0].x)), 3.0).rgb;
+            }
+            else
+            {
+                shown = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_irradianceProbes))], vec4(dir6, float(refIndex[own6].x)), 0.0).rgb * 3.0;
+            }
+            // a marker strip along the bottom of the screen (tc.y < 0.06 or > 0.94, whichever side the screen puts the top on): one colour per column, so the six columns can be seen whatever the cube returns
+            if (tc.y < 0.06 || tc.y > 0.94)
+            {
+                const vec3 marker[6] = vec3[6](vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, 1.0), vec3(0.0, 1.0, 1.0), vec3(1.0, 0.0, 1.0), vec3(1.0, 1.0, 0.0));
+                shown = marker[col6] * 4.0;
+            }
+        }
+        if (resolve_dbg >= 40 && resolve_dbg <= 45)
+        {
+            const int k = (resolve_dbg - 40) % 3;
+            const vec3 dir_k = k == 0 ? vec3(0.0, 0.0, 1.0) : (k == 1 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 0.0, -1.0));
+            const float layer = resolve_dbg <= 42 ? 257.0 : float(refIndex[0].x);
+            shown = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_reflectionProbes))], vec4(dir_k, layer), 3.0).rgb;
+        }
+        if (resolve_dbg >= 36 && resolve_dbg <= 39)
+        {
+            const int own_u = probe_count > 0 ? probe_list[0] : 0;
+            const vec3 dir_ud = (resolve_dbg & 1) == 0 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 0.0, -1.0);
+            if (resolve_dbg <= 37)
+            {
+                shown = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_reflectionProbes))], vec4(dir_ud, float(refIndex[0].x)), 3.0).rgb;
+            }
+            else
+            {
+                shown = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_irradianceProbes))], vec4(dir_ud, float(refIndex[own_u].x)), 0.0).rgb * 3.0;
+            }
+        }
+        if (resolve_dbg >= 33 && resolve_dbg <= 35)
+        {
+            const int own_f = probe_count > 0 ? probe_list[0] : 0;
+            vec3 d = env_mat * norm;
+            if (resolve_dbg == 33) { d.z = -d.z; }
+            else if (resolve_dbg == 34) { d.y = -d.y; }
+            else { d.x = -d.x; }
+            shown = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_irradianceProbes))], vec4(d, float(refIndex[own_f].x)), 0.0).rgb * 3.0;
+        }
+        if (resolve_dbg >= 24 && resolve_dbg <= 26)
+        {
+            const float cube_lod = resolve_dbg == 24 ? max_probe_lod : (resolve_dbg == 25 ? 2.0 : 0.0);
+            shown = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_reflectionProbes))], vec4(env_mat * norm, float(refIndex[0].x)), cube_lod).rgb;
+        }
+        if (resolve_dbg == 27 || resolve_dbg == 28)
+        {
+            shown = textureLod(rk_tblcubearray[nonuniformEXT(RK_HM(rk_ti_cubearray_reflectionProbes))], vec4(env_mat * norm, 257.0), resolve_dbg == 28 ? max_probe_lod : 0.0).rgb;
+        }
+        frag_color = vec4(shown * scale, 0.0);
+        return;
+    }
+
 #if RESOLVE_DBG == 7
     frag_color = vec4(normalize(light_dir) * 0.5 + 0.5, 0.0);           // the light direction (eye space)
     return;
@@ -227,10 +353,12 @@ void main()
         const vec3 diffuse = srgb_to_linear(albedo.rgb);
         vec4 specular = vec4(srgb_to_linear(spec.rgb), spec.a);
         const float glossiness = specular.a;
-        const float env = normal_info.b;
+        // TEST 2026-11-24, live ablation (rt-debug.txt resolve_dbg = 100 + mask): 1 no gloss environment, 2 no sun specular lobe, 4 no screen space / traced reflection, 8 no hero probe, 16 no legacy environment, 32 the sky's ambient instead of the probes'
+        const int abl = resolve_dbg >= 100 ? resolve_dbg - 100 : 0;
+        const float env = (abl & 16) != 0 ? 0.0 : normal_info.b;
 
         vec3 irradiance = amblit;
-        if (classic_mode == 0)
+        if (classic_mode == 0 && (abl & 32) == 0)
         {
             irradiance = probe_ambient(pos, norm, amblit);
         }
@@ -245,14 +373,14 @@ void main()
             legacyenv = probe_reflection(pos, reflect_dir, 0.0);
         }
 #ifdef SSR
-        if (cube_snapshot != 1)
+        if (cube_snapshot != 1 && (abl & 4) == 0)
         {
             const vec4 ssr = ssr_opaque(tc, pos, norm, glossiness);
             glossenv = mix(glossenv, ssr.rgb, ssr.a);
             legacyenv = mix(legacyenv, ssr.rgb, ssr.a);
         }
 #endif
-        if (rt_glossy_reflections != 0)
+        if (rt_glossy_reflections != 0 && (abl & 4) == 0)
         {
             const vec4 rt_refl = textureLod(G_TAP(rk_ti_rtReflMap), tc, 0.0);
             if (rt_glossy_reflections >= 3)
@@ -266,10 +394,13 @@ void main()
             }
         }
 #ifdef HERO_PROBES
-        glossenv = probe_hero(glossenv, pos, norm, glossiness);       // (after the traced reflection: the glass of a mirror shows the planar view)
-        if (env > 0.0)
+        if ((abl & 8) == 0)
         {
-            legacyenv = probe_hero(legacyenv, pos, norm, 1.0);
+            glossenv = probe_hero(glossenv, pos, norm, glossiness);       // (after the traced reflection: the glass of a mirror shows the planar view)
+            if (env > 0.0)
+            {
+                legacyenv = probe_hero(legacyenv, pos, norm, 1.0);
+            }
         }
 #endif
         glossenv = clamp(glossenv, vec3(0.0), vec3(10.0));
@@ -300,7 +431,7 @@ void main()
             const float nl = clamp(dot(norm, l), eps, 1.0);
             const float nv = clamp(dot(norm, v), eps, 1.0);
             const float vh = clamp(dot(v, h), eps, 1.0);
-            if (nl > 0.0 && nh > 0.0)
+            if (nl > 0.0 && nh > 0.0 && (abl & 2) == 0)
             {
                 const float lit = min(nl * 6.0, 1.0);
                 const float fres = pow(1.0 - vh, 5.0) * 0.4 + 0.5;
@@ -309,7 +440,10 @@ void main()
                 const float lobe = scol * fres * textureLod(G_TAP(rk_ti_lightFunc), vec2(nh, glossiness), 0.0).r * gt / (nh * nl);
                 color += lit * lobe * sun_light * specular.rgb;
             }
-            apply_gloss_env(color, glossenv, specular, pos, norm);
+            if ((abl & 1) == 0)
+            {
+                apply_gloss_env(color, glossenv, specular, pos, norm);
+            }
         }
 
         color = mix(color, diffuse, albedo.a);

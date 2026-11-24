@@ -2524,7 +2524,24 @@ static void copy_to_texture(RKVkFormat::Target tg, S32 level, S32 xoffset, S32 y
     if (!t || !t->mImage.valid() || !src || !RKVkBridge::inFrame())
     {
         ++((!t || !t->mImage.valid()) ? sCopyDropTex : !src ? sCopyDropSrc : sCopyDropFrame);
+        // <FS> Rekindled 2026-11-24, a test (RK_VK_CUBEDUMP set): a copy that is refused, the first 100
+        static const bool copy_log_on = getenv("RK_VK_CUBEDUMP") != nullptr;
+        static int copy_log_count = 0;
+        if (copy_log_on && copy_log_count < 100)
+        {
+            ++copy_log_count;
+            LL_INFOS("VkGen") << "copy refused: " << ((!t || !t->mImage.valid()) ? "no texture image" : !src ? "no source image" : "not in a frame") << " (zoffset " << zoffset << ", level " << level << ", source " << source_fbo << ")" << LL_ENDL;
+        }
         return;
+    }
+    {
+        static const bool copy_ok_on = getenv("RK_VK_CUBEDUMP") != nullptr;
+        static int copy_ok_count = 0;
+        if (copy_ok_on && width <= 64 && zoffset >= 0 && copy_ok_count < 60 && t->mDim == RKVkFormat::DIM_CUBE_ARRAY)
+        {
+            ++copy_ok_count;
+            LL_INFOS("VkGen") << "copy ok: layer " << zoffset << ", level " << level << ", " << width << "x" << height << " from source " << source_fbo << LL_ENDL;
+        }
     }
     if (level > 0 && !grow_levels(*t))
     {
@@ -3094,8 +3111,26 @@ void draw_arrays(unsigned topo, int first, int count)
     vi.mBindings.clear();
     vi.mAttributes.clear();
     used.clear();
+    // <FS> Rekindled 2026-11-24, a test (RK_VK_CUBEDUMP set): what happens to the draws of the probe filter programs ("Radiance Gen Shader", "Irradiance Gen Shader"): the first 200, done or refused and why
+    static const bool gen_log_on = getenv("RK_VK_CUBEDUMP") != nullptr;
+    static int gen_log_count = 0;
+    auto gen_log = [&](const char* what)
+    {
+        if (!gen_log_on || gen_log_count >= 200)
+        {
+            return;
+        }
+        auto* gp = Renderer::instance().getProgram();
+        if (gp && gp->getName().find("Gen Shader") != std::string::npos)
+        {
+            ++gen_log_count;
+            LL_INFOS("VkGen") << "draw " << gp->getName() << ": " << what << " (count " << count << ", not in frame " << sStats.mNotInFrame << ", no program " << sStats.mNoProgram << ", no target " << sStats.mNoTarget
+                              << ", no vertex input " << sStats.mNoVertexInput << ", renderer refused " << sStats.mRendererRefused << ", target " << Renderer::instance().describeTarget() << ")" << LL_ENDL;
+        }
+    };
     if (count <= 0 || !prepare_draw(vi, used))
     {
+        gen_log("prepare_draw refused");
         return;
     }
     Renderer& r = Renderer::instance();
@@ -3105,7 +3140,9 @@ void draw_arrays(unsigned topo, int first, int count)
     r.setVertexInput(vi);
     r.setTopology(topology((RKVkFormat::Topology)topo));
     RKVkBridge::gLastLap = 211;
-    if (r.draw((U32)count, (U32)first))
+    const bool gen_drawn = r.draw((U32)count, (U32)first);
+    gen_log(gen_drawn ? "drawn" : "renderer refused");
+    if (gen_drawn)
     {
         if (RKVkBridge::gPhaseTiming)
         {
@@ -14454,9 +14491,39 @@ namespace
 bool decode_vk_texels(VkFormat f, const std::vector<U8>& texels, size_t pixels, std::vector<float>& out)
 {
     U32 comps = 0;
-    enum { B8, H16, F32 } kind = B8;
+    enum { B8, H16, F32, P11 } kind = B8;
     switch (f)
     {
+    // <FS> Rekindled 2026-11-24: the reflection probes' format (B10G11R11, three unsigned floats in one 32 bit word: red 6 bit mantissa and 5 bit exponent in bits 0-10, green the same in bits 11-21, blue 5 bit mantissa and 5 bit exponent in bits 22-31).
+    // It was missing, so a readback of a probe answered with zeros.
+    case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+    {
+        if (texels.size() < pixels * 4)
+        {
+            return false;
+        }
+        out.assign(pixels * 4, 0.f);
+        auto ufloat = [](U32 bits, U32 mant_bits) -> float
+        {
+            const U32 mant_mask = (1u << mant_bits) - 1u;
+            const U32 mant = bits & mant_mask;
+            const U32 expo = bits >> mant_bits;
+            if (expo == 0) return (float)mant / (float)(1u << mant_bits) * (1.f / 16384.f);
+            if (expo == 31) return mant == 0 ? 65504.f : 0.f;        // (infinity as the largest value, a NaN as 0)
+            return (1.f + (float)mant / (float)(1u << mant_bits)) * ldexpf(1.f, (int)expo - 15);
+        };
+        for (size_t i = 0; i < pixels; ++i)
+        {
+            U32 w;
+            memcpy(&w, &texels[i * 4], 4);
+            float* o = &out[i * 4];
+            o[0] = ufloat(w & 0x7FFu, 6);
+            o[1] = ufloat((w >> 11) & 0x7FFu, 6);
+            o[2] = ufloat((w >> 22) & 0x3FFu, 5);
+            o[3] = 1.f;
+        }
+        return true;
+    }
     case VK_FORMAT_R8G8B8A8_UNORM: case VK_FORMAT_R8G8B8A8_SRGB: comps = 4; kind = B8; break;
     case VK_FORMAT_R8G8_UNORM: comps = 2; kind = B8; break;
     case VK_FORMAT_R8_UNORM: comps = 1; kind = B8; break;

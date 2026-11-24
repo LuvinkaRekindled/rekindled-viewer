@@ -29,6 +29,12 @@
 #include "llreflectionmapmanager.h"
 
 #include <vector>
+#include <algorithm>
+#include "rkdiag.h"
+#include "llimage.h"
+#include "llimagepng.h"
+#include "llfile.h"
+#include "lldir.h"
 
 #include "llviewercamera.h"
 #include "llspatialpartition.h"
@@ -904,6 +910,13 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                 mTexture->bind(0);
                 //glCopyTexSubImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, mip, 0, 0, probe->mCubeIndex * 6 + face, 0, 0, res, res);
                 gRender.copyTexSubImage3D(mTexture->getTextureHandle(), TextureTarget::CubeArray, mip, 0, 0, sourceIdx * 6 + face, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                // <FS> Rekindled 2026-11-23, a test: RK_VK_AMBPASS_COPY=1 keeps the default probe's ambiance pass cube in the spare layer after the scratch one (the radiance pass overwrites the scratch one right away);
+                // resolve.frag views 27 to 29 read layer 257 (the probe count 256 plus one) to show what the ambiance pass captured
+                static const bool copy_amb = std::getenv("RK_VK_AMBPASS_COPY") != nullptr;
+                if (copy_amb && !isRadiancePass() && probe == mUpdatingProbe && probe == mDefaultProbe)
+                {
+                    gRender.copyTexSubImage3D(mTexture->getTextureHandle(), TextureTarget::CubeArray, mip, 0, 0, (sourceIdx + 1) * 6 + face, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                }
                 //if (i == 0)
                 //{
                     //glCopyTexSubImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, mip, 0, 0, probe->mCubeIndex * 6 + face, 0, 0, res, res);
@@ -921,7 +934,9 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
     if (face == 5)
     {
-        RenderPassScope pass(mMipChain[0]);
+        // <FS> Rekindled 2026-11-24: one pass per cube face below (pass.begin ... pass.end around the draw and its copy), as the mip loop above does: with all six draws and six copies in ONE pass every layer of a probe
+        // came out as the picture of the last face (the dump of 2026-11-24: six identical faces in every radiance and irradiance map, the scratch layer's six different)
+        RenderPassScope pass;
         static LLStaticHashedString sSourceIdx("sourceIdx");
 
         if (isRadiancePass())
@@ -956,17 +971,19 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
                     F32 mat[16];
                     frame.getOpenGLRotation(mat);
+                    pass.begin(mMipChain[0]);
+                    gRender.setViewport(0, 0, res, res);
                     RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, mat);
 
                     mVertexBuffer->drawArrays(gRender.TRIANGLE_STRIP, 0, 4);
 
                     gRender.copyTexSubImage3D(mTexture->getTextureHandle(), TextureTarget::CubeArray, i, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
+                    pass.end();
                 }
 
                 if (i != mMipChain.size() - 1)
                 {
                     res /= 2;
-                    gRender.setViewport(0, 0, res, res);
                 }
             }
 
@@ -997,7 +1014,6 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
             {
                 int i = start_mip;
                 LL_PROFILE_GPU_ZONE("probe irradiance gen");
-                gRender.setViewport(0, 0, mMipChain[i].getWidth(), mMipChain[i].getHeight());
                 for (int cf = 0; cf < 6; ++cf)
                 { // for each cube face
                     LLCoordFrame frame;
@@ -1005,6 +1021,8 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
                     F32 mat[16];
                     frame.getOpenGLRotation(mat);
+                    pass.begin(mMipChain[0]);
+                    gRender.setViewport(0, 0, mMipChain[i].getWidth(), mMipChain[i].getHeight());
                     RKRenderMatrix::load(RKRenderMatrix::Kind::Modelview, mat);
 
                     mVertexBuffer->drawArrays(gRender.TRIANGLE_STRIP, 0, 4);
@@ -1013,6 +1031,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                     mIrradianceMaps->bind(channel);
                     gRender.copyTexSubImage3D(mIrradianceMaps->getTextureHandle(), TextureTarget::CubeArray, i - start_mip, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res, LLRenderTarget::getCurrentBoundTarget());
                     mTexture->bind(channel);
+                    pass.end();
                 }
             }
 
@@ -1294,6 +1313,130 @@ void LLReflectionMapManager::updateUniforms()
 #endif
 
     mProbeData.refmapCount = count;
+
+    // <FS> Rekindled 2026-11-23: RK_VK_DIAG "ProbeDiag": the probes the shaders get (the 12 nearest the camera) and what each one contributes; the main view only, every 2 s
+    if (rk_diag_on() && !gCubeSnapshot)
+    {
+        static F64 last_diag = -100.0;
+        const F64 now = LLTimer::getElapsedSeconds();
+        if (now - last_diag >= 2.0)
+        {
+            last_diag = now;
+            std::vector<LLReflectionMap*> by_distance;
+            for (S32 i = 0; i < count; ++i)
+            {
+                if (mReflectionMaps[i] != nullptr)
+                {
+                    by_distance.push_back(mReflectionMaps[i]);
+                }
+            }
+            std::sort(by_distance.begin(), by_distance.end(), [](const LLReflectionMap* a, const LLReflectionMap* b) { return a->mDistance < b->mDistance; });
+            RK_DIAG("ProbeDiag") << llformat("probe level %d, %d probes (room for %u), sky ambiance %.3f, ambiance pass scale %.2f, radiance scale %.2f, reset fade %.2f",
+                (S32)LLPipeline::sReflectionProbeLevel, (S32)count, (U32)mReflectionProbeCount, minimum_ambiance, ambscale, radscale, (F32)mResetFade) << LL_ENDL;
+            const size_t rows = llmin<size_t>(by_distance.size(), 12);
+            for (size_t r = 0; r < rows; ++r)
+            {
+                const LLReflectionMap* p = by_distance[r];
+                const S32 idx = p->mProbeIndex;
+                const bool in_range = idx >= 0 && idx < count;
+                RK_DIAG("ProbeDiag") << llformat("  probe %d: cube %d, %s, %s, radius %.1f, distance %.1f, own ambiance %.2f, sent %.2f, fade in %.2f, complete %d, occluded %d, updated %.1f s ago, neighbours %d",
+                    idx, p->mCubeIndex, p->mPriority > 0 ? "manual" : "automatic",
+                    (in_range && mProbeData.refIndex[idx][3] < 0) ? "box" : "sphere",
+                    p->mRadius, p->mDistance, p->getAmbiance(), in_range ? mProbeData.refParams[idx].mV[0] : -1.f,
+                    p->mFadeIn, (int)p->mComplete, (int)p->mOccluded, (F32)(gFrameTimeSeconds - p->mLastUpdateTime), (S32)p->mNeighbors.size()) << LL_ENDL;
+            }
+        }
+    }
+    // </FS>
+
+    // <FS> Rekindled 2026-11-24: RK_VK_CUBEDUMP=1: once, 90 s after the start, the probe cubes as PNG strips in a "cubedump" folder next to the viewer log (six faces left to right: +x -x +y -y +z -z) and each face's mean colour in the log (line
+    // "CubeDump"): the default probe's radiance, the nearest probe's radiance and irradiance, and the scratch layer the irradiance is made from (what the last capture pass left in it). Radiance at mip 1.
+    {
+        static const bool cube_dump = std::getenv("RK_VK_CUBEDUMP") != nullptr;
+        static const F64 cube_dump_at = (cube_dump && atoi(std::getenv("RK_VK_CUBEDUMP")) >= 10) ? (F64)atoi(std::getenv("RK_VK_CUBEDUMP")) : 90.0;       // (RK_VK_CUBEDUMP=150: after 150 s)
+        static bool cube_dumped = false;
+        if (cube_dump && !cube_dumped && !gCubeSnapshot && gFrameTimeSeconds > cube_dump_at && mTexture.notNull() && mIrradianceMaps.notNull() && count > 2)
+        {
+            cube_dumped = true;
+            const std::string dump_dir = gDirUtilp->getExpandedFilename(LL_PATH_LOGS, "cubedump");
+            LLFile::mkdir(dump_dir);
+            const U32 rad_level = 1;
+            const U32 rw = llmax<U32>(1, mTexture->getWidth() >> rad_level);
+            const U32 iw = mIrradianceMaps->getWidth();
+            const size_t rad_layers = (size_t)mTexture->getCount() * 6;
+            const size_t irr_layers = (size_t)mIrradianceMaps->getCount() * 6;
+            std::vector<float> rad(rad_layers * rw * rw * 4), irr(irr_layers * iw * iw * 4);
+            gRender.getTexImage(mTexture->getTextureHandle(), TextureTarget::CubeArray, rad_level, PixelFormat::RGBA, ComponentType::F32, rad.data());
+            gRender.getTexImage(mIrradianceMaps->getTextureHandle(), TextureTarget::CubeArray, 0, PixelFormat::RGBA, ComponentType::F32, irr.data());
+            static const char* const face_names[6] = { "+x", "-x", "+y", "-y", "+z", "-z" };
+            auto write_strip = [&](const std::vector<float>& data, U32 w, S32 cube, const char* name)
+            {
+                if (cube < 0 || (size_t)(cube + 1) * 6 * w * w * 4 > data.size())
+                {
+                    LL_INFOS("CubeDump") << name << ": cube " << cube << " is out of range" << LL_ENDL;
+                    return;
+                }
+                F64 total = 0.0;
+                for (S32 f = 0; f < 6; ++f)
+                {
+                    F64 sum[3] = { 0.0, 0.0, 0.0 };
+                    for (U32 i = 0; i < w * w; ++i)
+                    {
+                        const size_t at = (((size_t)cube * 6 + f) * w * w + i) * 4;
+                        for (S32 c = 0; c < 3; ++c) { sum[c] += data[at + c]; }
+                    }
+                    const F64 n = (F64)w * w;
+                    total += (sum[0] + sum[1] + sum[2]) / (3.0 * n);
+                    LL_INFOS("CubeDump") << name << " face " << face_names[f] << ": mean linear rgb " << sum[0] / n << " " << sum[1] / n << " " << sum[2] / n << LL_ENDL;
+                }
+                const F32 gain = 0.25f / (F32)llmax(total / 6.0, 1.0e-6);       // (the mean of the six faces shown as a quarter; the log has the absolute numbers)
+                LLPointer<LLImageRaw> raw = new LLImageRaw(6 * w, w, 3);
+                U8* out = raw->getData();
+                for (S32 f = 0; f < 6; ++f)
+                {
+                    for (U32 y = 0; y < w; ++y)
+                    {
+                        for (U32 x = 0; x < w; ++x)
+                        {
+                            const size_t at = ((((size_t)cube * 6 + f) * w + y) * w + x) * 4;
+                            U8* px = out + ((size_t)y * 6 * w + (size_t)f * w + x) * 3;
+                            for (S32 c = 0; c < 3; ++c)
+                            {
+                                const F32 v = powf(llclamp(data[at + c] * gain, 0.f, 1.f), 1.f / 2.2f);
+                                px[c] = (U8)(v * 255.f + 0.5f);
+                            }
+                        }
+                    }
+                }
+                LLPointer<LLImagePNG> png = new LLImagePNG();
+                if (png->encode(raw, 0.f))
+                {
+                    png->save(gDirUtilp->getExpandedFilename(LL_PATH_LOGS, "cubedump", std::string(name) + ".png"));
+                }
+            };
+            LLReflectionMap* nearest = nullptr;
+            for (S32 i = 1; i < count; ++i)
+            {
+                LLReflectionMap* p = mReflectionMaps[i];
+                if (p != nullptr && p != mDefaultProbe && p->mCubeIndex >= 0 && (nearest == nullptr || p->mDistance < nearest->mDistance))
+                {
+                    nearest = p;
+                }
+            }
+            LL_INFOS("CubeDump") << "dump: radiance mip " << rad_level << " (" << rw << " px faces), irradiance " << iw << " px faces, default probe cube " << (mDefaultProbe ? mDefaultProbe->mCubeIndex : -1)
+                                 << ", nearest probe cube " << (nearest ? nearest->mCubeIndex : -1) << ", scratch cube " << mReflectionProbeCount << LL_ENDL;
+            write_strip(rad, rw, mDefaultProbe ? mDefaultProbe->mCubeIndex : -1, "default-radiance");
+            if (nearest)
+            {
+                write_strip(rad, rw, nearest->mCubeIndex, "nearest-radiance");
+                write_strip(irr, iw, nearest->mCubeIndex, "nearest-irradiance");
+            }
+            write_strip(irr, iw, mDefaultProbe ? mDefaultProbe->mCubeIndex : -1, "default-irradiance");
+            write_strip(rad, rw, (S32)mReflectionProbeCount, "scratch");
+            write_strip(rad, rw, (S32)mReflectionProbeCount + 1, "scratch2");
+        }
+    }
+    // </FS>
 
     gPipeline.mHeroProbeManager.updateUniforms();
 
