@@ -39,6 +39,9 @@
 #include "llviewercontrol.h"
 #include "llviewervisualparam.h"
 #include "llvoavatarself.h"
+#include "rkdiag.h"
+#include "llframetimer.h"
+#include <thread>
 
 typedef std::map<std::string, std::string> controller_map_t;
 typedef std::map<std::string, F32> default_controller_map_t;
@@ -183,9 +186,9 @@ private:
 
         F32 mPosition_local;
         F32 mVelocityJoint_local; // How fast the joint is moving
-        F32 mAccelerationJoint_local; // Acceleration on the joint
+        F32 mAccelerationJoint_local = 0.f; // Acceleration on the joint
 
-        F32 mVelocity_local; // How fast the param is moving
+        F32 mVelocity_local = 0.f; // How fast the param is moving (<FS> was never set: the stock constructor leaves it and mAccelerationJoint_local to whatever the memory held)
         F32 mPositionLastUpdate_local;
         LLVector3 mPosition_world;
 
@@ -196,6 +199,8 @@ private:
         LLCharacter *mCharacter;
 
         F32 mLastTime;
+        F32 mSampleStamp = 0.f; // the time the stored joint position (mPosition_world) belongs to: the previous update's time at the last velocity measurement
+        U32 mDiagCalls = 0; // RK_VK_DIAG: the PhysDiag lines written for this motion
 
         LLVisualParam* mParamCache[NUM_PARAMS];
 
@@ -493,6 +498,15 @@ bool LLPhysicsMotion::onUpdate(F32 time)
         if (!mLastTime || mLastTime >= time)
         {
                 mLastTime = time;
+                // <FS> Rekindled 2026-11-24: the joint's position is taken now. It started at zero, so the first update saw the joint "move" its whole distance from the origin (100,000 cm in one step, an
+                // acceleration of 5e31 that took about 1.5 s to die away, and a motion velocity pinned at the limit that a motion with Max Effect 0 then kept for good).
+                if (mJointState && mJointState->getJoint())
+                {
+                        mPosition_world = mJointState->getJoint()->getWorldPosition();
+                }
+                mVelocityJoint_local = 0.f;
+                mAccelerationJoint_local = 0.f;
+                mSampleStamp = time;
                 return false;
         }
 
@@ -506,6 +520,13 @@ bool LLPhysicsMotion::onUpdate(F32 time)
         if (time_delta > 1.0)
         {
                 mLastTime = time;
+                if (mJointState && mJointState->getJoint())
+                {
+                        mPosition_world = mJointState->getJoint()->getWorldPosition(); // <FS> as above: the next update compares with where the joint is now, not where it was a second ago
+                }
+                mVelocityJoint_local = 0.f;
+                mAccelerationJoint_local = 0.f;
+                mSampleStamp = time;
                 return false;
         }
 
@@ -548,8 +569,36 @@ bool LLPhysicsMotion::onUpdate(F32 time)
     //
 
     const F32 joint_local_factor = 30.0;
-    const F32 velocity_joint_local = calculateVelocity_local(time_delta * joint_local_factor);
-    const F32 acceleration_joint_local = calculateAcceleration_local(velocity_joint_local, time_delta * joint_local_factor);
+    // <FS> Rekindled 2026-11-24: the joint's velocity is measured over a window, with the time the stored positions really cover. (1) The joint's world position read here is the one the last frame's world pass made,
+    // so the change since the position stored at the last measurement covers the time from that update's previous time to this update's previous time, not this update's step. (2) Frames that alternate between a
+    // short and a long step (3.5 and 13 ms in a 119 fps run) made the velocity swing between 0.015 and 0.15, the acceleration (a difference of those, divided by the step again) gained a steady positive bias, and a
+    // pose that changes in one frame (an animation that starts with a quick turn) was divided by a 2.7 ms step: the part bounced over its whole range for a movement of a millimetre. (3) The old smoothing counted
+    // updates, so it lasted 20 ms at 144 fps and 50 ms at 60. The velocity is now measured at most every 15 ms (the stock behaviour at 60 fps) and held between measurements; the spring still integrates every update.
+    // RK_VK_PHYSDT=0 measures at every update with this update's step, as before.
+    static const bool windowed = !(getenv("RK_VK_PHYSDT") && atoi(getenv("RK_VK_PHYSDT")) == 0);
+    static const F32 kMinWindow = 0.015f;
+    const F32 prev_update_time = mLastTime; // still the previous update's time (set at the end of this function)
+    const F32 sample_span = prev_update_time - mSampleStamp;
+    const bool sampled = !windowed || sample_span >= kMinWindow;
+    const F32 span_delta = windowed ? sample_span : time_delta;
+    const F32 velocity_joint_local = sampled ? calculateVelocity_local(span_delta * joint_local_factor) : mVelocityJoint_local;
+    const F32 acceleration_joint_local = sampled ? calculateAcceleration_local(velocity_joint_local, span_delta * joint_local_factor) : mAccelerationJoint_local;
+
+    // <FS> Rekindled 2026-11-24 (RK_VK_DIAG): the own avatar's physics updates, one line each (first 4000 a motion): the frame, the thread, the time passed and the step, how far the joint's world position moved
+    // since the last update (cm), the velocity and acceleration the motion derives from it, and the motion's own position and velocity. The jiggle that keeps going shows as steps that are not smooth.
+    if (rk_diag_on())
+    {
+        const bool diag_self = (dynamic_cast<LLVOAvatarSelf *>(mCharacter) != NULL);
+        if (diag_self && behavior_maxeffect != 0 && mDiagCalls < 12000)
+        {
+            ++mDiagCalls;
+            const LLVector3 world_now = joint->getWorldPosition();
+            RK_DIAG("PhysDiag") << mParamDriverName << " frame " << LLFrameTimer::getFrameCount() << " thread " << (U32)(std::hash<std::thread::id>()(std::this_thread::get_id()) & 0xffff)
+                << " frame dt ms " << LLFrameTimer::getFrameDeltaTimeF32() * 1000.f << " phase ms " << LLFrameTimer::getCurrentFrameTime() * 1000.f
+                << " span ms " << span_delta * 1000.f << (sampled ? " measured" : " held") << " time " << time << " dt " << time_delta << " joint at " << world_now.mV[0] << " " << world_now.mV[1] << " " << world_now.mV[2] << " moved cm " << (world_now - mPosition_world).length() * 100.f
+                << " vel " << velocity_joint_local << " acc " << acceleration_joint_local << " pos " << mPosition_local << " motion vel " << mVelocity_local << LL_ENDL;
+        }
+    }
 
     //
     // End velocity and acceleration
@@ -729,8 +778,12 @@ bool LLPhysicsMotion::onUpdate(F32 time)
         mPosition_local = position_new_local;
     }
     mLastTime = time;
-    mPosition_world = joint->getWorldPosition();
-    mVelocityJoint_local = velocity_joint_local;
+    if (sampled)
+    {
+        mSampleStamp = prev_update_time;
+        mPosition_world = joint->getWorldPosition();
+        mVelocityJoint_local = velocity_joint_local;
+    }
 
 
         /*
