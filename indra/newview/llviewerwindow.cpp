@@ -6438,7 +6438,6 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                             {
                                 F32 depth_float = *(F32*)(depth_line_buffer->getData() + (i * sizeof(F32)));
 
-                                depth_float = 1.f - depth_float;    // <FS> the depth buffer is reversed (1 at the near plane): the formula below takes the standard one
                                 F32 linear_depth_float = 1.f / (depth_conversion_factor_1 - (depth_float * depth_conversion_factor_2));
                                 U32 RGB24 = F32_to_U32(linear_depth_float, LLViewerCamera::getInstance()->getNear(), LLViewerCamera::getInstance()->getFar());
                                 //A max value of 16777215 for RGB24 evaluates to black when it shold be white.  The clamp assures that the divisions do not somehow become >=256.
@@ -6473,7 +6472,6 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
                             {
                                 F32 depth_float = *(F32*)(depth_line_buffer->getData() + (i * sizeof(F32)));
 
-                                depth_float = 1.f - depth_float;    // <FS> the depth buffer is reversed (1 at the near plane): the formula below takes the standard one
                                 F32 linear_depth_float = 1.f / (depth_conversion_factor_1 - (depth_float * depth_conversion_factor_2));
                                 U8 depth_byte = F32_to_U8(linear_depth_float, LLViewerCamera::getInstance()->getNear(), LLViewerCamera::getInstance()->getFar());
                                 // write converted scanline out to result image
