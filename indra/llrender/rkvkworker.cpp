@@ -1173,6 +1173,22 @@ Image* read_image(U32 fbo)
     return attachment_image(it->second.mColor[0]);         // reads come from colour attachment 0
 }
 
+// <FS> the depth image a depth read (glReadPixels with GL_DEPTH_COMPONENT) comes from: the depth attachment of a render target (0: the depth of the back buffer). It used to read colour attachment 0 and
+// hand back its red channel as the depth (the depth snapshots were the red channel of the picture). The depth holds the convention of its target: reversed (1 at the near plane) unless it is a shadow map.
+Image* read_depth_image(U32 fbo)
+{
+    if (fbo == 0)
+    {
+        return RKVkBridge::backbufferDepth();
+    }
+    auto it = sGL.mFbos.find(fbo);
+    if (it == sGL.mFbos.end())
+    {
+        return nullptr;
+    }
+    return attachment_image(it->second.mDepth);
+}
+
 [[maybe_unused]] Image* read_image()
 {
     return read_image(gPassState.mDrawFbo);        // readbacks (glReadPixels) read the target that was last made current
@@ -14828,7 +14844,7 @@ bool query_value(unsigned id, bool want_result, unsigned long long& value)
 void read_pixels(unsigned fbo, int x, int y, int width, int height, RKVkFormat::Transfer tr, void* pixels)
 {
     U8* dst = (U8*)pixels;
-    Image* img = read_image(fbo);
+    Image* img = tr.mComps == RKVkFormat::C_DEPTH ? read_depth_image(fbo) : read_image(fbo);       // <FS> a depth read comes from the depth attachment
     std::vector<U8> texels;
     VkFormat fmt = VK_FORMAT_UNDEFINED;
     std::vector<float> rgba;
