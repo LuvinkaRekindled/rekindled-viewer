@@ -12243,13 +12243,43 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
         static const char* const watch_env = getenv("RK_VK_WATCH_OBJECT");
         if (watch_env && watch_env[0])
         {
-            static const LLUUID watch_id(watch_env);
+            // RK_VK_WATCH_OBJECT=selected follows the object that is selected now (its id is logged each time the selection changes); a uuid follows that object.
+            static const bool watch_selected = strcmp(watch_env, "selected") == 0;
+            static const LLUUID watch_id = watch_selected ? LLUUID::null : LLUUID(watch_env);
+            static LLUUID last_object;
             static bool last_listed = false;
             static U32 last_slot = ~0u;
-            LLViewerObject* wo = gObjectList.findObject(watch_id);
+            LLViewerObject* wo = watch_selected ? LLSelectMgr::getInstance()->getSelection()->getFirstObject() : gObjectList.findObject(watch_id);
+            const bool object_changed = watch_selected && (wo ? wo->mID : LLUUID::null) != last_object;
+            if (object_changed)
+            {
+                last_object = wo ? wo->mID : LLUUID::null;
+                last_slot = ~0u;
+                last_listed = false;
+                if (wo)
+                {
+                    LL_INFOS("VkWatch") << "viewer, frame " << gFrameCount << ", the selected object is " << wo->mID << ", " << LLPrimitive::pCodeToString(wo->getPCode()) << " at region position " << wo->getPositionRegion() << ", agent position " << wo->getPositionAgent() << ", scale " << wo->getScale() << LL_ENDL;
+                }
+                else
+                {
+                    LL_INFOS("VkWatch") << "viewer, frame " << gFrameCount << ", nothing is selected" << LL_ENDL;
+                }
+            }
             LLSpatialGroup* wg = (wo && wo->mDrawable.notNull() && !wo->mDrawable->isDead()) ? wo->mDrawable->getSpatialGroup() : nullptr;
             const U32 wslot = (wg && wg->mCullId) ? wg->mCullId - 1 : ~0u;
             RKVkBridge::sWatchSlot.store(wslot);
+            {
+                // (the Hi-Z verdicts and texel dumps of the watched group are logged by RKHiz::apply and the worker; when the group is occluded they follow the top-most occluded group of its chain, the one that is asked for a box)
+                LLSpatialGroup* top = wg;
+                if (wg && wg->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                {
+                    while (top->getParent() && top->getParent()->getParent() && top->getParent()->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                    {
+                        top = top->getParent();
+                    }
+                }
+                RKHiz::sWatch = top;
+            }
             if (wg)
             {
                 const bool listed = std::find(groups.begin(), groups.end(), wg) != groups.end();
@@ -12285,6 +12315,67 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
                         }
                     }
                     LL_CONT << LL_ENDL;
+                }
+                // 2026-11-27: while the watched group is not listed, every 600 frames (12 times at most) its ancestors and the occluded groups near the object, to see which group holds the occluded state that hides it
+                // (a group under an occluded parent is occluded with it and asks for no box; a held group is asked again only when its parent is not occluded)
+                static S32 near_frame = -1000000;
+                static U32 near_dumps = 0;
+                if (!listed && near_dumps < 12 && (S32)gFrameCount - near_frame >= 600)
+                {
+                    near_frame = (S32)gFrameCount;
+                    ++near_dumps;
+                    const LLVector3 wpos = wo->getPositionAgent();
+                    std::string text = llformat("viewer, frame %d, the watched group is not listed. Its ancestors, nearest first:\n", (S32)gFrameCount);
+                    S32 level = 0;
+                    for (LLSpatialGroup* a = wg->getParent(); a; a = a->getParent(), ++level)
+                    {
+                        const LLVector4a* ae = a->getExtents();
+                        const LLVector4a* ab = a->getBounds();      // (the box the Hi-Z test is made for: the bounds, centre and half size, not the extents)
+                        text += llformat("  ancestor %d: slot %d, extents (%.1f,%.1f,%.1f)..(%.1f,%.1f,%.1f), bounds (%.1f,%.1f,%.1f)..(%.1f,%.1f,%.1f), dirty %d, occluded %d, its parent occluded %d, verdict awaited %d, one occluded verdict held %d, root %d\n",
+                            level, a->mCullId ? (S32)a->mCullId - 1 : -1, ae[0][0], ae[0][1], ae[0][2], ae[1][0], ae[1][1], ae[1][2],
+                            ab[0][0] - ab[1][0], ab[0][1] - ab[1][1], ab[0][2] - ab[1][2], ab[0][0] + ab[1][0], ab[0][1] + ab[1][1], ab[0][2] + ab[1][2], a->isDirty() ? 1 : 0,
+                            a->isOcclusionState(LLSpatialGroup::OCCLUDED) ? 1 : 0,
+                            (a->getParent() && a->getParent()->isOcclusionState(LLSpatialGroup::OCCLUDED)) ? 1 : 0, a->isHizAwaiting() ? 1 : 0, a->mHizOccludedOnce ? 1 : 0, a->getParent() ? 0 : 1);
+                    }
+                    text += "occluded groups with an object box within 12 m of the watched object:\n";
+                    {
+                        std::lock_guard<std::mutex> lock(sCullMutex);
+                        U32 shown = 0;
+                        for (U32 s = 0; s < (U32)sSlotGroup.size() && shown < 40; ++s)
+                        {
+                            LLViewerOctreeGroup* og = sSlotGroup[s];
+                            if (!og || og->isDead())
+                            {
+                                continue;
+                            }
+                            LLSpatialGroup* g = static_cast<LLSpatialGroup*>(og);
+                            if (g == wg || g->isEmpty() || !g->isOcclusionState(LLSpatialGroup::OCCLUDED))
+                            {
+                                continue;
+                            }
+                            const LLVector4a* ge = g->getExtents();
+                            F32 d2 = 0.f;
+                            for (int k = 0; k < 3; ++k)
+                            {
+                                const F32 t = llmax(llmax(ge[0][k] - wpos.mV[k], wpos.mV[k] - ge[1][k]), 0.f);
+                                d2 += t * t;
+                            }
+                            if (d2 > 144.f)
+                            {
+                                continue;
+                            }
+                            ++shown;
+                            text += llformat("  slot %d: extents (%.1f,%.1f,%.1f)..(%.1f,%.1f,%.1f), %d objects, partition %d, its parent occluded %d, verdict awaited %d, one occluded verdict held %d, listed %d\n",
+                                (S32)s, ge[0][0], ge[0][1], ge[0][2], ge[1][0], ge[1][1], ge[1][2], (S32)g->getElementCount(), g->getSpatialPartition() ? (S32)g->getSpatialPartition()->mPartitionType : -1,
+                                (g->getParent() && g->getParent()->isOcclusionState(LLSpatialGroup::OCCLUDED)) ? 1 : 0, g->isHizAwaiting() ? 1 : 0, g->mHizOccludedOnce ? 1 : 0,
+                                std::find(groups.begin(), groups.end(), g) != groups.end() ? 1 : 0);
+                        }
+                        if (!shown)
+                        {
+                            text += "  none\n";
+                        }
+                    }
+                    LL_INFOS("VkWatch") << text << LL_ENDL;
                 }
             }
             else if (last_slot != ~0u)

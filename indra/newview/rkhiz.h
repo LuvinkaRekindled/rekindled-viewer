@@ -33,6 +33,7 @@ public:
     // (RK_VK_BLINK=1, a diagnostic) the last verdict applied to a target: out[0] the word (bit 0 occluded, bits 8-15 the pyramid level, 16-19 the special cases), out[1] the box's nearest depth, out[2] the farthest depth of the
     // pyramid texels it covers (both as float bits), out[3] the frame it was applied, out[4] 1 when it was stale for the camera. False when none is kept.
     static bool lastVerdict(const RKHizTarget* target, U32* out5);
+    static RKHizTarget* sWatch;                                       // (the bug hunt's watcher, RK_VK_WATCH_OBJECT in pipeline.cpp) the target whose verdicts are logged (VkWatch) when its answer changes
 };
 
 #endif // RK_RKHIZ_H

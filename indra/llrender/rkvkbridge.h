@@ -449,6 +449,9 @@ namespace RKVkBridge
     // that was lost makes it send every binding again
     static inline std::atomic<U32> sGeoPrepareDropped{ 0 };
     // <FS> 2026-11-27 bug hunt (RK_VK_WATCH_OBJECT in the viewer; stays as a debug tool, off unless the variable is set): the table slot of the group of the watched object (~0u: none), for the worker's own line about its verdict on that row
+    // the centre of the watched group's Hi-Z box (set by RKHiz::add; the worker finds the box in a record by it and dumps the pyramid texels the test read for it)
+    inline std::atomic<F32> sWatchBox0{ 0.f }, sWatchBox1{ 0.f }, sWatchBox2{ 0.f };
+    inline std::atomic<U32> sWatchBoxOn{ 0 };
     inline std::atomic<U32> sWatchSlot{ ~0u };       // (not `static`: a static at namespace scope is a copy for each source file, and the viewer's store would never reach the worker)
     // queues (async) or runs the upscale: colour + depth + motion -> output, all textures the mirror owns
     void upscale(const UpscaleArgs& args);

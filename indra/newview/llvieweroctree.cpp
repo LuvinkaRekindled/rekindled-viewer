@@ -866,6 +866,8 @@ RKHizTarget::~RKHizTarget()
     }
 }
 
+RKHizTarget* RKHiz::sWatch = nullptr;
+
 void RKHiz::begin()
 {
     sHizBoxes.clear();
@@ -890,6 +892,13 @@ void RKHiz::add(RKHizTarget* target, const LLVector4a& center, F32 half_x, F32 h
     box.mFlags = water ? 1u : 0u;
     box.mHalf[0] = half_x; box.mHalf[1] = half_y; box.mHalf[2] = half_z;
     box.mPad = 0.f;
+    if (target == sWatch)
+    {
+        RKVkBridge::sWatchBox0.store(box.mCenter[0]);
+        RKVkBridge::sWatchBox1.store(box.mCenter[1]);
+        RKVkBridge::sWatchBox2.store(box.mCenter[2]);
+        RKVkBridge::sWatchBoxOn.store(1);
+    }
     sHizBoxes.push_back(box);
     sHizBoxTargets.push_back(target);
 }
@@ -1025,6 +1034,25 @@ void RKHiz::apply()
             t->mHizSerial = 0;
             const U32 word = words[3 * i];
             const bool occluded = (word & 1u) != 0 && !stale;
+            if (t == sWatch)
+            {
+                // the watcher: one line when the shader's answer or the stale flag changes (the numbers behind the answer: the box's nearest depth against the farthest depth of the pyramid texels it covers; reversed depth, 1 at the near plane)
+                static U32 last_key = ~0u;
+                const U32 key = (word & 1u) | (stale ? 2u : 0u);
+                if (key != last_key)
+                {
+                    last_key = key;
+                    F32 minz, maxd;
+                    memcpy(&minz, &words[3 * i + 1], sizeof(F32));
+                    memcpy(&maxd, &words[3 * i + 2], sizeof(F32));
+                    const LLViewerCamera* wcam = LLViewerCamera::getInstance();
+                    const LLVector3 d = wcam->getOrigin() - LLVector3(p.mEye);
+                    const F32 turned = acosf(llclamp(wcam->getAtAxis() * LLVector3(p.mAt), -1.f, 1.f)) * RAD_TO_DEG;
+                    LL_INFOS("VkWatch") << "viewer, frame " << gFrameCount << ", Hi-Z verdict for the watched group (boxes sent in frame " << p.mFrame << "): the shader says " << ((word & 1u) ? "OCCLUDED" : "visible") << ", word " << word
+                        << " (pyramid level " << ((word >> 8) & 0xFFu) << ", special case bits " << (word >> 16) << "), the box's nearest depth " << minz << ", the farthest depth of the pyramid texels it covers " << maxd
+                        << ", stale " << (stale ? 1 : 0) << " (camera moved " << d.length() << " m, turned " << turned << " deg since the boxes were sent), the group's occluded state before " << (t->mHizOccludedOnce ? "one occluded verdict waiting" : "none waiting") << LL_ENDL;
+                }
+            }
             if (sHizKeepVerdicts)
             {
                 sHizLastVerdict[p.mIds[i]] = { word, words[3 * i + 1], words[3 * i + 2], (U32)gFrameCount, stale ? 1u : 0u };

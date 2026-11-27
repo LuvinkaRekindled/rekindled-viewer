@@ -11483,7 +11483,9 @@ layout(set = 0, binding = 0) uniform sampler2D uPyr;
 struct Box { vec4 c; vec4 h; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Boxes { Box b[]; };
 layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Out { uint o[]; };
-layout(push_constant) uniform PC { mat4 vp; uvec2 boxes; uvec2 outp; uint count; uint levels; vec2 depthSize; uint fine; uint pad0; uint pad1; uint pad2; } pc;
+layout(buffer_reference, std430, buffer_reference_align = 4) writeonly buffer Dbg { float f[]; };
+// watch: the index of the box the bug hunt's watcher follows (0xFFFFFFFF: none), dbgLo / dbgHi: the address of its dump (0: none)
+layout(push_constant) uniform PC { mat4 vp; uvec2 boxes; uvec2 outp; uint count; uint levels; vec2 depthSize; uint fine; uint watch; uint dbgLo; uint dbgHi; } pc;
 // the depth convention (rkreversez.h): the viewer gives the reversed Vulkan projection in vp (clip z from w at the near plane to 0 at the far plane) and the pyramid holds reversed depths
 #define BOX_NEAR_INIT (-1e9)
 #define BOX_NEAR_MERGE(a, b) max(a, b)
@@ -11497,6 +11499,8 @@ void main()
 {
     uint i = gl_GlobalInvocationID.x;
     if (i >= pc.count) return;
+    const bool dump = (i == pc.watch) && ((pc.dbgLo | pc.dbgHi) != 0u);
+    if (dump) { Dbg(uvec2(pc.dbgLo, pc.dbgHi)).f[420] = 0.0; }        // (no sampled dump yet)
     Box bx = Boxes(pc.boxes).b[i];
     bool water = (floatBitsToUint(bx.c.w) & 1u) != 0u;
     float minz = BOX_NEAR_INIT;        // the nearest depth of the box
@@ -11541,6 +11545,36 @@ void main()
             for (int y = t0.y; y <= t1.y; ++y)
                 for (int x = t0.x; x <= t1.x; ++x)
                     maxd = PYR_FAR_MERGE(maxd, texelFetch(uPyr, ivec2(x, y), lod).r);
+            if (dump)
+            {
+                // the bug hunt's watcher: what this test read for the watched box. 0-15: the uv rectangle, the level, the texel range read (after the 12 texel cap) and before it, the box's nearest depth, the farthest depth
+                // of the texels, the texel size in pixels, the level's size. 16-159: the 12 x 12 texels read at the level (-1: not read). 160-163 and 164-419: a 16 x 16 window of the next level around the rectangle
+                // (origin, level, texel size; -1: outside the level). 420: 1 = this dump is of a sampled test.
+                Dbg d = Dbg(uvec2(pc.dbgLo, pc.dbgHi));
+                ivec2 t1u = min(ivec2(floor(pmx / texel)), sz - 1);
+                d.f[0] = mn.x; d.f[1] = mn.y; d.f[2] = mx.x; d.f[3] = mx.y;
+                d.f[4] = float(lod); d.f[5] = float(t0.x); d.f[6] = float(t0.y); d.f[7] = float(t1.x); d.f[8] = float(t1.y);
+                d.f[9] = float(t1u.x); d.f[10] = float(t1u.y); d.f[11] = minz; d.f[12] = maxd; d.f[13] = texel; d.f[14] = float(sz.x); d.f[15] = float(sz.y);
+                for (int gy = 0; gy < 12; ++gy)
+                    for (int gx = 0; gx < 12; ++gx)
+                    {
+                        ivec2 p = t0 + ivec2(gx, gy);
+                        d.f[16 + gy * 12 + gx] = (p.x <= t1.x && p.y <= t1.y) ? texelFetch(uPyr, p, lod).r : -1.0;
+                    }
+                int lodb = min(lod + 1, int(pc.levels) - 1);
+                ivec2 szb = textureSize(uPyr, lodb);
+                float texb = exp2(float(lodb + 1));
+                ivec2 ob = ivec2(floor(0.5 * (pmn + pmx) / texb)) - ivec2(8);
+                d.f[160] = float(ob.x); d.f[161] = float(ob.y); d.f[162] = float(lodb); d.f[163] = texb;
+                for (int gy = 0; gy < 16; ++gy)
+                    for (int gx = 0; gx < 16; ++gx)
+                    {
+                        ivec2 p = ob + ivec2(gx, gy);
+                        bool inside = p.x >= 0 && p.y >= 0 && p.x < szb.x && p.y < szb.y;
+                        d.f[164 + gy * 16 + gx] = inside ? texelFetch(uPyr, p, lodb).r : -1.0;
+                    }
+                d.f[420] = 1.0;
+            }
             result = (OCCLUDED(minz, maxd) ? 1u : 0u) | (uint(lod) << 8);
             Out(pc.outp).o[3u * i + 1u] = floatBitsToUint(minz);
             Out(pc.outp).o[3u * i + 2u] = floatBitsToUint(maxd);
@@ -11552,6 +11586,7 @@ void main()
 
 constexpr U32 kHizSlots = 8;                // ring slots (the viewer never has more than kHizSlots - 1 serials in flight)
 constexpr U32 kHizCapacity = 32768;         // boxes a slot holds
+constexpr U32 kHizDbgFloats = 512;          // floats of the watched box's dump a slot holds
 
 struct HizState
 {
@@ -11561,11 +11596,12 @@ struct HizState
     VkPipeline mDown = VK_NULL_HANDLE, mTest = VK_NULL_HANDLE;
     VkSampler mSampler = VK_NULL_HANDLE;
     Buffer mResults;                        // kHizSlots x kHizCapacity words, cached host memory
+    Buffer mDbg;                            // the bug hunt's watcher: kHizSlots x kHizDbgFloats floats, the texels the test read for the watched box (see the test shader)
     Image mPyramid;                         // R32_SFLOAT, mips, GENERAL for good
     std::vector<VkImageView> mMipViews;
     bool mPyramidInit = false;
     U32 mDepthW = 0, mDepthH = 0;
-    struct Pending { U32 mSerial, mSlot; U64 mFrame; U32 mCount; };
+    struct Pending { U32 mSerial, mSlot; U64 mFrame; U32 mCount; U32 mWatch; F32 mK, mP23; };       // mWatch: the index of the watched box in the record (~0u: none); mK, mP23: view depth = mP23 / (depth - mK)
     std::deque<Pending> mPending;
     // counters (reported every 600 records)
     U64 mRecords = 0, mBoxes = 0, mNoDepth = 0, mNoPipeline = 0, mPyramidBuilds = 0, mTooMany = 0, mPublished = 0, mDispatches = 0, mLast = 0;
@@ -11703,9 +11739,82 @@ bool hiz_init()
     }
     memset(s.mResults.mMapped, 0, (size_t)kHizSlots * kHizCapacity * 12);
     RKVkBridge::hizSetResults((const U32*)s.mResults.mMapped, kHizCapacity);
+    if (ctx.createBuffer((VkDeviceSize)kHizSlots * kHizDbgFloats * sizeof(F32), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, Context::Memory::Readback, s.mDbg) && s.mDbg.mMapped && s.mDbg.mAddress)
+    {
+        memset(s.mDbg.mMapped, 0, (size_t)kHizSlots * kHizDbgFloats * sizeof(F32));
+    }
+    else
+    {
+        s.mDbg = Buffer();      // (no dump of the watched box)
+    }
     s.mReady = true;
     LL_INFOS("VkHiz") << "Hi-Z occlusion ready: " << kHizSlots << " result slots of " << kHizCapacity << " boxes" << LL_ENDL;
     return true;
+}
+
+// the bug hunt's watcher (RK_VK_WATCH_OBJECT): what the test read for the watched box, in metres of view depth, one dump each time the answer changes (the first 60). The texels hold the FARTHEST depth of
+// their pixels (min of the reversed depths), so a texel that reads nearer than the box's nearest point has something nearer than the box in all of its pixels. Whole grids are logged: the 12 x 12 texels
+// the test reads, and a 16 x 16 window of the next level around them.
+void hiz_watch_log(const HizState::Pending& p)
+{
+    HizState& s = sHiz;
+    Context& ctx = Context::instance();
+    vmaInvalidateAllocation(ctx.getAllocator(), s.mDbg.mAllocation, (VkDeviceSize)p.mSlot * kHizDbgFloats * sizeof(F32), (VkDeviceSize)kHizDbgFloats * sizeof(F32));
+    const U32 word = ((const U32*)s.mResults.mMapped)[((size_t)p.mSlot * kHizCapacity + p.mWatch) * 3];
+    const F32* d = (const F32*)s.mDbg.mMapped + (size_t)p.mSlot * kHizDbgFloats;
+    static U32 last_key = ~0u, logged = 0;
+    static U64 last_frame = 0;
+    const U32 key = (word & 1u) | (((word >> 16) & 0xFu) << 1);
+    // a dump when the answer changes, and at least every 240 records while the box is tested (the answer stays the same while the view moves)
+    if ((key == last_key && p.mFrame < last_frame + 240) || logged >= 60)
+    {
+        return;
+    }
+    last_key = key;
+    last_frame = p.mFrame;
+    ++logged;
+    auto metres = [&](F32 z) { return (z > 0.f && fabsf(z - p.mK) > 1e-9f) ? p.mP23 / (z - p.mK) : 0.f; };
+    if (d[420] != 1.f)
+    {
+        LL_INFOS("VkWatch") << "worker, Hi-Z test of the watched box (record serial " << p.mSerial << "): word " << word << ", " << ((word & 1u) ? "OCCLUDED" : "visible") << ", special case bits " << (word >> 16) << " (no texels were read)" << LL_ENDL;
+        return;
+    }
+    char line[512];
+    std::string text;
+    snprintf(line, sizeof(line), "worker, Hi-Z test of the watched box (record serial %u): %s, word %u. uv rectangle (%.3f,%.3f)-(%.3f,%.3f), level %d (texel %g px, level size %dx%d), texels read x %d..%d y %d..%d (before the 12 texel cap: to x %d y %d); the box's nearest point %.1f m (depth %.5f), the farthest depth of the texels %.1f m (depth %.5f)\n",
+        p.mSerial, (word & 1u) ? "OCCLUDED" : "visible", word, d[0], d[1], d[2], d[3], (int)d[4], d[13], (int)d[14], (int)d[15], (int)d[5], (int)d[7], (int)d[6], (int)d[8], (int)d[9], (int)d[10], metres(d[11]), d[11], metres(d[12]), d[12]);
+    text += line;
+    text += "texels read, view depth in metres of the farthest surface in each (-- not read; a value smaller than the box's nearest point = something nearer in the whole texel):\n";
+    for (int gy = 0; gy < 12; ++gy)
+    {
+        std::string row;
+        bool any = false;
+        for (int gx = 0; gx < 12; ++gx)
+        {
+            const F32 v = d[16 + gy * 12 + gx];
+            if (v < 0.f) { row += "   -- "; continue; }
+            any = true;
+            if (v == 0.f) { row += "  sky "; continue; }
+            snprintf(line, sizeof(line), "%5.1f ", metres(v));
+            row += line;
+        }
+        if (any) { text += row; text += "\n"; }
+    }
+    snprintf(line, sizeof(line), "window of level %d (texel %g px), 16 x 16 from texel (%d,%d), the rectangle in the middle:\n", (int)d[162], d[163], (int)d[160], (int)d[161]);
+    text += line;
+    for (int gy = 0; gy < 16; ++gy)
+    {
+        for (int gx = 0; gx < 16; ++gx)
+        {
+            const F32 v = d[164 + gy * 16 + gx];
+            if (v < 0.f) { text += "   -- "; continue; }
+            if (v == 0.f) { text += "  sky "; continue; }
+            snprintf(line, sizeof(line), "%5.1f ", metres(v));
+            text += line;
+        }
+        text += "\n";
+    }
+    LL_INFOS("VkWatch") << text << LL_ENDL;
 }
 
 void hiz_poll()
@@ -11721,6 +11830,10 @@ void hiz_poll()
         const HizState::Pending p = s.mPending.front();
         s.mPending.pop_front();
         vmaInvalidateAllocation(ctx.getAllocator(), s.mResults.mAllocation, (VkDeviceSize)p.mSlot * kHizCapacity * 12, (VkDeviceSize)p.mCount * 12);
+        if (p.mWatch != ~0u && s.mDbg.mMapped)
+        {
+            hiz_watch_log(p);
+        }
         RKVkBridge::hizPublish(p.mSlot, p.mSerial);
         ++s.mPublished;
     }
@@ -11830,7 +11943,29 @@ void on_hiz_boxes(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     tpc.mDepth[0] = (F32)w; tpc.mDepth[1] = (F32)hgt;
     static const U32 fine = []() { const char* e = getenv("RK_VK_HIZ_FINE"); return e ? (U32)atoi(e) : 5u; }();      // how many pyramid levels finer than "the rectangle spans two texels" the test reads (5: the rectangle spans up to about 9 x 9 texels of a level 4 finer; 3 lost 23 % of the queries' savings, 5 lost 15 %)
     tpc.mFine = fine;
-    tpc.mPad[0] = tpc.mPad[1] = tpc.mPad[2] = 0;
+    // the bug hunt's watcher: the watched group's box in this record (found by its centre), and where the test writes what it read for it
+    U32 watch = ~0u;
+    if (RKVkBridge::sWatchBoxOn.load() && s.mDbg.mMapped)
+    {
+        const F32 wc[3] = { RKVkBridge::sWatchBox0.load(), RKVkBridge::sWatchBox1.load(), RKVkBridge::sWatchBox2.load() };
+        for (U32 k = 0; k < h.mEntries; ++k)
+        {
+            const F32* bc = (const F32*)(blob + 32ull * k);
+            if (bc[0] == wc[0] && bc[1] == wc[1] && bc[2] == wc[2])
+            {
+                watch = k;
+                break;
+            }
+        }
+    }
+    const U64 dbg_address = watch != ~0u ? (U64)s.mDbg.mAddress + (U64)slot * kHizDbgFloats * sizeof(F32) : 0ull;
+    tpc.mPad[0] = watch;
+    tpc.mPad[1] = (U32)dbg_address;
+    tpc.mPad[2] = (U32)(dbg_address >> 32);
+    // view depth = P23 / (depth - K) for this record's projection (column-major: row 2 of the matrix is K times row 3 plus (0, 0, 0, P23))
+    const F32 w_len2 = h.mViewProj[3] * h.mViewProj[3] + h.mViewProj[7] * h.mViewProj[7] + h.mViewProj[11] * h.mViewProj[11];
+    const F32 wk = w_len2 > 1e-12f ? (h.mViewProj[2] * h.mViewProj[3] + h.mViewProj[6] * h.mViewProj[7] + h.mViewProj[10] * h.mViewProj[11]) / w_len2 : 0.f;
+    const F32 wp23 = h.mViewProj[14] - wk * h.mViewProj[15];
     const bool init = !s.mPyramidInit;
     VkImage pyramid_image = s.mPyramid.mImage;
     VkImageView pyramid_view = s.mPyramid.mView;
@@ -11911,7 +12046,7 @@ void on_hiz_boxes(const RKVkBridge::ShadowPacketsHeader& h, const U8* blob)
     }
     s.mPyramidInit = true;
     s.mDispatches += dispatches;
-    s.mPending.push_back({ h.mFragment, slot, ctx.getFrameNumber(), h.mEntries });
+    s.mPending.push_back({ h.mFragment, slot, ctx.getFrameNumber(), h.mEntries, watch, wk, wp23 });
     if (s.mRecords - s.mLast >= 600)
     {
         s.mLast = s.mRecords;
