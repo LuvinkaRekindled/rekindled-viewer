@@ -29344,6 +29344,93 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
         {
             note_shadow_prep_frame(defer_cascades, cascades_prepared);
         }
+
+        // 2026-11-27 bug hunt (RK_VK_SHADOW_COVER=1, diagnostic): are the surfaces the camera really sees inside the maps of the cascades? Every 120 frames 96 rays go from the camera across the view (the world pick,
+        // so whatever is there: terrain, prims, trees, avatars), and each hit is tested against the scene box the cascades were fitted from and against the final map of the cascade that owns its depth.
+        // A point outside the box and outside the map: the box lacks that surface. A point inside the box and outside the map: the fit lost it.
+        static const bool cover_diag = getenv("RK_VK_SHADOW_COVER") != nullptr;
+        if (cover_diag && !gCubeSnapshot && scene_have && (gFrameCount % 120) == 0)
+        {
+            const LLVector3 org = camera.getOrigin();
+            const LLVector3 at_axis = camera.getAtAxis(), left_axis = camera.getLeftAxis(), up_axis = camera.getUpAxis();
+            const F32 tan_y = tanf(camera.getView() * 0.5f);
+            const F32 tan_x = tan_y * camera.getAspect();
+            const F32 reach = llmin(camera.getFar(), 256.f);
+            U32 rays = 0, hits = 0, outside_box = 0, outside_box_in_map = 0;
+            U32 owned[4] = { 0, 0, 0, 0 }, missed[4] = { 0, 0, 0, 0 }, missed_in_box[4] = { 0, 0, 0, 0 };
+            std::string examples;
+            for (S32 iy = 0; iy < 8; ++iy)
+            {
+                for (S32 ix = 0; ix < 12; ++ix)
+                {
+                    const F32 sx = (((F32)ix + 0.5f) / 12.f * 2.f - 1.f) * tan_x;
+                    const F32 sy = (1.f - ((F32)iy + 0.5f) / 8.f * 2.f) * tan_y;
+                    LLVector3 dir = at_axis - left_axis * sx + up_axis * sy;
+                    dir.normVec();
+                    LLVector4a seg_start, seg_end, hit_pos;
+                    seg_start.load3(org.mV);
+                    seg_end.load3((org + dir * reach).mV);
+                    S32 face = -1;
+                    ++rays;
+                    LLViewerObject* hit_obj = lineSegmentIntersectInWorld(seg_start, seg_end, false, false, true, false, &face, nullptr, nullptr, &hit_pos);
+                    if (!hit_obj)
+                    {
+                        continue;
+                    }
+                    ++hits;
+                    const LLVector3 p(hit_pos.getF32ptr());
+                    const F32 depth = (p - org) * at_axis;
+                    const bool in_box = p.mV[0] >= scene_min.mV[0] - 0.05f && p.mV[0] <= scene_max.mV[0] + 0.05f && p.mV[1] >= scene_min.mV[1] - 0.05f && p.mV[1] <= scene_max.mV[1] + 0.05f
+                        && p.mV[2] >= scene_min.mV[2] - 0.05f && p.mV[2] <= scene_max.mV[2] + 0.05f;
+                    S32 c = -1;
+                    for (S32 j = 0; j < 4; ++j)
+                    {
+                        if (depth < dist[j + 1]) { c = j; break; }
+                    }
+                    if (c < 0)
+                    {
+                        continue;       // (past the last split: no cascade owns it)
+                    }
+                    ++owned[c];
+                    const glm::vec4 cl = mShadowProjection[c] * (mShadowModelview[c] * glm::vec4(p.mV[0], p.mV[1], p.mV[2], 1.f));
+                    const bool in_map = cl.w > 0.f && fabsf(cl.x) <= cl.w && fabsf(cl.y) <= cl.w && cl.z >= -cl.w && cl.z <= cl.w;
+                    if (!in_box) { ++outside_box; if (in_map) { ++outside_box_in_map; } }
+                    if (!in_map)
+                    {
+                        ++missed[c];
+                        if (in_box) { ++missed_in_box[c]; }
+                        if (examples.size() < 1800)
+                        {
+                            // the group of the object that was hit: why is it (not) in the scene box? (listed by the main cull, held occluded, released, dirty, the frame its slot was given, the frame the world camera last marked it)
+                            std::string group_text = "no drawable";
+                            LLSpatialGroup* hg = (hit_obj->mDrawable.notNull() && !hit_obj->mDrawable->isDead()) ? hit_obj->mDrawable->getSpatialGroup() : nullptr;
+                            if (hg)
+                            {
+                                const LLVector4a* ge = hg->getObjectExtents();
+                                bool listed = false;
+                                for (LLCullResult::sg_iterator gi = sCull->beginVisibleGroups(); !listed && gi != sCull->endVisibleGroups(); ++gi) { listed = (*gi == hg); }
+                                for (LLCullResult::sg_iterator gi = sCull->beginDrawableGroups(); !listed && gi != sCull->endDrawableGroups(); ++gi) { listed = (*gi == hg); }
+                                const LLViewerCamera::eCameraID saved_cam = LLViewerCamera::sCurCameraID;
+                                LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
+                                const bool occ = hg->isOcclusionState(LLSpatialGroup::OCCLUDED);
+                                const bool par_occ = hg->getParent() && hg->getParent()->isOcclusionState(LLSpatialGroup::OCCLUDED);
+                                LLViewerCamera::sCurCameraID = saved_cam;
+                                group_text = llformat("group slot %d (slot given in frame %u), partition %d, %s by the main cull, objects %d, object extents (%.1f,%.1f,%.1f)..(%.1f,%.1f,%.1f), occluded %d (parent %d), released %d, dirty %d, empty %d, dead %d, world stamp %d of octree frame %d",
+                                    hg->mCullId ? (S32)hg->mCullId - 1 : -1, hg->mCullFirstFrame, hg->getSpatialPartition() ? (S32)hg->getSpatialPartition()->mPartitionType : -1, listed ? "LISTED" : "NOT listed", (S32)hg->getElementCount(),
+                                    ge[0][0], ge[0][1], ge[0][2], ge[1][0], ge[1][1], ge[1][2], occ ? 1 : 0, par_occ ? 1 : 0, hg->hasState(LLSpatialGroup::RK_RELEASED) ? 1 : 0, hg->isDirty() ? 1 : 0, hg->isEmpty() ? 1 : 0, hg->isDead() ? 1 : 0,
+                                    hg->getVisible(LLViewerCamera::CAMERA_WORLD), (S32)LLViewerOctreeEntryData::getCurrentFrame());
+                            }
+                            examples += llformat("  not in map %d: point (%.1f,%.1f,%.1f) %.1f m along the view, ndc (%.2f,%.2f,%.2f), %s the scene box, object type %d, %s\n", c, p.mV[0], p.mV[1], p.mV[2], depth,
+                                cl.w != 0.f ? cl.x / cl.w : 0.f, cl.w != 0.f ? cl.y / cl.w : 0.f, cl.w != 0.f ? cl.z / cl.w : 0.f, in_box ? "inside" : "OUTSIDE", (S32)hit_obj->getPCode(), group_text.c_str());
+                        }
+                    }
+                }
+            }
+            LL_INFOS("ShadowCover") << "frame " << gFrameCount << ": " << rays << " rays, " << hits << " hits; scene box " << scene_min << " .. " << scene_max << "; hits outside the box " << outside_box << " (of those inside a map " << outside_box_in_map
+                << "); cascade 0..3: hits owned " << owned[0] << "/" << owned[1] << "/" << owned[2] << "/" << owned[3] << ", not in the map " << missed[0] << "/" << missed[1] << "/" << missed[2] << "/" << missed[3]
+                << " (of those inside the box " << missed_in_box[0] << "/" << missed_in_box[1] << "/" << missed_in_box[2] << "/" << missed_in_box[3] << "); splits " << dist[0] << " " << dist[1] << " " << dist[2] << " " << dist[3] << " " << dist[4]
+                << (examples.empty() ? "" : "\n") << examples << LL_ENDL;
+        }
     }
 
     //hack to disable projector shadows
