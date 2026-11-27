@@ -27025,24 +27025,31 @@ static bool cull_visible_extents(LLCullResult* cull, LLVector3& min, LLVector3& 
     const F32 X = 65536.f;
     LLVector4a mn(X, X, X, 0.f), mx(-X, -X, -X, 0.f);
     bool any = false;
-    for (LLCullResult::sg_iterator i = cull->beginVisibleGroups(); i != cull->endVisibleGroups(); ++i)
+    // <FS> 2026-11-26: the groups that render by drawable (terrain, trees, water) are in the cull result's drawable group list, not in the visible group list (markNotCulled), and the octree walk this replaced
+    // took every partition. Without them the box of an empty region held only far objects: the ground near the camera lay outside the box, so outside the maps of the cascades fitted from it (a dark band
+    // that came and went on the flat ground seen from above; a log of the fit showed 83 of 107 ground points outside cascade 1's map, and none outside with the groups added).
+    LLCullResult::sg_iterator lists[2][2] = { { cull->beginVisibleGroups(), cull->endVisibleGroups() }, { cull->beginDrawableGroups(), cull->endDrawableGroups() } };
+    for (int list = 0; list < 2; ++list)
     {
-        LLSpatialGroup* group = *i;
-        if (!group || group->isDead() || group->isEmpty())
+        for (LLCullResult::sg_iterator i = lists[list][0]; i != lists[list][1]; ++i)
         {
-            continue;
+            LLSpatialGroup* group = *i;
+            if (!group || group->isDead() || group->isEmpty())
+            {
+                continue;
+            }
+            LLSpatialPartition* partition = group->getSpatialPartition();
+            if (!partition || partition->asBridge())
+            {
+                continue;
+            }
+            const LLVector4a* e = group->getObjectExtents();
+            mn.setMin(mn, e[0]);
+            mn.setMin(mn, e[1]);
+            mx.setMax(mx, e[0]);
+            mx.setMax(mx, e[1]);
+            any = true;
         }
-        LLSpatialPartition* partition = group->getSpatialPartition();
-        if (!partition || partition->asBridge())
-        {
-            continue;
-        }
-        const LLVector4a* e = group->getObjectExtents();
-        mn.setMin(mn, e[0]);
-        mn.setMin(mn, e[1]);
-        mx.setMax(mx, e[0]);
-        mx.setMax(mx, e[1]);
-        any = true;
     }
     if (any)
     {
