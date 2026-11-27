@@ -1381,6 +1381,31 @@ bool LLOcclusionCullingGroup::earlyFail(LLCamera* camera, const LLVector4a* boun
     return true;
 }
 
+// <FS> 2026-11-27: all or nothing, visible wins. A group that is visible has no occluded group above it: the viewer marks a subtree with the state of its top, and the worker prunes everything under an occluded
+// node whatever the state of the nodes below, so a visible group under an occluded one is listed by the viewer and never drawn. Every place that makes a group visible calls this: the top-most occluded group
+// above it, and everything under that, become visible together (the groups above ask for their next verdict as top-most groups and decide again). A visible verdict of a group that arrived after the verdict that
+// occluded its parent (they come 1 to 4 frames late) left exactly that state, and nothing marked the group again, because its parent already had the bit.
+static void rk_hiz_visible_above(LLOcclusionCullingGroup* g)
+{
+    const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
+    LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
+    LLOcclusionCullingGroup* top = nullptr;
+    for (LLViewerOctreeGroup* a = g->getParent(); a; a = a->getParent())
+    {
+        LLOcclusionCullingGroup* o = static_cast<LLOcclusionCullingGroup*>(a);
+        if (o->isOcclusionState(LLOcclusionCullingGroup::OCCLUDED))
+        {
+            top = o;
+        }
+        o->mHizOccludedOnce = false;
+    }
+    if (top)
+    {
+        top->clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+    }
+    LLViewerCamera::sCurCameraID = saved_camera;
+}
+
 void LLOcclusionCullingGroup::checkOcclusion()
 {
     if (LLPipeline::useOcclusion() < 2) return;  // 0 - NoOcclusion, 1 = ReadOnly, 2 = ModifyOcclusionState  TODO: DJH 11-2021 ENUM this
@@ -1397,6 +1422,7 @@ void LLOcclusionCullingGroup::checkOcclusion()
     if (mHizStale && mHizSerial)
     {   // a verdict is awaited and the group asked to be discarded (an object was added): visible until the next box has a result
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+        rk_hiz_visible_above(this);
         mHizSerial = 0;
         mHizStale = false;
     }
@@ -1443,6 +1469,7 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
         mHizSerial = 0;
         mHizStale = true;
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+        rk_hiz_visible_above(this);
         return;
     }
     if (mHizSerial && !mHizStale)
@@ -1459,24 +1486,23 @@ void LLOcclusionCullingGroup::hizEntryMoved(const LLVector4a* entry_extents)
 {
     const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
     LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
+    // <FS> 2026-11-27: all or nothing, visible wins. An object that is added or moved into this group has no verdict of its own, so nothing that holds an occluded state above it may hide it: the top-most
+    // occluded group of the chain and everything under it (the viewer marks a subtree with the state of its top, and the worker prunes everything under an occluded node) become visible together, until two
+    // agreeing verdicts decide again. Judged node by node, a leaf could be cleared under an ancestor that stayed occluded (the viewer listed it, the worker pruned it), and a sibling kept its mark when the
+    // group above it was cleared.
+    LLOcclusionCullingGroup* top = nullptr;
     for (LLViewerOctreeGroup* g = this; g; g = g->getParent())
     {
         LLOcclusionCullingGroup* o = static_cast<LLOcclusionCullingGroup*>(g);
-        if (!(o->row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        if (o->row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED)
         {
-            continue;
+            top = o;
         }
-        // the box the verdict was for: the group's bounds (centre, half size) as they stand until the next rebound
-        const LLVector4a* b = o->row().bounds;
-        LLVector4a lo, hi;
-        lo.setSub(b[0], b[1]);
-        hi.setAdd(b[0], b[1]);
-        const bool inside = !(entry_extents[0].lessThan(lo).getGatheredBits() & 0x7) && !(entry_extents[1].greaterThan(hi).getGatheredBits() & 0x7);
-        if (!inside)
-        {
-            o->clearOcclusionState(OCCLUDED, STATE_MODE_SINGLE);
-            o->mHizOccludedOnce = false;
-        }
+        o->mHizOccludedOnce = false;
+    }
+    if (top)
+    {
+        top->clearOcclusionState(OCCLUDED, STATE_MODE_DIFF);
     }
     LLViewerCamera::sCurCameraID = saved_camera;
 }
@@ -1503,6 +1529,7 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
     {
         mHizOccludedOnce = false;
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+        rk_hiz_visible_above(this);
     }
     LLViewerCamera::sCurCameraID = saved_camera;
 }
