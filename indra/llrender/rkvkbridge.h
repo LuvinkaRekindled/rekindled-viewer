@@ -448,6 +448,8 @@ namespace RKVkBridge
     // <FS> P2 (PLAN-avatars.md): the number of kind 21 records the worker did not play (not in a frame, no scene table). A rigged item's palette binding is persistent: the viewer sends it when it changes, so a record
     // that was lost makes it send every binding again
     static inline std::atomic<U32> sGeoPrepareDropped{ 0 };
+    // <FS> 2026-11-27 bug hunt (RK_VK_WATCH_OBJECT in the viewer; stays as a debug tool, off unless the variable is set): the table slot of the group of the watched object (~0u: none), for the worker's own line about its verdict on that row
+    inline std::atomic<U32> sWatchSlot{ ~0u };       // (not `static`: a static at namespace scope is a copy for each source file, and the viewer's store would never reach the worker)
     // queues (async) or runs the upscale: colour + depth + motion -> output, all textures the mirror owns
     void upscale(const UpscaleArgs& args);
 

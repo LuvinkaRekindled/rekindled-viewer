@@ -11512,6 +11512,7 @@ void cull_process()
         }
         g->mCullId = slot + 1;
         g->mCullFirstSerial = sCullBuildSerial;
+        g->mCullFirstFrame = (U32)gFrameCount;
         g->mCullDirty = true;
         sSlotGroup[slot] = g;
         if (sSlotPartType.size() <= slot)
@@ -12100,6 +12101,34 @@ static void rk_occluded_retest(LLCamera& camera)
     }
 }
 
+// <FS> 2026-11-26: the walk keeps a group only if its extents also touch the sphere of the far limit (LLOctreeCull::frustumCheck: the frustum without the far plane, then AABBSphereIntersect of the extents with the sphere
+// of radius mFrustumCornerDist), except in the partitions that are never far clipped (terrain, water; mInfiniteFarClip) or when the far clip is off (sUseFarClip). The groups the recent list below adds (a row made or changed in
+// the last 3 frames) were tested against the frustum alone, so a group past the view distance whose row had just changed was marked and drawn for up to 3 frames and then dropped: the far pieces that blinked on and off.
+static bool rk_group_beyond_far_limit(LLCamera& camera, LLSpatialGroup* g, LLSpatialPartition* part)
+{
+    if (part->mInfiniteFarClip || !LLPipeline::sUseFarClip)
+    {
+        return false;
+    }
+    // <FS> 2026-11-27: the hysteresis of the worker's far-limit test (kFarHysteresis, rkvkworker.cpp), the same 4 m: a group the main camera marked in the last frame stays in while it is within that margin of the sphere;
+    // one it did not mark has to touch the exact sphere. (The stamp is the octree's frame counter, which the marking uses; the groups of this pass are not in the kept set, so it is last frame's mark.)
+    const F32 hysteresis = (g->getVisible(LLViewerCamera::CAMERA_WORLD) >= (S32)LLViewerOctreeEntryData::getCurrentFrame() - 1) ? 4.f : 0.f;
+    const LLVector4a* ext = g->getExtents();
+    if (AABBSphereIntersect(ext[0], ext[1], camera.getOrigin(), camera.mFrustumCornerDist + hysteresis) == 0)
+    {
+        return true;
+    }
+    // <FS> 2026-11-27: the walk's second test (LLViewerOctreeCull::checkObjects): a node that has children is kept only if its own objects' extents also touch the sphere. The worker's verdict 7 ("objects") is the same
+    // test; without it here a group whose extents reach in but whose objects lie past the limit was listed for 3 frames after each change of its extents and then dropped (the box prim that blinked, watcher log 2026-11-27).
+    const OctreeNode* node = g->getOctreeNode();
+    if (node && node->getElementCount() != 0 && node->getChildCount() != 0)
+    {
+        const LLVector4a* oext = g->getObjectExtents();
+        return AABBSphereIntersect(oext[0], oext[1], camera.getOrigin(), camera.mFrustumCornerDist + hysteresis) == 0;
+    }
+    return false;
+}
+
 void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool parallel_ok)
 {
     cull_process();                     // the rows the rebounds touched, before the pass reads them 
@@ -12140,6 +12169,12 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
                 const U32 slot = (w << 5) + b;
                 if (((bits >> b) & 1u) && slot < n && sSlotGroup[slot])
                 {
+                    // <FS> 2026-11-26: the set was made from the record of frame wl->mFrame. A group that was given this slot after that frame is not the one the bit is about (the slot of a destroyed group goes to the next new
+                    // group at once): the bit is not applied to it, the recent list below takes it, with the frustum and the far limit tested.
+                    if (sSlotGroup[slot]->mCullFirstFrame > wl->mFrame)
+                    {
+                        continue;
+                    }
                     groups.push_back((LLSpatialGroup*)sSlotGroup[slot]);
                 }
             }
@@ -12154,7 +12189,7 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
         std::lock_guard<std::mutex> lock(sCullMutex);
         const U32 now = (U32)gFrameCount;
         const U32 n = (U32)sSlotGroup.size();
-        const auto in_set = [&](U32 slot) { return (slot >> 5) < kept_bits.size() && ((kept_bits[slot >> 5] >> (slot & 31u)) & 1u); };
+        const auto in_set = [&](U32 slot) { return (slot >> 5) < kept_bits.size() && ((kept_bits[slot >> 5] >> (slot & 31u)) & 1u) && !(slot < n && sSlotGroup[slot] && sSlotGroup[slot]->mCullFirstFrame > wl->mFrame); };       // (a bit of an older group in a reused slot is not the set's word about this one)
         static std::unordered_set<U32> added;
         added.clear();
         for (const auto& e : sRecent)
@@ -12173,7 +12208,7 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
                     continue;
                 }
                 const LLVector4a* bb = g->getBounds();
-                if (g->isDead() || g->isEmpty() || camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
+                if (g->isDead() || g->isEmpty() || camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0 || rk_group_beyond_far_limit(camera, g, gpart))
                 {
                     continue;       // (the row is the group's of this frame: the walk's own box test, so a group outside the frustum is not marked: 144 a pass without the test, about 19 with it)
                 }
@@ -12199,6 +12234,64 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
             {
                 RK_DIAG("VkRecentOcc") << "recent list, a frame over 600: groups added " << (F64)sRecentAdded / 600.0 << ", skipped as occluded " << (F64)sRecentOccSkipped / 600.0 << ", rows whose occluded flag cleared " << (F64)sRecentOccCleared / 600.0 << LL_ENDL;
                 sRecentAdded = sRecentOccSkipped = sRecentOccCleared = 0;
+            }
+        }
+    }
+    {
+        // <FS> 2026-11-27 bug hunt (RK_VK_WATCH_OBJECT=<object id>; stays as a debug tool, off unless the variable is set): the group of one object through the main view's lists. One line when it comes to be listed or stops being, or its slot changes, with where
+        // its extents are against the far limit and where it came from (the kept set's bit, as the set has it and after the guard, or the recent list).
+        static const char* const watch_env = getenv("RK_VK_WATCH_OBJECT");
+        if (watch_env && watch_env[0])
+        {
+            static const LLUUID watch_id(watch_env);
+            static bool last_listed = false;
+            static U32 last_slot = ~0u;
+            LLViewerObject* wo = gObjectList.findObject(watch_id);
+            LLSpatialGroup* wg = (wo && wo->mDrawable.notNull() && !wo->mDrawable->isDead()) ? wo->mDrawable->getSpatialGroup() : nullptr;
+            const U32 wslot = (wg && wg->mCullId) ? wg->mCullId - 1 : ~0u;
+            RKVkBridge::sWatchSlot.store(wslot);
+            if (wg)
+            {
+                const bool listed = std::find(groups.begin(), groups.end(), wg) != groups.end();
+                if (listed != last_listed || wslot != last_slot)
+                {
+                    last_listed = listed;
+                    last_slot = wslot;
+                    const bool raw_bit = wslot != ~0u && (wslot >> 5) < kept_bits.size() && ((kept_bits[wslot >> 5] >> (wslot & 31u)) & 1u);
+                    const bool guarded = raw_bit && wg->mCullFirstFrame > wl->mFrame;
+                    const LLVector4a* ext = wg->getExtents();
+                    const LLVector3 o = camera.getOrigin();
+                    F32 d2 = 0.f;
+                    for (int k = 0; k < 3; ++k)
+                    {
+                        const F32 t = llmax(llmax(ext[0][k] - o.mV[k], o.mV[k] - ext[1][k]), 0.f);
+                        d2 += t * t;
+                    }
+                    const F32 nearest = sqrtf(d2);
+                    LL_INFOS("VkWatch") << "viewer, frame " << gFrameCount << ", the object's group is " << (listed ? "LISTED" : "not listed") << " | kept set bit " << (raw_bit ? 1 : 0) << ", dropped by the slot guard " << (guarded ? 1 : 0)
+                        << ", set made from the record of frame " << wl->mFrame << " | slot " << wslot << ", slot given in frame " << wg->mCullFirstFrame << " | object at " << wo->getPositionAgent() << ", scale " << wo->getScale()
+                        << ", " << (wo->getPositionAgent() - o).length() << " m from the camera | group extents " << LLVector3(ext[0].getF32ptr()) << " .. " << LLVector3(ext[1].getF32ptr()) << ", nearest point " << nearest << " m, far limit "
+                        << camera.mFrustumCornerDist << " (" << (nearest - camera.mFrustumCornerDist) << " m outside) | dirty " << (wg->isDirty() ? 1 : 0) << ", empty " << (wg->isEmpty() ? 1 : 0) << ", occluded "
+                        << (wg->isOcclusionState(LLSpatialGroup::OCCLUDED) ? 1 : 0) << ", world stamp " << wg->getVisible(LLViewerCamera::CAMERA_WORLD) << " of octree frame " << LLViewerOctreeEntryData::getCurrentFrame() << ", partition "
+                        << (wg->getSpatialPartition() ? (S32)wg->getSpatialPartition()->mPartitionType : -1);
+                    {
+                        // the viewer's own copy of the slot's row (what is sent to the worker), and whether the row is waiting for the group's bounds
+                        std::lock_guard<std::mutex> lock(sCullMutex);
+                        if (wslot < sMirror.size())
+                        {
+                            const RKVkBridge::CullRow& mr = sMirror[wslot];
+                            LL_CONT << " | the viewer's row for the slot: flags " << mr.mFlags << ", extents (" << mr.mExtMin[0] << "," << mr.mExtMin[1] << "," << mr.mExtMin[2] << ")..(" << mr.mExtMax[0] << "," << mr.mExtMax[1] << "," << mr.mExtMax[2]
+                                << "), waiting for bounds (mCullDirty) " << (wg->mCullDirty ? 1 : 0);
+                        }
+                    }
+                    LL_CONT << LL_ENDL;
+                }
+            }
+            else if (last_slot != ~0u)
+            {
+                last_slot = ~0u;
+                last_listed = false;
+                LL_INFOS("VkWatch") << "viewer, frame " << gFrameCount << ": the watched object has no group now (gone, or not made)" << LL_ENDL;
             }
         }
     }

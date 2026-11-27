@@ -301,6 +301,7 @@ public:
     U32         mCullId = 0;                // slot + 1 in the table (0: none)
     bool        mCullDirty = false;         // in the list of rows to refresh
     U32         mCullFirstSerial = 0;
+    U32         mCullFirstFrame = 0;        // <FS> 2026-11-26: the frame this group was given its slot. A slot is given to the next new group as soon as it is freed, and the worker's kept set (made from the record of an earlier frame) has the old group's bit in it: a bit applies to a group only if the group had its slot by the set's frame (rk_cull_derived_pass)
 
 };//LL_ALIGN_POSTFIX(16);
 

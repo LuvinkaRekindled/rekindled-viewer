@@ -1642,9 +1642,29 @@ S32 LLViewerOctreeCull::AABBInFrustumNoFarClipGroupBounds(const LLViewerOctreeGr
     return mCamera->AABBInFrustumNoFarClip(group->row().bounds[0], group->row().bounds[1]);
 }
 
+// <FS> 2026-11-26: the far limit of the world cull. AABBSphereIntersect answers 2 ("wholly in", the walk then takes every node below it without a test) when the box's MINIMUM and MAXIMUM corners are inside the sphere,
+// but those two are not always the farthest: a node can be called wholly in with children well past the view distance, and those were drawn (the far plane of the projection is 1024, nothing else clips them). 2 is now
+// given only when the farthest corner is inside as well; anything that touches the sphere is still in (1, its children are tested one by one), so a group that crosses the view distance is still taken and drawn
+// whole, and one that lies wholly beyond it is not. The worker's copy, cull_sphere_res (rkvkworker.cpp), must stay the same.
+static S32 rk_sphere_whole_only_if_farthest_corner_in(const LLVector4a& min, const LLVector4a& max, const LLVector3& origin, F32 radius)
+{
+    const S32 res = AABBSphereIntersect(min, max, origin, radius);
+    if (res != 2)
+    {
+        return res;
+    }
+    F32 farthest2 = 0.f;
+    for (U32 i = 0; i < 3; ++i)
+    {
+        const F32 t = llmax(fabsf(min[i] - origin.mV[i]), fabsf(max[i] - origin.mV[i]));
+        farthest2 += t * t;
+    }
+    return farthest2 < radius * radius ? 2 : 1;
+}
+
 S32 LLViewerOctreeCull::AABBSphereIntersectGroupExtents(const LLViewerOctreeGroup* group)
 {
-    return AABBSphereIntersect(group->row().extents[0], group->row().extents[1], mCamera->getOrigin(), mCamera->mFrustumCornerDist);
+    return rk_sphere_whole_only_if_farthest_corner_in(group->row().extents[0], group->row().extents[1], mCamera->getOrigin(), mCamera->mFrustumCornerDist);
 }
 
 S32 LLViewerOctreeCull::AABBInFrustumGroupBounds(const LLViewerOctreeGroup* group)
@@ -1662,7 +1682,7 @@ S32 LLViewerOctreeCull::AABBInFrustumNoFarClipObjectBounds(const LLViewerOctreeG
 
 S32 LLViewerOctreeCull::AABBSphereIntersectObjectExtents(const LLViewerOctreeGroup* group)
 {
-    return AABBSphereIntersect(group->row().objectExtents[0], group->row().objectExtents[1], mCamera->getOrigin(), mCamera->mFrustumCornerDist);
+    return rk_sphere_whole_only_if_farthest_corner_in(group->row().objectExtents[0], group->row().objectExtents[1], mCamera->getOrigin(), mCamera->mFrustumCornerDist);
 }
 
 S32 LLViewerOctreeCull::AABBInFrustumObjectBounds(const LLViewerOctreeGroup* group)

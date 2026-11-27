@@ -11983,7 +11983,14 @@ int cull_sphere_res(const RKVkBridge::CullParams& P, const F32* mn, const F32* m
     }
     if (a < r2 && b < r2)
     {
-        return 2;
+        // <FS> 2026-11-26: as LLViewerOctreeCull::AABBSphereIntersectGroupExtents (llvieweroctree.cpp, rk_sphere_whole_only_if_farthest_corner_in): wholly in only when the farthest corner is inside too, else partly in
+        F32 farthest2 = 0.f;
+        for (int k = 0; k < 3; ++k)
+        {
+            const F32 t = fmaxf(fabsf(mn[k] - m - P.mOrigin[k]), fabsf(mx[k] + m - P.mOrigin[k]));
+            farthest2 += t * t;
+        }
+        return farthest2 < r2 ? 2 : 1;
     }
     for (int k = 0; k < 3; ++k)
     {
@@ -12004,14 +12011,32 @@ F32 cull_margin(const RKVkBridge::CullParams& P, const RKVkBridge::CullRow& r, F
     return (P.mMotion[0] + sqrtf(dx * dx + dy * dy + dz * dz) * P.mMotion[1]) * factor;
 }
 
+// <FS> 2026-11-27: hysteresis of the far limit. A group's verdict is made on its extents as they are now, and the extents of a group at the edge of the view distance move by centimetres (a part that moves, a member
+// loaded or removed), so a group that touches the sphere by that little came and went from one frame to the next, and with it the far members of a group that is drawn whole. A group the last verdict of this kind
+// accepted is now tested against a sphere kFarHysteresis metres larger: it stays while it is within that margin, and a group that was not accepted still has to touch the exact sphere to get in. The previous verdict is the
+// bit set (by slot) the caller names for the length of one derive (FarHysteresisScope); a test made without one is the exact test.
+constexpr F32 kFarHysteresis = 4.f;
+thread_local const U32* tl_far_prev = nullptr;
+thread_local size_t tl_far_prev_words = 0;
+struct FarHysteresisScope
+{
+    const U32* mPrevData; size_t mPrevWords;
+    FarHysteresisScope(const std::vector<U32>& prev) : mPrevData(tl_far_prev), mPrevWords(tl_far_prev_words) { tl_far_prev = prev.data(); tl_far_prev_words = prev.size(); }
+    ~FarHysteresisScope() { tl_far_prev = mPrevData; tl_far_prev_words = mPrevWords; }
+};
+inline F32 cull_far_hysteresis(U32 slot)
+{
+    return (slot != ~0u && tl_far_prev && (size_t)(slot >> 5) < tl_far_prev_words && ((tl_far_prev[slot >> 5] >> (slot & 31u)) & 1u)) ? kFarHysteresis : 0.f;
+}
+
 // the culler's frustumCheck of the group's bounds (and, for the far limit, its extents) and its frustumCheckObjects of the object bounds
-int cull_group_res(const RKVkBridge::CullParams& P, const RKVkBridge::CullRow& r, F32 factor = 0.f)
+int cull_group_res(const RKVkBridge::CullParams& P, const RKVkBridge::CullRow& r, F32 factor = 0.f, U32 slot = ~0u)
 {
     const F32 m = cull_margin(P, r, factor);
     int res = cull_box_res(P, r.mCenter, r.mHalf, m);
     if (res && (r.mFlags & 8u))
     {
-        const int sp = cull_sphere_res(P, r.mExtMin, r.mExtMax, m);
+        const int sp = cull_sphere_res(P, r.mExtMin, r.mExtMax, m + cull_far_hysteresis(slot));
         res = sp < res ? sp : res;
     }
     if (m > 0.f && res < 2)
@@ -12023,7 +12048,7 @@ int cull_group_res(const RKVkBridge::CullParams& P, const RKVkBridge::CullRow& r
     return res;
 }
 
-int cull_objects_res(const RKVkBridge::CullParams& P, const RKVkBridge::CullRow& r, const RKVkBridge::CullMapRow& m, F32 factor = 0.f)
+int cull_objects_res(const RKVkBridge::CullParams& P, const RKVkBridge::CullRow& r, const RKVkBridge::CullMapRow& m, F32 factor = 0.f, U32 slot = ~0u)
 {
     int res = cull_box_res(P, m.mObjCenter, m.mObjHalf, cull_margin(P, r, factor));      // (stage 10d: the margin of a view request that asks for it; 0 for the exact test)
     if (res && (r.mFlags & 8u))
@@ -12034,7 +12059,7 @@ int cull_objects_res(const RKVkBridge::CullParams& P, const RKVkBridge::CullRow&
             mn[k] = m.mObjCenter[k] - m.mObjHalf[k];
             mx[k] = m.mObjCenter[k] + m.mObjHalf[k];
         }
-        const int sp = cull_sphere_res(P, mn, mx);
+        const int sp = cull_sphere_res(P, mn, mx, cull_far_hysteresis(slot));
         res = sp < res ? sp : res;
     }
     return res;
@@ -12096,7 +12121,7 @@ U8 cull_chain_state(const CullShadowState& s, const RKVkBridge::CullParams& P, b
         }
         else
         {
-            const int res = cull_group_res(P, row, factor);
+            const int res = cull_group_res(P, row, factor, slot);
             st = res == 0 ? ST_OUT : res == 2 ? ST_FULL : ST_PART;
         }
     }
@@ -12172,7 +12197,7 @@ int cull_row_verdict(const CullShadowState& s, const RKVkBridge::CullParams& P, 
         return CV_NOHANDLE;         // (an empty group is not processed)
     }
     // LLViewerOctreeCull::checkObjects: a node with children that is only partly in needs its object bounds in the frustum too
-    if ((map.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, map) == 0)
+    if ((map.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, map, 0.f, slot) == 0)
     {
         return CV_OBJECTS;
     }
@@ -12246,7 +12271,7 @@ void cull_kept_bits(const CullShadowState& s, const RKVkBridge::CullParams& P, b
             continue;
         }
         const RKVkBridge::CullMapRow& m = s.mMap[slot];
-        if ((m.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, m, factor) == 0)
+        if ((m.mFlags & 16u) && st == ST_PART && cull_objects_res(P, row, m, factor, slot) == 0)
         {
             continue;
         }
@@ -12367,7 +12392,22 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
             {
                 // stage 8f: the groups the walk keeps (markNotCulled is called for them): not dead, not a bridge's, not empty, neither the node nor an ancestor dropped as occluded or out of the frustum (the chain of the walk, with the far
                 // quirk), and for a node with children that is only partly in, its object bounds in the frustum too. By slot, one bit each. A fragment handle is not needed: a group that still has to be built is kept as well.
-                cull_kept_bits(s, P, occlusion, memo, list->mKept, 0.f, type_mask);
+                {
+                    // the far limit's hysteresis (cull_far_hysteresis): the previous kept set, copied (this publish can run on more than one thread)
+                    static std::mutex kept_prev_mutex;
+                    static std::vector<U32> kept_prev;
+                    std::vector<U32> prev;
+                    {
+                        std::lock_guard<std::mutex> lock(kept_prev_mutex);
+                        prev = kept_prev;
+                    }
+                    {
+                        FarHysteresisScope far_scope(prev);
+                        cull_kept_bits(s, P, occlusion, memo, list->mKept, 0.f, type_mask);
+                    }
+                    std::lock_guard<std::mutex> lock(kept_prev_mutex);
+                    kept_prev = list->mKept;
+                }
             }
             RKVkBridge::consumerListPublish(std::move(list));
         }
@@ -12546,6 +12586,9 @@ bool cull_derive_main_view(const RKVkBridge::ShadowPacketsHeader& h, const U8* v
     static std::vector<U32> vis_words;
     vis_words.assign((table + 31) / 32, 0);
     const U64 derived_before = d.mDerived;
+    static std::vector<U32> far_prev_draw;      // the set the last derive accepted, by slot: the far limit's hysteresis (cull_far_hysteresis)
+    {
+    FarHysteresisScope far_scope(far_prev_draw);
     for (U32 slot = 0; slot < table; ++slot)
     {
         const int v = cull_row_verdict(s, P, slot, occlusion, hide_limit, type_mask, memo, bridge_marked);
@@ -12564,6 +12607,45 @@ bool cull_derive_main_view(const RKVkBridge::ShadowPacketsHeader& h, const U8* v
             own_out->push_back(s.mMap[slot].mHandle);       // (a bridge's group, or a group whose fragment handle changed in the last records: the viewer's own handle below)
         }
     }
+    {
+        // <FS> 2026-11-27 bug hunt (the viewer's RK_VK_WATCH_OBJECT; stays as a debug tool, off unless the variable is set): the worker's own verdict on the watched object's group, one line when the slot, the verdict or the derived set's answer changes
+        const U32 watch_slot = RKVkBridge::sWatchSlot.load();
+        static U32 last_slot = ~0u;
+        static int last_verdict = -1;
+        static bool last_in = false;
+        if (watch_slot < table)
+        {
+            const int verdict = cull_row_verdict(s, P, watch_slot, occlusion, hide_limit, type_mask, memo, bridge_marked);
+            const bool in_set = ((vis_words[watch_slot >> 5] >> (watch_slot & 31u)) & 1u) != 0;
+            static RKVkBridge::CullRow last_row;
+            const bool row_changed = memcmp(&last_row, &s.mTable[watch_slot], sizeof(last_row)) != 0;
+            if (watch_slot != last_slot || verdict != last_verdict || in_set != last_in || row_changed)
+            {
+                last_slot = watch_slot;
+                last_verdict = verdict;
+                last_in = in_set;
+                last_row = s.mTable[watch_slot];
+                const RKVkBridge::CullRow& r = s.mTable[watch_slot];
+                F32 d2 = 0.f;
+                for (int k = 0; k < 3; ++k)
+                {
+                    const F32 t = fmaxf(fmaxf(r.mExtMin[k] - P.mOrigin[k], P.mOrigin[k] - r.mExtMax[k]), 0.f);
+                    d2 += t * t;
+                }
+                const F32 nearest = sqrtf(d2);
+                LL_INFOS("VkWatch") << "worker, record of frame " << h.mPass << ", slot " << watch_slot << ": verdict " << verdict << " (0 pass, 1 dead, 2 no handle, 3 render type, 4 occluded, 5 auto-hide, 6 frustum, 7 objects, 8 bridge gate), in the derived set "
+                    << in_set << " | far limit radius " << P.mCornerDist << ", the row's extents (" << r.mExtMin[0] << "," << r.mExtMin[1] << "," << r.mExtMin[2] << ")..(" << r.mExtMax[0] << "," << r.mExtMax[1] << "," << r.mExtMax[2] << "), nearest point "
+                    << nearest << " m from the camera (" << (nearest - P.mCornerDist) << " m outside the limit), exact sphere answer " << cull_sphere_res(P, r.mExtMin, r.mExtMax) << ", accepted last derive " << (cull_far_hysteresis(watch_slot) > 0.f ? 1 : 0)
+                    << ", row flags " << r.mFlags << LL_ENDL;
+            }
+        }
+        else
+        {
+            last_slot = ~0u;
+        }
+    }
+    }
+    far_prev_draw = vis_words;
     if (rk_diag_on())
     {
         flash_watch(s, P, occlusion, hide_limit, type_mask, memo, bridge_marked, vis_words, d.mDerived - derived_before);

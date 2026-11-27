@@ -790,6 +790,7 @@ struct BlinkCapture
     U64 mCaptured = 0, mSkippedBusy = 0, mTriggers = 0, mSaved = 0, mLastSaveFrame = 0, mChecks = 0, mGap = 0;
     F32 mDrop = 0.25f;          // RK_VK_BLINK_DROP: how much darker (a share) a block must be for one frame
     U32 mBlocks = 3;            // RK_VK_BLINK_BLOCKS: how many blocks must do it
+    U32 mSpan = 1;              // RK_VK_BLINK_SPAN (1 to 6): how many frames in a row the change may last (the frames on both sides must agree)
     U32 mMaxSaved = 300;        // RK_VK_BLINK_MAX: how many blinks are written out
     F32 mChange = 0.f;          // RK_VK_BLINK_CHANGE (0 = off): a block whose colour differs from the mean of the frames before and after by more than this (0 to 1, in any channel) for ONE frame, while those two agree, counts: a surface that shows another texture for a frame changes colour more than its brightness
     U32 mMaxChanged = 0;
@@ -821,6 +822,7 @@ struct BlinkCapture
                 }
                 if (const char* v = getenv("RK_VK_BLINK_DROP")) mDrop = std::max(0.05f, std::min(0.9f, (F32)atof(v)));
                 if (const char* v = getenv("RK_VK_BLINK_BLOCKS")) mBlocks = (U32)std::max(1, atoi(v));
+                if (const char* v = getenv("RK_VK_BLINK_SPAN")) mSpan = (U32)std::max<S32>(1, std::min<S32>(6, atoi(v)));
                 if (const char* v = getenv("RK_VK_BLINK_MAX")) mMaxSaved = (U32)std::max(1, atoi(v));
                 if (const char* v = getenv("RK_VK_BLINK_CHANGE")) mChange = std::max(0.f, std::min(1.f, (F32)atof(v)));
                 if (const char* v = getenv("RK_VK_BLINK_WIDTH")) mCapW = (U32)std::max<S32>(320, std::min<S32>(1280, atoi(v))) / CELL * CELL;
@@ -933,19 +935,25 @@ struct BlinkCapture
     // the oldest three in the history: a, b (the frame under test), c
     void check()
     {
-        if (mHistory.size() < 3)
+        const size_t span = mSpan;
+        if (mHistory.size() < span + 2)
         {
             return;
         }
-        const Done& a = mHistory[mHistory.size() - 3];
-        const Done& b = mHistory[mHistory.size() - 2];
+        const Done& a = mHistory[mHistory.size() - span - 2];
         const Done& c = mHistory[mHistory.size() - 1];
-        if (b.mSeq != a.mSeq + 1 || c.mSeq != b.mSeq + 1)
+        if (c.mSeq != a.mSeq + span + 1)
         {
             ++mGap;
             return;
         }
         ++mChecks;
+        // (RK_VK_BLINK_SPAN: a flash may last up to `span` frames. Each frame between a and c is tried as the middle one and the worst is kept; with 1 it is the test of three frames it always was.)
+        const Done* best = nullptr;
+        U32 best_dark = 0, best_green = 0, best_bright = 0, best_changed = 0;
+        for (size_t cand = 0; cand < span; ++cand)
+        {
+        const Done& b = mHistory[mHistory.size() - span - 1 + cand];
         U32 dark = 0, green = 0, bright = 0, changed = 0;
         const size_t n = b.mLuma.size();
         for (size_t k = 0; k < n; ++k)
@@ -980,6 +988,18 @@ struct BlinkCapture
                 ++green;
             }
         }
+        if (!best || dark + green + bright + changed > best_dark + best_green + best_bright + best_changed)
+        {
+            best = &b;
+            best_dark = dark;
+            best_green = green;
+            best_bright = bright;
+            best_changed = changed;
+        }
+        }
+        const Done& b = *best;
+        const size_t n = b.mLuma.size();
+        const U32 dark = best_dark, green = best_green, bright = best_bright, changed = best_changed;
         mMaxDark = std::max(mMaxDark, dark);
         mMaxGreen = std::max(mMaxGreen, green);
         mMaxBright = std::max(mMaxBright, bright);
@@ -1040,7 +1060,7 @@ struct BlinkCapture
             best->mPending = false;
             analyse(d);
             mHistory.push_back(std::move(d));
-            while (mHistory.size() > 4)
+            while (mHistory.size() > mSpan + 3)
             {
                 mHistory.pop_front();
             }
