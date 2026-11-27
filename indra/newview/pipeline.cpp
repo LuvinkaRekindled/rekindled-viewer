@@ -27235,6 +27235,37 @@ static bool cull_visible_extents(LLCullResult* cull, LLVector3& min, LLVector3& 
             any = true;
         }
     }
+    // <FS> 2026-11-27: the bridges and the avatars are not entries of the region partitions since stage 9 (11-17): the owners' pass lists them (markVisible: a bridge on the visible bridge list, an avatar on the visible
+    // drawable list), and the groups inside a bridge are skipped above (their extents are in the bridge's own space). Nothing gave the box a linkset's world box or an avatar's: a platform made of linked prims, and
+    // the avatar standing on it, fell outside the cascade maps (the same dark bands as terrain that is not listed). Both lists carry the world box (the bridge's is made at every move, updateMove).
+    const auto add_box = [&](const LLVector4a* e)
+    {
+        if (!e || !e[0].isFinite3() || !e[1].isFinite3() || e[1][0] < e[0][0] || e[1][1] < e[0][1] || e[1][2] < e[0][2])
+        {
+            return;     // (an empty or unmade box)
+        }
+        mn.setMin(mn, e[0]);
+        mn.setMin(mn, e[1]);
+        mx.setMax(mx, e[0]);
+        mx.setMax(mx, e[1]);
+        any = true;
+    };
+    for (LLCullResult::bridge_iterator b = cull->beginVisibleBridge(); b != cull->endVisibleBridge(); ++b)
+    {
+        LLSpatialBridge* bridge = *b;
+        if (bridge && !bridge->isDead())
+        {
+            add_box(bridge->getSpatialExtents());
+        }
+    }
+    for (LLCullResult::drawable_iterator d = cull->beginVisibleList(); d != cull->endVisibleList(); ++d)
+    {
+        LLDrawable* drawable = *d;
+        if (drawable && !drawable->isDead() && drawable->isAvatar())
+        {
+            add_box(drawable->getSpatialExtents());
+        }
+    }
     if (any)
     {
         min.set(mn.getF32ptr());
