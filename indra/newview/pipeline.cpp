@@ -4343,9 +4343,9 @@ void LLPipeline::rebuildPriorityGroups()
     LLTimer update_timer;
     assertInitialized();
 
-    gMeshRepo.notifyLoadedMeshes();
+    { RK_CPU_ZONE("geometry: priority groups: mesh repository pump"); gMeshRepo.notifyLoadedMeshes(); }
 
-    wakeGroups();       // <FS> Released groups a camera wants again, a few at a time
+    { RK_CPU_ZONE("geometry: priority groups: wake groups"); wakeGroups(); }       // <FS> Released groups a camera wants again, a few at a time
 
     mGroupQ1Locked = true;
     RKRebuildBatch::Scope rebuild_batch;       // <FS> R3b3 (a scope inside another does nothing: postSort and the shadow prep have their own)
@@ -4356,6 +4356,8 @@ void LLPipeline::rebuildPriorityGroups()
     static U64 q1_groups[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_cycles[LLViewerRegion::NUM_PARTITIONS + 1] = {}, q1_frames = 0, q1_calls = 0;
     static U64 q1_av_groups = 0, q1_av_drawables = 0, q1_av_faces = 0, q1_av_rigged = 0, q1_av_texanim = 0, q1_av_avatars = 0, q1_av_flag[5] = {}, q1_av_dirty[4] = {}, q1_av_kind[2][7] = {};
     // Iterate through all drawables on the priority build queue,
+    {
+    RK_CPU_ZONE("geometry: priority groups: the queue loop");
     for (LLSpatialGroup::sg_vector_t::iterator iter = mGroupQ1.begin();
          iter != mGroupQ1.end(); ++iter)
     {
@@ -4427,6 +4429,7 @@ void LLPipeline::rebuildPriorityGroups()
             last = (U64)gFrameCount;
         }
         group->clearState(LLSpatialGroup::IN_BUILD_Q1);
+    }
     }
     if (q1_census && ++q1_calls % 2400 == 0)
     {
@@ -6788,9 +6791,8 @@ static void rk_sort_rigged_alpha_groups(LLCullResult* cull)
 // budget of its tier (RenderFarAvatarTriangles / RenderFarAvatarTriangles2, 0 = off) is drawn as an impostor (LLVOAvatar::shouldImpostor reads mFarTierHeavy): the picture of the whole avatar. The first
 // version dropped attachment groups that did not fit the budget, and a group is an octree node of the avatar's attachments, not one attachment: it cut avatars apart (a body missing in chunks, 2026-10-27). The avatar is a few dozen pixels tall there. The groups left out are not listed (no render map, no fragment handle, no alpha list), so the G-buffer, the alpha
 // pool, the ray scene naming and the palettes of those draws are all saved. The tier is left again 12.5 % nearer (hysteresis); the viewer's own avatar is never limited.
-static void far_avatar_tier(LLCullResult* cull, std::unordered_set<const LLSpatialGroup*>& skip)
+static void far_avatar_tier(LLCullResult* cull)
 {
-    skip.clear();         // (nothing is skipped any more: the verdict is per avatar, see above)
     static LLCachedControl<F32> distance1(gSavedSettings, "RenderFarAvatarDistance", 20.f);
     static LLCachedControl<F32> distance2(gSavedSettings, "RenderFarAvatarDistance2", 40.f);
     static LLCachedControl<S32> budget1(gSavedSettings, "RenderFarAvatarTriangles", 400000);
@@ -7199,13 +7201,16 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
         static std::vector<LLSpatialGroup*> by_drawable, by_group;
         by_drawable.clear();
         by_group.clear();
-        for (LLSpatialGroup* group : RKDirtyGroups::snapshot())
         {
-            if (group->isDead() || !group->hasState(LLSpatialGroup::MESH_DIRTY) || group->getVisible(cam) < frame || (occ && group->isOcclusionState(LLSpatialGroup::OCCLUDED)))
+            RK_CPU_ZONE("geometry: registry snapshot and filter (mesh)");
+            for (LLSpatialGroup* group : RKDirtyGroups::snapshot())
             {
-                continue;
+                if (group->isDead() || !group->hasState(LLSpatialGroup::MESH_DIRTY) || group->getVisible(cam) < frame || (occ && group->isOcclusionState(LLSpatialGroup::OCCLUDED)))
+                {
+                    continue;
+                }
+                (group->getSpatialPartition()->mRenderByGroup ? by_group : by_drawable).push_back(group);
             }
-            (group->getSpatialPartition()->mRenderByGroup ? by_group : by_drawable).push_back(group);
         }
         for (LLSpatialGroup* group : by_drawable)
         {
@@ -7232,12 +7237,15 @@ void LLPipeline::rebuildGeometry(LLCamera& camera)
             const bool geom_occ = LLPipeline::useOcclusion() != 0;
             static std::vector<LLSpatialGroup*> geom_groups;       // (a rebuild can add to the registry, so the walk is of one copy)
             geom_groups.clear();
-            for (LLSpatialGroup* group : RKDirtyGroups::snapshot())
             {
-                if (!group->isDead() && group->hasState(LLSpatialGroup::GEOM_DIRTY) && !group->getSpatialPartition()->mRenderByGroup && group->getVisible(geom_cam) >= geom_frame
-                    && !(geom_occ && group->isOcclusionState(LLSpatialGroup::OCCLUDED)))
+                RK_CPU_ZONE("geometry: registry snapshot and filter (geom)");
+                for (LLSpatialGroup* group : RKDirtyGroups::snapshot())
                 {
-                    geom_groups.push_back(group);
+                    if (!group->isDead() && group->hasState(LLSpatialGroup::GEOM_DIRTY) && !group->getSpatialPartition()->mRenderByGroup && group->getVisible(geom_cam) >= geom_frame
+                        && !(geom_occ && group->isOcclusionState(LLSpatialGroup::OCCLUDED)))
+                    {
+                        geom_groups.push_back(group);
+                    }
                 }
             }
             for (LLSpatialGroup* group : geom_groups)
@@ -7436,9 +7444,8 @@ void LLPipeline::addBeacons()
 // <FS> stage 3 of doc/vulkan/PLAN-change-driven-sort.md: what postSort was, without the rebuilds (the geometry stage) and the beacons (addBeacons): the lists the renderer reads of a view, made from the cull result: the far
 // avatar tier (which attachment groups skip the map), the render map (the table's handle list, the alpha group lists with their distance, the triangle statistic) and the alpha order. The handle list and the
 // alpha lists are made in one walk of the visible groups; the next stage gives each to its consumer.
-void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unordered_set<const LLSpatialGroup*>& far_skip);       // T3 (defined with the group table, below): the main view's alpha lists from the alpha set
+void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera);       // T3 (defined with the group table, below): the main view's alpha lists from the alpha set
 static S32 rk_main_listed_tris(LLCullResult* cull);       // T4b-2 (defined with the listing's note, below): the triangles statistic of the main view's list
-static std::unordered_set<const LLSpatialGroup*> sMainFarSkip;       // T4a: the groups of the far avatars' attachments over their budget in the main view (far_avatar_tier), as of the main view's last render map
 void rk_lod_cand_refresh();                                             // stage 8 (owner 3): the newest published change set, once a sort
 void rk_lod_cand_note(LLSpatialGroup* group, bool live);                // stage 8 (owner 3): the sort's own changeLOD() answer for a group against the set
 void rk_lod_cand_report();
@@ -7458,15 +7465,12 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
 
     LL_PUSH_CALLSTACKS();
 
-    // the far avatars' attachment groups over their budget (the main view only)
-    static const std::unordered_set<const LLSpatialGroup*> no_far_skip_set;       // (the other views have none)
+    // the far avatar tier (the main view only): the verdict is per avatar (mFarTierHeavy), no group is left out of the lists
     if (view.isMainWorldSort())
     {
         RK_CPU_ZONE("render lists: far avatar tier");
-        sMainFarSkip.clear();
-        far_avatar_tier(sCull, sMainFarSkip);       // (the main view's own set: the record's extra handles ask it after the other views' render maps have run)
+        far_avatar_tier(sCull);
     }
-    const std::unordered_set<const LLSpatialGroup*>& far_skip = view.isMainWorldSort() ? sMainFarSkip : no_far_skip_set;
     // T3 of doc/vulkan/PLAN-visible-set-owner.md (the sort's tail): the main view's alpha group lists come from the alpha set (rk_alpha_set_lists), not from a walk of the visible groups: the render map below collects no
     // alpha groups for it. The other views (probes, shadows, HUD, mirrors, impostors) keep the collection.
     const bool alpha_from_set = view.isMainWorldSort();
@@ -7517,11 +7521,6 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
              group->mSurfaceArea > RenderAutoHideSurfaceAreaLimit * llmax(group->row().objectBoxSize, 10.f)))
         {
             continue;
-        }
-
-        if (!far_skip.empty() && far_skip.count(group))
-        {
-            continue;       // <FS> a far avatar's attachment over its triangle budget (far_avatar_tier)
         }
 
         if (!LLPipeline::shadowRender() && !LLPipeline::reflectionRender() && !gCubeSnapshot)
@@ -7596,7 +7595,8 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
 
     if (!LLPipeline::shadowRender() || sImpostorTableView)
     {
-        rk_scene_geo_palette_kick(sCull);       // <FS> S4 B: the rigged items' palettes on the pool while the main thread goes on
+        RK_CPU_ZONE(sImpostorTableView ? "render lists: palette kick (impostor image view)" : gCubeSnapshot ? "render lists: palette kick (probe cube face)" : LLPipeline::sRenderingHUDs ? "render lists: palette kick (HUD view)" : "render lists: palette kick (main view)");
+        rk_scene_geo_palette_kick(sCull);      // <FS> S4 B: the rigged items' palettes on the pool while the main thread goes on
     }
 
     {
@@ -7606,7 +7606,7 @@ void LLPipeline::buildRenderLists(LLCamera &camera)
         RK_CPU_ZONE("render lists: sort alpha groups");
         if (alpha_from_set)
         {
-            rk_alpha_set_lists(sCull, camera, far_skip);        // (the main view: made from the alpha set, distance and order included)
+            rk_alpha_set_lists(sCull, camera);        // (the main view: made from the alpha set, distance and order included)
         }
         else
         {
@@ -8349,12 +8349,15 @@ void LLPipeline::shadowPrepRebuild(std::vector<ShadowCascadePrep>& preps)
         }
         lap.mark(PH_REBUILD_MESH);
         // rebuild drawable geometry
+        // <FS> 2026-11-29: only the groups that have something to rebuild (what the main view's geometry stage takes from the registry). The call of a clean group did nothing but touch its cull row: the partition's
+        // rebuildGeom returns at once for a group that is neither GEOM_DIRTY nor ALPHA_DIRTY, the fragment build acts only on a non-empty draw map (emptied once the fragment is made), the groups with MESH_DIRTY were rebuilt
+        // by the loop above, and a Released group has GEOM_DIRTY. About 91 clean groups a frame went through it (lap gw1-def1) and each marked its row for the next refresh.
         for (LLCullResult::sg_iterator iter = result.beginDrawableGroups(); iter != result.endDrawableGroups(); ++iter)
         {
             LLSpatialGroup* group = *iter;
-            if (!group->isDead())
+            if (!group->isDead() && group->hasState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::ALPHA_DIRTY | LLSpatialGroup::RK_RELEASED))
             {
-                if (census && group->hasState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::ALPHA_DIRTY)) { ++sCascadeCullCensus.mGeomDirty[world_sees(group)]; }
+                if (census) { ++sCascadeCullCensus.mGeomDirty[world_sees(group)]; }
                 group->rebuildGeom();
             }
         }
@@ -9170,6 +9173,9 @@ std::unordered_map<const LLMatrix4*, U32> sMovingSlot;
 U64 sMovingAcquired = 0, sMovingFull = 0;
 static std::atomic<U64> sGeoItemsEpoch{0};          // S4: counts every change of a fragment's item lists (filled again, released): a cached list of draw infos is only good for the epoch it was made in
 std::vector<RKSceneFragment*> sGeoFragByHandle;     // S4 B: the fragment of a worker handle (the frame record binds the palettes of the rigged items of the listed ones)
+// <FS> the kind of a fragment by handle, one byte (1 bump items, 2 moving items, 4 rigged items): a fact fixed when the fragment is attached (a fragment is never changed after it is made: a changed group gets a new one) and ended
+// when it is freed, so the consumers' lists (rk_scene_consumer_kinds) are classified from this array and not from three vectors of each fragment. Same index and same size as sGeoFragByHandle.
+std::vector<U8> sGeoKindByHandle;
 
 U32 scene_geo_tex_name(LLViewerTexture* tex)
 {
@@ -9324,6 +9330,7 @@ void rk_scene_fragment_free(RKSceneFragment*& fragment)
         if (fragment->mGeoHandle < sGeoFragByHandle.size())
         {
             sGeoFragByHandle[fragment->mGeoHandle] = nullptr;
+            sGeoKindByHandle[fragment->mGeoHandle] = 0;
         }
         scene_geo_detach_textures(fragment);
         std::lock_guard<std::mutex> lock(sFragmentReleaseLock);
@@ -11041,7 +11048,12 @@ static void scene_geo_attach(LLSpatialGroup* group, RKSceneFragment* f)
     {
         sGeoFragByHandle.resize(handle + 1 + handle / 4, nullptr);
     }
+    if (sGeoKindByHandle.size() < sGeoFragByHandle.size())
+    {
+        sGeoKindByHandle.resize(sGeoFragByHandle.size(), 0);
+    }
     sGeoFragByHandle[handle] = f;
+    sGeoKindByHandle[handle] = (U8)((f->mBump.empty() ? 0u : 1u) | (f->mGeoMoving.empty() ? 0u : 2u) | (f->mGeoRigged.empty() ? 0u : 4u));
     struct PbrWireOut { U32 mItem; U32 mPad[3]; F32 mV[40]; };
     const size_t pbr_count = f->mAlphaSet[0].mPbr.size() + f->mAlphaSet[1].mPbr.size() + f->mGeoPbr.size();
     blob.resize(wire.size() * sizeof(wire[0]) + f->mGeoTex.size() * sizeof(U32) + pbr_count * sizeof(PbrWireOut));
@@ -11755,24 +11767,30 @@ static const RKConsumerKinds& rk_scene_consumer_kinds(LLCullResult* cull)
     kinds.mBump.clear();
     kinds.mMoving.clear();
     kinds.mRigged.clear();
-    for (U32 handle : list)
+    // <FS> from the kind byte of each handle (sGeoKindByHandle, set when the fragment is attached and cleared when it is freed): no fragment is read. (2026-11-29: the check against the three vectors of each fragment,
+    // RK_VK_KINDS_VERIFY, found 0 differences in 17.4 million handles of 11,400 lists, and is gone.)
     {
-        const RKSceneFragment* f = handle < sGeoFragByHandle.size() ? sGeoFragByHandle[handle] : nullptr;
-        if (!f)
+        RK_CPU_ZONE("render lists: consumer kinds: classify");
+        const size_t known = sGeoKindByHandle.size();
+        for (U32 handle : list)
         {
-            continue;
-        }
-        if (!f->mBump.empty())
-        {
-            kinds.mBump.push_back(handle);
-        }
-        if (!f->mGeoMoving.empty())
-        {
-            kinds.mMoving.push_back(handle);
-        }
-        if (!f->mGeoRigged.empty())
-        {
-            kinds.mRigged.push_back(handle);
+            const U8 k = handle < known ? sGeoKindByHandle[handle] : 0;
+            if (!k)
+            {
+                continue;
+            }
+            if (k & 1u)
+            {
+                kinds.mBump.push_back(handle);
+            }
+            if (k & 2u)
+            {
+                kinds.mMoving.push_back(handle);
+            }
+            if (k & 4u)
+            {
+                kinds.mRigged.push_back(handle);
+            }
         }
     }
     return kinds;
@@ -12569,7 +12587,7 @@ static S32 rk_main_listed_tris(LLCullResult* cull)
 // cull_process and forget) and the slots touched since the last cull_process (judged from the group itself) are the candidates; each is tested as the render map tested a visible group (not dead, its partition renders by group, the main view's
 // visible group list of this build lists it (sMainListed[slot] == mListSerial), not occluded, under the auto-hide limit, not a far avatar's skipped attachment), its distance is made as the render map's join made it, and the lists are ordered
 // as before. All of it is the main thread's own state of this frame: no worker list, so no gap and no lag (the compare of lap as5-def1: 38,400 sorts, the same groups and the same order as the render map's lists).
-void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unordered_set<const LLSpatialGroup*>& far_skip)
+void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera)
 {
     if (!cull || LLPipeline::shadowRender() || !gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PASS_ALPHA))
     {
@@ -12582,6 +12600,7 @@ void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unorder
     static U32 seen_stamp = 0;
     cands.clear();
     {
+        RK_CPU_ZONE("render lists: alpha set: candidates");
         std::lock_guard<std::mutex> lock(sCullMutex);
         if (seen.size() < sSlotGroup.size())
         {
@@ -12608,6 +12627,8 @@ void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unorder
     }
     const F32 hide = LLPipeline::RenderAutoHideSurfaceAreaLimit;
     const bool world = LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot;
+    {
+    RK_CPU_ZONE("render lists: alpha set: tests and distances");
     for (LLSpatialGroup* g : cands)
     {
         if (g->isDead() || !g->getSpatialPartition() || !g->getSpatialPartition()->mRenderByGroup)
@@ -12618,8 +12639,7 @@ void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unorder
         const bool r = rk_group_has_rigged_alpha_key(g);
         if ((!a && !r)
             || (LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
-            || (hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f))
-            || far_skip.count(g))
+            || (hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f)))
         {
             continue;
         }
@@ -12648,8 +12668,9 @@ void rk_alpha_set_lists(LLCullResult* cull, LLCamera& camera, const std::unorder
             cull->pushRiggedAlphaGroup(g);
         }
     }
-    std::sort(cull->beginAlphaGroups(), cull->endAlphaGroups(), LLSpatialGroup::CompareDepthGreater());
-    rk_sort_rigged_alpha_groups(cull);
+    }
+    { RK_CPU_ZONE("render lists: alpha set: depth sort"); std::sort(cull->beginAlphaGroups(), cull->endAlphaGroups(), LLSpatialGroup::CompareDepthGreater()); }
+    { RK_CPU_ZONE("render lists: alpha set: rigged order"); rk_sort_rigged_alpha_groups(cull); }
 }
 
 void RKCullShadow::touch(LLViewerOctreeGroup* group)
@@ -13262,7 +13283,12 @@ void rk_scene_geo_palette_kick(LLCullResult* cull)
     std::shared_ptr<GeoBindJob> job = std::make_shared<GeoBindJob>();
     job->mCull = cull;
     job->mFrame = gFrameCount;
-    for (U32 handle : rk_scene_consumer_kinds(cull).mRigged)
+    const std::vector<U32>* rigged_handles = nullptr;
+    {
+        RK_CPU_ZONE(sImpostorTableView ? "render lists: palette kick: consumer handles and kinds (impostor image view)" : gCubeSnapshot ? "render lists: palette kick: consumer handles and kinds (probe cube face)" : LLPipeline::sRenderingHUDs ? "render lists: palette kick: consumer handles and kinds (HUD view)" : "render lists: palette kick: consumer handles and kinds (main view)");
+        rigged_handles = &rk_scene_consumer_kinds(cull).mRigged;
+    }
+    for (U32 handle : *rigged_handles)
     {
         const RKSceneFragment* f = sGeoFragByHandle[handle];
         if (scene_fragment_behind(f))
@@ -13332,8 +13358,7 @@ static void rk_record_extra_handles(LLCullResult* cull, std::vector<U32>& out, U
         const U32 slot = g->mCullId ? g->mCullId - 1 : ~0u;
         if (h && h < seen.size() && seen[h] != stamp && slot < sMainListed.size() && sMainListed[slot] == listed && !g->isDead()
             && !(LLPipeline::useOcclusion() && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
-            && !(hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f))
-            && !sMainFarSkip.count(g))
+            && !(hide > 0.f && g->mSurfaceArea > hide * llmax(g->row().objectBoxSize, 10.f)))
         {
             seen[h] = stamp;
             out.push_back(h);

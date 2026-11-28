@@ -495,12 +495,13 @@ void LLSpatialGroup::rebuildGeom()
     clearState(RK_RELEASED);
     if (!isDead())
     {
+        const bool was_dirty = hasState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::ALPHA_DIRTY);       // (the partition's rebuildGeom returns at once for a group that is neither: the zone says which calls were work)
         RKRebuildBatch* batch = RKRebuildBatch::current();
         if (batch)
         {
             batch->mJustDeferred = nullptr;
         }
-        { RK_CPU_ZONE("rebuild: partition rebuildGeom (the volume or simple geometry manager)"); getSpatialPartition()->rebuildGeom(this); }
+        { RK_CPU_ZONE(was_dirty ? "rebuild: partition rebuildGeom (the volume or simple geometry manager)" : "rebuild: partition rebuildGeom (group not dirty: returns at once)"); getSpatialPartition()->rebuildGeom(this); }
         if (batch && batch->mJustDeferred == this)
         {   // its fill waits for the batch: so does the fragment, which reads the draw infos
             batch->mJustDeferred = nullptr;
