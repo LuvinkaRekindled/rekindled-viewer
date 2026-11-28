@@ -1050,6 +1050,9 @@ protected:
     static void setMaxUpdateInterpolationTime(F32 value)        { sMaxUpdateInterpolationTime = (F64Seconds) value; }
     static void setMaxRegionCrossingInterpolationTime(F32 value)        { sMaxRegionCrossingInterpolationTime = (F64Seconds) value; }
 
+    // <FS> ownership map step B: the phase out of the motion interpolation (idleUpdate -> interpolateLinearMotion) looks at the circuit, a table of the main thread, when no message has come for this long
+    bool interpolationPhaseOutDue(const F64Seconds& now) const { return sPhaseOutUpdateInterpolationTime > F64Seconds(0.0) && (now - mLastMessageUpdateSecs) > sPhaseOutUpdateInterpolationTime; }
+
     static void setVelocityInterpolate(bool value)      { sVelocityInterpolate = value; }
     static void setPingInterpolate(bool value)          { sPingInterpolate = value; }
 

@@ -1703,7 +1703,13 @@ void LLViewerObjectList::update(LLAgent &agent)
 
     std::vector<LLViewerObject*>::iterator idle_end = idle_list.begin()+idle_count;
 
-    RKAvatarTable::beginFrame(idle_list, idle_count);      // <FS> PLAN-avatars.md stage A: the avatars' mode for this frame, decided in one place
+    LLVOAvatar::beginFrameShared();        // <FS> ownership map step A: the facts the avatars' update reads that were statics written from the avatar loop, made once here
+    static LLCachedControl<bool> parallelAvatarMotion(gSavedSettings, "RKParallelAvatarMotion");
+    // <FS> the batch the avatars' pose blends are collected into (RKParallelAvatarMotion): set before the rows are made, which plan the avatars' pool jobs (canDeferMotionUpdate asks for it); it was set after them
+    static std::vector<LLPointer<LLVOAvatar> > motion_batch;
+    motion_batch.clear();
+    LLVOAvatar::sMotionUpdateBatch = (!freezeTime && parallelAvatarMotion) ? &motion_batch : nullptr;       // (the rows plan the avatars' pool jobs only when the pose blends run as a batch this frame)
+    { RK_CPU_ZONE("objectlist: avatar table (beginFrame)"); RKAvatarTable::beginFrame(idle_list, idle_count); }      // <FS> PLAN-avatars.md stage A: the avatars' mode for this frame, decided in one place (and the pool jobs' plan, step B)
 
     // <FS:Ansariel> Speed up debug settings
     //if (gSavedSettings.getBOOL("FreezeTime"))
@@ -1726,13 +1732,6 @@ void LLViewerObjectList::update(LLAgent &agent)
         // <FS> Optionally update other avatars' animations in parallel: the
         // serial part of each avatar's update runs in this loop, the pose
         // blend is collected into the batch and run below.
-        static LLCachedControl<bool> parallelAvatarMotion(gSavedSettings, "RKParallelAvatarMotion");
-        static std::vector<LLPointer<LLVOAvatar> > motion_batch;
-        motion_batch.clear();
-        if (parallelAvatarMotion)
-        {
-            LLVOAvatar::sMotionUpdateBatch = &motion_batch;
-        }
         blend_overlap_begin(parallelAvatarMotion);      // <FS> D2b: with RK_VK_BLENDOVERLAP the avatars' pose blends are launched as they join the batch
 
         const auto idle_loop_start = gRKAvTimersOn ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();

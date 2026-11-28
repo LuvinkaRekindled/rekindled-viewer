@@ -51,6 +51,10 @@ public:
         bool mSpeaking = false;         // ... and the voice client says it is speaking (LLVoiceClient::getIsSpeaking), asked for the participants only
         U16 mBits = 0;
         U32 mFrame = 0;
+        // <FS> ownership map step B: who runs what this frame, decided once here (LLVOAvatar::planPoolJob) and read by idleUpdate and updateCharacter, which used to decide it each for itself
+        bool mRootJob = false;          // the root position and rotation (and the below water fact) are made at the start of the avatar's pool job
+        bool mFrontJob = false;         // and so are the moves the avatar's idleUpdate used to make first (the drawable's move, the object's interpolation): the job's writes to shared state are one ledger replayed in the completion
+        S8 mCanDefer = -1;              // canDeferMotionUpdate() when it was asked for the plan (-1: not asked: the live answer is used)
     };
 
     static void beginFrame(const std::vector<LLViewerObject*>& list, size_t count);  // the only writer: LLViewerObjectList::update, before the avatars' idleUpdate
@@ -62,6 +66,9 @@ public:
     static bool voiceProximal();                                                     // B3d: LLVoiceClient::inProximalChannel() once a frame (false without voice participants)
     static bool voiceEnabled(const LLVOAvatar* av);                                  // B3d: the avatar's voice enabled fact from the row (the voice client asked when there is no row)
     static bool voiceSpeaking(const LLVOAvatar* av);                                 // B3d: the speaking fact from the row
+    static bool rootJob(const LLVOAvatar* av);                                       // step B: the row's plan
+    static bool frontJob(const LLVOAvatar* av);
+    static S8 canDefer(const LLVOAvatar* av);
     static bool nameTagOpen(const LLVOAvatar* av);                                   // step 2: may idleUpdateNameTag be left out this frame? (counts, logs every 600 frames)
 };
 

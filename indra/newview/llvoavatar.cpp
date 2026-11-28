@@ -3440,6 +3440,96 @@ struct AvImpTimer
 //------------------------------------------------------------------------
 // idleUpdate()
 //------------------------------------------------------------------------
+// <FS> ownership map step A: the facts every avatar's update reads that used to be worked out by the first avatar to need them (statics written from the avatar loop), made once a frame by the object list
+// before the avatars run: the extent refresh period, and the nearby avatar count (a loop over all characters on a 1 s timer, with the automatic tuning on; it was a call of the complexity pass)
+S32 LLVOAvatar::sExtentUpdFreq = 1;
+
+void LLVOAvatar::beginFrameShared()
+{
+    static LLCachedControl<S32> refreshPeriod(gSavedSettings, "AvatarExtentRefreshPeriodBatch");
+    static LLCachedControl<S32> refreshMaxPerPeriod(gSavedSettings, "AvatarExtentRefreshMaxPerBatch");
+    static S32 upd_freq = refreshPeriod; // initialise to a reasonable default of 1 batch
+    static S32 lastRecalibrationFrame{ 0 };
+
+    const S32 thisFrame = LLDrawable::getCurrentFrame();
+    if (thisFrame - lastRecalibrationFrame >= upd_freq)
+    {
+        // Only update at the start of a cycle. .
+        // update frequency = ((Num_Avatars -1 / NumberPerPeriod) + 1 ) * Periodicity
+        // Given NumberPerPeriod = 5 and Periodicity = 4
+        // | NumAvatars  | frequency |
+        // +-------------+-----------+
+        // |      1      |     4     |
+        // |      2      |     4     |
+        // |      5      |     4     |
+        // |     10      |     8     |
+        // |     25      |     20    |
+
+        upd_freq = (((gObjectList.getAvatarCount() - 1) / llmax((S32)refreshMaxPerPeriod, 1)) + 1)*refreshPeriod;
+        lastRecalibrationFrame = thisFrame;
+    }
+    sExtentUpdFreq = llmax(upd_freq, 1);
+
+    if (LLPerfStats::tunables.userAutoTuneEnabled)
+    {
+        updateNearbyAvatarCount();
+    }
+}
+
+// <FS> ownership map step B: the first thing idleUpdate did, in one place: the avatar's drawable is moved (damped, now, before the camera and the other updates read it) and the object's velocity interpolation
+// runs. From idleUpdate for the avatars that stay on the main thread (the own avatar, a sitting one, animesh), from the start of the pool job (runFrontInJob) for the others: there the writes to shared state go to the avatar's ledger.
+void LLVOAvatar::frontMoves(LLAgent& agent, const F64& time)
+{
+    // force asynchronous drawable update
+    if(mDrawable.notNull())
+    {
+        if (isSitting() && getParent())
+        {
+            LLViewerObject *root_object = (LLViewerObject*)getRoot();
+            LLDrawable* drawablep = root_object->mDrawable;
+            // if this object hasn't already been updated by another avatar...
+            if (drawablep) // && !drawablep->isState(LLDrawable::EARLY_MOVE))
+            {
+                if (root_object->isSelected())
+                {
+                    gPipeline.updateMoveNormalAsync(drawablep);
+                }
+                else
+                {
+                    gPipeline.updateMoveDampedAsync(drawablep);
+                }
+            }
+        }
+        else
+        {
+            gPipeline.updateMoveDampedAsync(mDrawable);
+        }
+    }
+
+    //--------------------------------------------------------------------
+    // set alpha flag depending on state
+    //--------------------------------------------------------------------
+
+    if (isSelf())
+    {
+        LLViewerObject::idleUpdate(agent, time);
+
+        // trigger fidget anims
+        if (isAnyAnimationSignaled(AGENT_STAND_ANIMS, NUM_AGENT_STAND_ANIMS))
+        {
+            agent.fidget();
+        }
+    }
+    else
+    {
+        // Should override the idleUpdate stuff and leave out the angular update part.
+        LLQuaternion rotation = getRotation();
+        LLViewerObject::idleUpdate(agent, time);
+        setRotation(rotation);
+    }
+
+}
+
 void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
@@ -3502,28 +3592,10 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     }
 
     // Update should be happening max once per frame.
-    static LLCachedControl<S32> refreshPeriod(gSavedSettings, "AvatarExtentRefreshPeriodBatch");
-    static LLCachedControl<S32> refreshMaxPerPeriod(gSavedSettings, "AvatarExtentRefreshMaxPerBatch");
-    static S32 upd_freq = refreshPeriod; // initialise to a reasonable default of 1 batch
-    static S32 lastRecalibrationFrame{ 0 };
-
+    // <FS> ownership map step A: the extent refresh period is worked out once a frame before the avatars run (LLVOAvatar::beginFrameShared), not by the first avatar that gets here: it was two statics written from
+    // the avatar loop. The avatars only read it.
     const S32 thisFrame = LLDrawable::getCurrentFrame();
-    if (thisFrame - lastRecalibrationFrame >= upd_freq)
-    {
-        // Only update at the start of a cycle. .
-        // update frequency = ((Num_Avatars -1 / NumberPerPeriod) + 1 ) * Periodicity
-        // Given NumberPerPeriod = 5 and Periodicity = 4
-        // | NumAvatars  | frequency |
-        // +-------------+-----------+
-        // |      1      |     4     |
-        // |      2      |     4     |
-        // |      5      |     4     |
-        // |     10      |     8     |
-        // |     25      |     20    |
-
-        upd_freq = (((gObjectList.getAvatarCount() - 1) / refreshMaxPerPeriod) + 1)*refreshPeriod;
-        lastRecalibrationFrame = thisFrame;
-    }
+    const S32 upd_freq = sExtentUpdFreq;
 
     if ((mLastAnimExtents[0]==LLVector3())||
         (mLastAnimExtents[1])==LLVector3())
@@ -3545,52 +3617,15 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
         setPixelAreaAndAngle(gAgent);
     }
 
-    // force asynchronous drawable update
-    if(mDrawable.notNull())
+    // <FS> ownership map step B: the drawable's move and the object's interpolation (frontMoves) are made at the start of the avatar's pool job when the row planned it (RKAvatarTable::frontJob), here otherwise
+    if (RKAvatarTable::frontJob(this))
     {
-        if (isSitting() && getParent())
-        {
-            LLViewerObject *root_object = (LLViewerObject*)getRoot();
-            LLDrawable* drawablep = root_object->mDrawable;
-            // if this object hasn't already been updated by another avatar...
-            if (drawablep) // && !drawablep->isState(LLDrawable::EARLY_MOVE))
-            {
-                if (root_object->isSelected())
-                {
-                    gPipeline.updateMoveNormalAsync(drawablep);
-                }
-                else
-                {
-                    gPipeline.updateMoveDampedAsync(drawablep);
-                }
-            }
-        }
-        else
-        {
-            gPipeline.updateMoveDampedAsync(mDrawable);
-        }
-    }
-
-    //--------------------------------------------------------------------
-    // set alpha flag depending on state
-    //--------------------------------------------------------------------
-
-    if (isSelf())
-    {
-        LLViewerObject::idleUpdate(agent, time);
-
-        // trigger fidget anims
-        if (isAnyAnimationSignaled(AGENT_STAND_ANIMS, NUM_AGENT_STAND_ANIMS))
-        {
-            agent.fidget();
-        }
+        mFrontPending = true;
+        mFrontTime = time;
     }
     else
     {
-        // Should override the idleUpdate stuff and leave out the angular update part.
-        LLQuaternion rotation = getRotation();
-        LLViewerObject::idleUpdate(agent, time);
-        setRotation(rotation);
+        frontMoves(agent, time);
     }
 
     // attach objects that were waiting for a drawable
@@ -3601,7 +3636,10 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
 
     // animate the character
     // store off last frame's root position to be consistent with camera position
-    mLastRootPos = mRoot->getWorldPosition();
+    if (!mFrontPending)
+    {
+        mLastRootPos = mRoot->getWorldPosition();       // (the job takes it, after the moves, for the avatars whose moves it makes)
+    }
     if (gRKAvTimersOn)
     {
         gRKAvStatNs[AV_IDLE_PRE] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - idle_total_scope.mStart).count();
@@ -3612,6 +3650,19 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
         RK_CPU_ZONE("av idle: updateCharacter");
         detailed_update = updateCharacter(agent);
         detailed_update = RKAvatarTable::attachmentLoop(this, detailed_update);     // <FS> stage A step 3: the gate of the attachment loop and the detailed presentation is the row's bit
+    }
+
+    if (mFrontPending && !mMotionUpdateDeferred)
+    {
+        // <FS> step B (not expected: the row planned the pool job for this avatar and updateCharacter did not join the batch): the moves are made now, late, as the root job's recovery does
+        mFrontPending = false;
+        static std::atomic<U32> late{ 0 };
+        if (++late <= 5)
+        {
+            LL_WARNS("FrontJob") << "an avatar planned for the front job did not join the motion batch; its moves made inline, late" << LL_ENDL;
+        }
+        frontMoves(agent, time);
+        mLastRootPos = mRoot->getWorldPosition();
     }
 
     if (mMotionUpdateDeferred)
@@ -4789,9 +4840,12 @@ void LLVOAvatar::runAttachmentJob()
     AvJobLedger& led = *static_cast<AvJobLedger*>(mAttLedger.get());
     std::vector<LLPipeline::AvOp>* saved_av = LLPipeline::sAvSink;
     std::vector<LLPipeline::SortDelta>* saved_sort = LLPipeline::sSortSink;
-    led.mOps.clear();
-    led.mSort.clear();
-    led.mStamps.clear();
+    if (!mLedgerPending)
+    {
+        led.mOps.clear();       // (the ledger is one for the whole job: what the front moves recorded stays, and this loop's writes follow it, in the order the inline form made them)
+        led.mSort.clear();
+        led.mStamps.clear();
+    }
     std::vector<LLFace*>* saved_stamps = LLFace::sStampSink;
     LLPipeline::sAvSink = &led.mOps;
     LLPipeline::sSortSink = &led.mSort;
@@ -4803,18 +4857,47 @@ void LLVOAvatar::runAttachmentJob()
     LLPipeline::sAvSink = saved_av;
     LLPipeline::sSortSink = saved_sort;
     mAttJobDone = true;
+    mLedgerPending = true;
 }
 
-void LLVOAvatar::replayAttachmentJob()
+// <FS> ownership map step B: the first thing idleUpdate did, made at the start of the avatar's pool job: the same moves (frontMoves), with the writes to shared state going to the avatar's ledger (the three sinks the
+// attachment loop's job uses) and made by replayLedger in the completion, before the attachment loop's own
+void LLVOAvatar::runFrontInJob()
+{
+    mFrontPending = false;
+    if (!mAttLedger) { mAttLedger = std::make_shared<AvJobLedger>(); }
+    AvJobLedger& led = *static_cast<AvJobLedger*>(mAttLedger.get());
+    led.mOps.clear();
+    led.mSort.clear();
+    led.mStamps.clear();
+    std::vector<LLPipeline::AvOp>* saved_av = LLPipeline::sAvSink;
+    std::vector<LLPipeline::SortDelta>* saved_sort = LLPipeline::sSortSink;
+    std::vector<LLFace*>* saved_stamps = LLFace::sStampSink;
+    LLPipeline::sAvSink = &led.mOps;
+    LLPipeline::sSortSink = &led.mSort;
+    LLFace::sStampSink = &led.mStamps;
+    frontMoves(gAgent, mFrontTime);
+    mLastRootPos = mRoot->getWorldPosition();       // (what idleUpdate takes after the moves, to be consistent with the camera position)
+    LLFace::sStampSink = saved_stamps;
+    LLPipeline::sAvSink = saved_av;
+    LLPipeline::sSortSink = saved_sort;
+    mLedgerPending = true;
+}
+
+void LLVOAvatar::replayLedger()
 {
     mAttJobDone = false;
+    mLedgerPending = false;
     AvJobLedger& led = *static_cast<AvJobLedger*>(mAttLedger.get());
-    gPipeline.applyAvOps(led.mOps);
-    gPipeline.applySortDeltas(led.mSort);
+    { RK_CPU_ZONE("att replay: ledger ops"); gPipeline.applyAvOps(led.mOps); }
+    { RK_CPU_ZONE("att replay: sort deltas"); gPipeline.applySortDeltas(led.mSort); }
     led.mSort.clear();
-    for (LLFace* face : led.mStamps)
     {
-        face->stampTextures();      // (the faces the loop's drawable moves refreshed; the main thread owns the texture records)
+        RK_CPU_ZONE("att replay: face stamps");
+        for (LLFace* face : led.mStamps)
+        {
+            face->stampTextures();      // (the faces the loop's drawable moves refreshed; the main thread owns the texture records)
+        }
     }
     led.mStamps.clear();
 }
@@ -4835,15 +4918,16 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
     bool visible = isVisible() || mNeedsAnimUpdate || isSelf();
 
     // update attachments positions
-    if (detailed_update)
+    if (detailed_update || mLedgerPending)
     {
         AvSelfScope self_scope(6, this);
         RK_CPU_ZONE("av post: attachment replay");
-        if (mAttJobDone)
+        const bool att_job = mAttJobDone;
+        if (mLedgerPending)
         {
-            replayAttachmentJob();      // <FS> A2: the loop ran as a pool job, its writes are made now
+            replayLedger();             // <FS> A2 / step B: what the pool job recorded (the front moves, then the attachment loop's writes) is made now, in that order
         }
-        else
+        if (detailed_update && !att_job)
         {
             idleUpdateAttachments(visible);
         }
@@ -7366,10 +7450,12 @@ bool LLVOAvatar::reducedHiddenSkip()
 }
 
 // the gates of idleUpdate and updateCharacter, in their order (idleUpdate: dead / exiting, friends only, tooSlow, render type off, the reduced update; updateCharacter: not built, visible, computeNeedsUpdate)
-unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update)
+unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update, bool& root_job, bool& front_job, signed char& can_defer)
 {
     visible = false;
     needs_update = false;
+    root_job = front_job = false;
+    can_defer = -1;
     if (LLApp::isExiting() || isDead())
     {
         return RKAvatarTable::MODE_OTHER;
@@ -7399,12 +7485,43 @@ unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update)
     {
         return RKAvatarTable::MODE_SKIP;
     }
+    planPoolJob(visible, root_job, front_job, can_defer);        // (step B: the pool job's share of the avatars that take part in the batch: the full update and the hidden form)
     if (!visible && !isSelf())
     {
         return RKAvatarTable::MODE_MATRICES;
     }
     return RKAvatarTable::MODE_POSE;
 }
+
+// <FS> ownership map step B: what updateCharacter decided for itself when it got to the batch (RK_VK_ROOTJOB), decided here once with the rest of the frame's plan: the same conditions, in the same terms. The root
+// position and rotation only feed the pose job's world pass and read the terrain and the avatar's own fields, so they are made at the start of the avatar's pool job; the viewer's own avatar, animesh, UI avatars, special
+// render modes and an avatar with a parent (a seat: its transitions change what the job would read) keep the inline form. RK_VK_FRONTJOB (1 default, 0 = off): the avatar's idleUpdate moves (the drawable's damped move,
+// the object's velocity interpolation) are made in the same job, writing their shared effects (moved list, partition move, sort deltas, face stamps) to the avatar's ledger; only for an avatar with nothing pending
+// that the moves would order differently: no parent, not sitting, no attachment waiting for its drawable, no acceleration or angular velocity (the interpolation would change what updateCharacter reads first), and
+// a recent message from the simulator (the phase out of the interpolation looks at the circuit, a shared table).
+void LLVOAvatar::planPoolJob(bool visible, bool& root_job, bool& front_job, signed char& can_defer)
+{
+    root_job = front_job = false;
+    can_defer = -1;
+    static const bool root_job_on = !getenv("RK_VK_ROOTJOB") || atoi(getenv("RK_VK_ROOTJOB")) != 0;
+    if (!(root_job_on && !gRKAvTimersOn && sMotionUpdateBatch && !isSelf() && !isControlAvatar() && !isUIAvatar() && mSpecialRenderMode == 0 && mRoot && !getParent()))
+    {
+        return;
+    }
+    if (!visible)
+    {
+        root_job = true;        // (the hidden form is in the batch under the same conditions)
+    }
+    else
+    {
+        can_defer = canDeferMotionUpdate() ? 1 : 0;
+        root_job = can_defer == 1 && !mMotionController.isPaused();
+    }
+    static const bool front_job_on = !getenv("RK_VK_FRONTJOB") || atoi(getenv("RK_VK_FRONTJOB")) != 0;
+    front_job = root_job && front_job_on && mDrawable.notNull() && !isSitting() && mPendingAttachment.empty() && getAcceleration().isExactlyZero() && getAngularVelocity().isExactlyZero()
+        && !interpolationPhaseOutDue(F64Seconds(LLFrameTimer::getElapsedSeconds()));
+}
+
 
 namespace
 {
@@ -7533,7 +7650,7 @@ void RKAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
         }
         LLVOAvatar* av = static_cast<LLVOAvatar*>(object);
         Row r;
-        r.mMode = av->decideFrameMode(r.mVisible, r.mNeedsUpdate);
+        r.mMode = av->decideFrameMode(r.mVisible, r.mNeedsUpdate, r.mRootJob, r.mFrontJob, r.mCanDefer);
         r.mClass = av->isSelf() ? CLASS_OWN : (r.mVisible ? CLASS_SEEN : CLASS_UNSEEN);
         r.mFrame = frame;
         if (av->mDrawable.notNull() && !av->isSelf())
@@ -7581,6 +7698,24 @@ bool RKAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
         reads = different = 0;
     }
     return bit;
+}
+
+bool RKAvatarTable::rootJob(const LLVOAvatar* av)
+{
+    const Row* r = row(av);
+    return r && r->mRootJob;
+}
+
+bool RKAvatarTable::frontJob(const LLVOAvatar* av)
+{
+    const Row* r = row(av);
+    return r && r->mFrontJob;
+}
+
+S8 RKAvatarTable::canDefer(const LLVOAvatar* av)
+{
+    const Row* r = row(av);
+    return r ? r->mCanDefer : (S8)-1;
 }
 
 bool RKAvatarTable::nameTagOpen(const LLVOAvatar* av)
@@ -7817,23 +7952,9 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // <FS> PLAN-avatars.md stage B3d (RK_VK_ROOTJOB: 1 default, 0 inline as before): an avatar that goes into the motion batch has its root position and rotation worked out at the start of its pool job, not here on the main
     // thread: the root only feeds the pose job's world pass (nothing between here and the batch reads it: begin and the hidden motion update do not), and it reads the terrain and writes the avatar's own fields.
     // The viewer's own avatar, animesh, UI avatars, special render modes and an avatar sitting on an object keep the inline form.
-    int can_defer_known = -1;
-    bool root_in_job = false;
-    {
-        static const bool root_job_on = !getenv("RK_VK_ROOTJOB") || atoi(getenv("RK_VK_ROOTJOB")) != 0;
-        if (root_job_on && !gRKAvTimersOn && sMotionUpdateBatch && !isSelf() && !isControlAvatar() && !isUIAvatar() && mSpecialRenderMode == 0 && mRoot && !(isSitting() && getParent()))
-        {
-            if (!visible)
-            {
-                root_in_job = true;         // (the hidden branch below puts it in the batch under the same conditions)
-            }
-            else
-            {
-                can_defer_known = canDeferMotionUpdate() ? 1 : 0;
-                root_in_job = can_defer_known == 1 && !mMotionController.isPaused();
-            }
-        }
-    }
+    // (step B: decided once a frame with the rest of the avatar's plan, RKAvatarTable / LLVOAvatar::planPoolJob; the same conditions this block had)
+    const int can_defer_known = RKAvatarTable::canDefer(this);
+    const bool root_in_job = RKAvatarTable::rootJob(this);
     if (!root_in_job)
     {
         AvScope root_scope(AV_CHAR_ROOT);
@@ -7876,7 +7997,26 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         bool began;
         {
             AvScope begin_scope(AV_CHAR_BEGIN);
-            began = beginNormalMotionUpdate();
+            // <FS> ownership map step 1a (RK_VK_BEGINJOB: 1 default, 0 = as before): an avatar whose controller has nothing to load and is under the motion cap begins its motion update (the timing) in its own pool job;
+            // the others (a motion loading, over the cap, paused, the own avatar, an animesh) begin here as before. The timer the begin reads is the frame timer: the same value in the job.
+            static const bool begin_job_on = !getenv("RK_VK_BEGINJOB") || atoi(getenv("RK_VK_BEGINJOB")) != 0;
+            static std::atomic<U64> begins_job{ 0 }, begins_main_special{ 0 }, begins_main_busy{ 0 };
+            if (begin_job_on && !isSelf() && !isControlAvatar() && canBeginNormalMotionUpdateOnJob())
+            {
+                mBeginInJob = true;
+                began = true;
+                ++begins_job;
+            }
+            else
+            {
+                began = beginNormalMotionUpdate();
+                ++((begin_job_on && !isSelf() && !isControlAvatar()) ? begins_main_busy : begins_main_special);
+            }
+            if (rk_diag_on() && (begins_job + begins_main_special + begins_main_busy) % 200000 == 0)
+            {
+                RK_DIAG("BeginJob") << "motion begin: in the avatar's job " << begins_job.load() << ", on the main thread because a motion is loading / over the cap / paused " << begins_main_busy.load()
+                                    << ", on the main thread for the own avatar, an animesh or with the switch off " << begins_main_special.load() << LL_ENDL;
+            }
         }
         if (began)
         {
@@ -8032,6 +8172,10 @@ void LLVOAvatar::applyGroundSitHoverInJob(bool try_flat)
 void LLVOAvatar::runDeferredMotionBlend()
 {
     AvImpTimer imp_blend_timer(1, this);
+    if (mFrontPending)
+    {
+        runFrontInJob();        // <FS> step B: the moves idleUpdate used to make first (planned by the row), before anything of the job reads the avatar's position
+    }
     if (mRootInJob)
     {
         // <FS> stage B3d: the root position and rotation, worked out here (see updateCharacter); the job's own thread, the avatar's own fields and joints
@@ -8062,6 +8206,11 @@ void LLVOAvatar::runDeferredMotionBlend()
         mPoseJobFrame.store((U32)LLFrameTimer::getFrameCount(), std::memory_order_release);
         return;
     }
+    if (mBeginInJob)
+    {
+        mBeginInJob = false;
+        beginNormalMotionUpdate(true);      // <FS> step 1a: the timing of the controller, its own fields (updateCharacter planned it: nothing loading, under the cap)
+    }
     LLVOAvatar* saved_job_avatar = sBlendJobAvatar;
     sBlendJobAvatar = this;
     finishNormalMotionUpdate();
@@ -8086,10 +8235,13 @@ void LLVOAvatar::completeDeferredMotionUpdate()
     }
     mMotionUpdateDeferred = false;
     mDeferredMatricesOnly = false;
+    mBeginInJob = false;        // (the job has run: it made the begin, or this avatar did not take that path)
 
     if (isDead())
     {
         mAttJobDone = false;
+        mLedgerPending = false;
+        mFrontPending = false;
         mAttLedger.reset();
         return;
     }
@@ -16202,7 +16354,7 @@ void LLVOAvatar::idleUpdateRenderComplexity()
             sAVsIgnoringARTLimit.erase(std::remove(sAVsIgnoringARTLimit.begin(), sAVsIgnoringARTLimit.end(), mID),
                                        sAVsIgnoringARTLimit.end());
         }
-        updateNearbyAvatarCount();
+        // (the nearby avatar count is made once a frame in beginFrameShared)
     }
 }
 

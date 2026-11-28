@@ -970,7 +970,14 @@ void LLMotionController::updateMotions(bool force_update)
 //-----------------------------------------------------------------------------
 bool (*LLMotionController::sAnimTimeHook)(LLMotionController*, F32&) = nullptr;
 
-bool LLMotionController::beginUpdateMotions(bool force_update)
+// <FS> 2026-11-28: nothing in the begin has to be made by the main thread when no motion is loading, the loaded ones are under the cap, the controller is not paused and no time quantum is in use: the purge and the
+// loading would do nothing, what is left is the character's own timing
+bool LLMotionController::canBeginOnJob() const
+{
+    return !mPaused && mTimeStep == 0.f && mLoadingMotions.empty() && mLoadedMotions.size() <= MAX_MOTION_INSTANCES;
+}
+
+bool LLMotionController::beginUpdateMotions(bool force_update, bool on_job)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     // SL-763: "Distant animated objects run at super fast speed"
@@ -986,7 +993,10 @@ bool LLMotionController::beginUpdateMotions(bool force_update)
     mLastTime = mAnimTime;
 
     // Always cap the number of loaded motions
-    purgeExcessMotions();
+    if (!on_job)
+    {
+        purgeExcessMotions();
+    }
 
     // Update timing info for this time step.
     if (!mPaused)
@@ -1038,7 +1048,10 @@ bool LLMotionController::beginUpdateMotions(bool force_update)
         }
     }
 
-    updateLoadingMotions();
+    if (!on_job)
+    {
+        updateLoadingMotions();
+    }
 
     resetJointSignatures();
 

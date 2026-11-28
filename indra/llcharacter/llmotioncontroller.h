@@ -140,7 +140,10 @@ public:
     // beginUpdateMotions() does the timing, motion loading and purging, and
     // must run on the main thread. It returns true if finishUpdateMotions()
     // still has to be called to update and blend the active motions.
-    bool beginUpdateMotions(bool force_update = false);
+    // <FS> 2026-11-28 (ownership map, step 1a): on_job: the begin is made inside the character's own pool job. It is only the timing and the joint signature reset then: the purge and the loading of
+    // motions (asset requests, the motion registry) are left out, which is right when canBeginOnJob() held when the job was planned (nothing loading, under the cap: both would have done nothing).
+    bool beginUpdateMotions(bool force_update = false, bool on_job = false);
+    bool canBeginOnJob() const;
     void finishUpdateMotions();
 
     // true if the blend phase may be deferred (no time quantization in use)

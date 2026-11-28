@@ -331,7 +331,12 @@ public:
     virtual bool    computeNeedsUpdate();
     virtual bool    updateCharacter(LLAgent &agent);
     // <FS> PLAN-avatars.md stage A: the avatar table's decision for this avatar this frame (rkavatartable.h): the gates of idleUpdate / updateCharacter in their order; returns a RKAvatarTable::Mode
-    unsigned char   decideFrameMode(bool& visible, bool& needs_update);
+    unsigned char   decideFrameMode(bool& visible, bool& needs_update, bool& root_job, bool& front_job, signed char& can_defer);
+    // <FS> ownership map step B: who runs what, decided once a frame by decideFrameMode (the row): the pool job's share (root and below water, and for the avatars that can the moves idleUpdate used to make first)
+    void            planPoolJob(bool visible, bool& root_job, bool& front_job, signed char& can_defer);
+    void            frontMoves(LLAgent& agent, const F64& time);     // the drawable's move and the object's interpolation: in idleUpdate, or at the start of the avatar's pool job (mFrontPending)
+    void            runFrontInJob();
+    void            replayLedger();                                  // the writes to shared state the pool job made (the front moves, the attachment loop), made in the completion in the order they were recorded
     bool            nameTagBusy() const { return mTyping || !mChats.empty(); }      // chat bubbles or the typing indicator show: the tag is updated whatever the camera sees
     std::shared_ptr<RKFlatSkeleton> mFlatSkel;          // <FS> stage B0
     bool            flatPaletteRel(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin, const F32* anchor);       // <FS> avatar relative skinning: the same palette from world matrices made relative to the anchor (false: not possible, the plain one stands)
@@ -369,7 +374,7 @@ public:
     void            idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &position);
     void            idleUpdateMisc(bool detailed_update);
     // <FS> view rework A2: the attachment loop of idleUpdateMisc as a function of its own; runAttachmentJob runs it with the avatar's writes recorded (a pool job) and
-    // idleUpdateMisc replays them in its turn (replayAttachmentJob) instead of running the loop
+    // idleUpdateMisc replays them in its turn (replayLedger) instead of running the loop
     void            idleUpdateAttachments(bool visible);
     // <FS> PLAN-avatars.md stage B3a (RK_VK_PALJOB: 1 default, 0 the lazy palettes only, 2 job and compare): after the completions of the frame, a pool job per avatar rebuilds the palettes the avatar had asked for in the last
     // rendered frame, for the frame about to be rendered (the skeleton is final by then), so the requests of the render find them ready and no thread builds them under the global palette lock
@@ -409,7 +414,6 @@ public:
     static void     askAttachmentSelection(S32& selected, LLVOAvatar*& avatar);     // main thread: is an attachment (or a HUD object) selected, and whose
     static S32      sAttachmentSelectedForJobs;     // -1: ask the selection manager; 0/1: what the main thread found before the jobs started (getObjectCount() cleans the selection's node list: not for several threads)
     void            runAttachmentJob();
-    void            replayAttachmentJob();
     bool            mAttJobDone = false;
     std::shared_ptr<void> mAttLedger;       // the writes of the attachment job (AvJobLedger in llvoavatar.cpp), made on first use
     virtual void    idleUpdateAppearanceAnimation();
@@ -487,6 +491,8 @@ public:
     void            idleUpdateBelowWater();
 
     static void updateNearbyAvatarCount();
+    static S32 sExtentUpdFreq;          // <FS> ownership map step A: the extent refresh period of the frame
+    static void beginFrameShared();     // <FS> made once a frame by LLViewerObjectList::update before the avatars run
 
     LLVector3 idleCalcNameTagPosition(const LLVector3 &root_pos_last);
 
@@ -737,6 +743,10 @@ private:
 
     // state carried across a deferred motion update, see sMotionUpdateBatch
     bool        mMotionUpdateDeferred = false;
+    bool        mFrontPending = false;          // <FS> step B: the front moves are made at the start of the pool job (the row planned it)
+    F64         mFrontTime = 0.0;               // (the frame time idleUpdate was called with)
+    bool        mLedgerPending = false;         // the avatar's ledger (mAttLedger) holds writes from this frame's job: replayLedger makes them
+    bool        mBeginInJob = false;            // <FS> ownership map step 1a: the motion controller's begin (timing only: nothing loading, under the cap) is made by the pool job, not by updateCharacter
     bool        mBelowWaterDone = false;        // <FS> B3d: the pool job already worked out mBelowWater this frame
     U32         mWindFrame = 0xFFFFFFFFu;       // <FS> B3d: the frame the cloth wind state was last worked out (at draw)
     bool        mRootInJob = false;             // <FS> stage B3d: the root position and rotation are worked out at the start of the pool job (updateCharacter set it with the batch entry)

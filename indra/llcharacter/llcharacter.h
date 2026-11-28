@@ -162,7 +162,9 @@ public:
     // NORMAL_UPDATE split in two, see LLMotionController::beginUpdateMotions().
     // beginNormalMotionUpdate() returns true if finishNormalMotionUpdate() must
     // still be called, possibly later and from another thread.
-    bool beginNormalMotionUpdate();
+    // <FS> on_job: made inside the character's own pool job (LLMotionController::beginUpdateMotions); only when canBeginNormalMotionUpdateOnJob() held when the job was planned
+    bool beginNormalMotionUpdate(bool on_job = false);
+    bool canBeginNormalMotionUpdateOnJob() const { return mMotionController.canBeginOnJob(); }
     void finishNormalMotionUpdate() { mMotionController.finishUpdateMotions(); }
     bool canDeferNormalMotionUpdate() const { return mMotionController.canDeferBlendPhase(); }
 

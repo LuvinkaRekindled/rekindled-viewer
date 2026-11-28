@@ -194,15 +194,15 @@ void LLCharacter::updateMotions(e_update_t update_type)
 //-----------------------------------------------------------------------------
 // beginNormalMotionUpdate()
 //-----------------------------------------------------------------------------
-bool LLCharacter::beginNormalMotionUpdate()
+bool LLCharacter::beginNormalMotionUpdate(bool on_job)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
-    // unpause if the number of outstanding pause requests has dropped to the initial one
-    if (mMotionController.isPaused() && mPauseRequest->getNumRefs() == 1)
+    // unpause if the number of outstanding pause requests has dropped to the initial one (not in the job: it is planned only for a controller that is not paused)
+    if (!on_job && mMotionController.isPaused() && mPauseRequest->getNumRefs() == 1)
     {
         mMotionController.unpauseAllMotions();
     }
-    return mMotionController.beginUpdateMotions(false);
+    return mMotionController.beginUpdateMotions(false, on_job);
 }
 
 
