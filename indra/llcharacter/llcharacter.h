@@ -293,7 +293,12 @@ public:
     void            setAppearanceSerialNum( U32 num )   { mAppearanceSerialNum = num; }
 
     U32             getSkeletonSerialNum() const        { return mSkeletonSerialNum; }
-    void            setSkeletonSerialNum( U32 num ) { mSkeletonSerialNum = num; }
+    void            setSkeletonSerialNum( U32 num ) { mSkeletonSerialNum = num; mSkeletonChanged = true; }
+    // <FS> ownership map step C (EV_SKELETON): what the avatar's flat joint arrays are made from (the skeleton serial, the bone and collision volume counts, the attachment points) changed since they were last made current.
+    // Set by every writer of those (here, allocateCharacterJoints, allocateCollisionVolumes, the creation of an attachment point); cleared by LLVOAvatar::ensureJointLocals when it has made them current.
+    bool            skeletonChanged() const             { return mSkeletonChanged; }
+    void            markSkeletonChanged()               { mSkeletonChanged = true; }
+    void            clearSkeletonChanged()              { mSkeletonChanged = false; }
 
     static std::list< LLCharacter* > sInstances;
     static bool sAllowInstancesChange ; //debug use
@@ -311,6 +316,7 @@ protected:
     ESex                mSex;
     U32                 mAppearanceSerialNum;
     U32                 mSkeletonSerialNum;
+    bool                mSkeletonChanged = true;
     LLAnimPauseRequest  mPauseRequest;
 
 private:

@@ -3448,7 +3448,7 @@ S32 LLVOAvatar::sExtentUpdFreq = 1;
 namespace
 {
 const bool kEventsVerify = getenv("RK_VK_AVEVENTS_VERIFY") != nullptr;
-std::atomic<U64> sEvChecked[6], sEvMissed[6];
+std::atomic<U64> sEvChecked[7], sEvMissed[7];
 void ev_note(int which, bool missed, const char* name, LLVOAvatar* av)
 {
     ++sEvChecked[which];
@@ -3457,11 +3457,11 @@ void ev_note(int which, bool missed, const char* name, LLVOAvatar* av)
         LL_WARNS("AvEvents") << "the event bit of " << name << " was clear and its handler changed the avatar's state: " << av->getFullname() << LL_ENDL;
     }
     U64 total = 0;
-    for (int k = 0; k < 6; ++k) { total += sEvChecked[k].load(std::memory_order_relaxed); }
+    for (int k = 0; k < 7; ++k) { total += sEvChecked[k].load(std::memory_order_relaxed); }
     if (total % 400000 == 0)
     {
         RK_DIAG("AvEvents") << "handlers run beside a clear bit (checked / changed state): sit " << sEvChecked[0].load() << "/" << sEvMissed[0].load() << ", appearance " << sEvChecked[1].load() << "/" << sEvMissed[1].load()
-            << ", texture loading " << sEvChecked[2].load() << "/" << sEvMissed[2].load() << ", loading effect " << sEvChecked[3].load() << "/" << sEvMissed[3].load() << ", debug text " << sEvChecked[4].load() << "/" << sEvMissed[4].load() << ", speed and sit fact made in the job " << sEvChecked[5].load() << "/" << sEvMissed[5].load() << LL_ENDL;
+            << ", texture loading " << sEvChecked[2].load() << "/" << sEvMissed[2].load() << ", loading effect " << sEvChecked[3].load() << "/" << sEvMissed[3].load() << ", debug text " << sEvChecked[4].load() << "/" << sEvMissed[4].load() << ", speed and sit fact made in the job " << sEvChecked[5].load() << "/" << sEvMissed[5].load() << ", skeleton " << sEvChecked[6].load() << "/" << sEvMissed[6].load() << LL_ENDL;
     }
 }
 }
@@ -3738,11 +3738,17 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
 
-    static LLUICachedControl<bool> visualizers_in_calls("ShowVoiceVisualizersInCalls", false);
     // <FS> B3d: the voice facts come from the avatar's row (taken once a frame from the voice client's participant list), not asked of the voice client for every avatar
-    bool voice_enabled = RKAvatarTable::voiceEnabled(this) && (visualizers_in_calls || RKAvatarTable::voiceProximal());
+    const bool voice_enabled = RKAvatarTable::voiceShown(this);
 
     LLVector3 hud_name_pos;
+    const bool post_facts_in_job = mPostFactsInJob;
+    if (post_facts_in_job)
+    {
+        hud_name_pos = mHudNamePos;     // <FS> steps 26 and 27: the name tag position and the voice visualizer were made at the end of the avatar's pool job (postMotionInJob)
+        mPostFactsInJob = false;
+    }
+    else
     {
         AvScope s(AV_PC_NAMEPOS);
         AvSelfScope self_scope(3, this);
@@ -3750,12 +3756,14 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
         hud_name_pos = idleCalcNameTagPosition(mLastRootPos);
     }
 
+    if (!post_facts_in_job)
     {
         AvScope s(AV_PC_VOICEVIS);
         AvSelfScope self_scope(4, this);
         RK_CPU_ZONE("av post: voice visualizer");
         idleUpdateVoiceVisualizer(voice_enabled, hud_name_pos);
     }
+    applyLipSyncReset();
     {
         AvScope s(AV_PC_MISC);
         AvSelfScope self_scope(5, this);
@@ -3870,8 +3878,7 @@ void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &
     }
 
     // <FS:Ansariel> FIRE-1916: Hide voice dots over avatars
-    static LLCachedControl<bool> voiceVisualizerEnabled(gSavedSettings, "VoiceVisualizerEnabled");
-    if (!voiceVisualizerEnabled)
+    if (!RKAvatarTable::voiceVisualizerOn())      // (VoiceVisualizerEnabled, read once a frame by the table)
     {
         render_visualizer = false;
     }
@@ -3919,7 +3926,7 @@ void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &
         // Notice the calls to "gAwayTimer.reset()". This resets the timer that determines how long the avatar has been
         // "away", so that the avatar doesn't lapse into away-mode (and slump over) while the user is still talking.
         //-----------------------------------------------------------------------------------------------------------------
-        if (RKAvatarTable::voiceSpeaking(this) && (!isInMuteList() || isSelf()))
+        if (RKAvatarTable::voiceShowSpeaking(this))
         {
             if (!mVoiceVisualizer->getCurrentlySpeaking())
             {
@@ -3928,7 +3935,7 @@ void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &
                 //printf( "gAwayTimer.reset();\n" );
             }
 
-            mVoiceVisualizer->setSpeakingAmplitude( LLVoiceClient::getInstance()->getCurrentPower( mID ) );
+            mVoiceVisualizer->setSpeakingAmplitude( RKAvatarTable::voicePower(this) );
 
             if( isSelf() )
             {
@@ -3943,21 +3950,36 @@ void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &
 
                 if ( mLipSyncActive )
                 {
-                    // <FS:Ansariel> [Legacy Bake]
-                    //if( mOohMorph ) mOohMorph->setWeight(mOohMorph->getMinWeight());
-                    //if( mAahMorph ) mAahMorph->setWeight(mAahMorph->getMinWeight());
-                    if( mOohMorph ) mOohMorph->setWeight(mOohMorph->getMinWeight(), false);
-                    if( mAahMorph ) mAahMorph->setWeight(mAahMorph->getMinWeight(), false);
-                    // </FS:Ansariel> [Legacy Bake]
-
-                    mLipSyncActive = false;
-                    LLCharacter::updateVisualParams();
-                    dirtyMesh();
+                    mLipSyncReset = true;       // <FS> step 27: the morphs are reset by the completion (applyLipSyncReset: they are not written from a pool job)
                 }
             }
         }
         mVoiceVisualizer->setPositionAgent(position);
     }//if ( voiceEnabled )
+}
+
+// <FS> step 27: main thread, where the visualizer step used to reset the lip sync morphs when the avatar stopped speaking
+void LLVOAvatar::applyLipSyncReset()
+{
+    if (!mLipSyncReset)
+    {
+        return;
+    }
+    mLipSyncReset = false;
+    if (!mLipSyncActive)
+    {
+        return;
+    }
+    // <FS:Ansariel> [Legacy Bake]
+    //if( mOohMorph ) mOohMorph->setWeight(mOohMorph->getMinWeight());
+    //if( mAahMorph ) mAahMorph->setWeight(mAahMorph->getMinWeight());
+    if( mOohMorph ) mOohMorph->setWeight(mOohMorph->getMinWeight(), false);
+    if( mAahMorph ) mAahMorph->setWeight(mAahMorph->getMinWeight(), false);
+    // </FS:Ansariel> [Legacy Bake]
+
+    mLipSyncActive = false;
+    LLCharacter::updateVisualParams();
+    dirtyMesh();
 }
 
 // <FS> debug switch (live): skip override_bbox() when the box has not changed
@@ -4870,7 +4892,7 @@ void LLVOAvatar::idleUpdateAttachments(bool visible)
 
 // <FS> view rework A2: an avatar of the motion batch whose attachment loop can run as a pool job: not the viewer's own, its detailed update this frame, and not waiting for a ground sit hover offset
 // (the completion's post motion step moved its root after the loop would have read the skeleton). PLAN-avatars-100.md D2c: the pool job adds that offset itself now (mHoverDone), so a ground sitting
-// avatar takes the job path too; it keeps the main thread only when the offset is still to come (RK_VK_HOVERJOB=0, or no job did it).
+// avatar takes the job path too; it keeps the main thread only when the offset is still to come (no job did it).
 static std::atomic<U64> sSitAttJobs{0};       // diagnostic (RK_VK_DIAG, printed with the AvLate line): attachment jobs allowed for ground sitting avatars
 bool LLVOAvatar::canRunAttachmentJob()
 {
@@ -6792,22 +6814,37 @@ void LLVOAvatar::updateFootstepSounds()
         mWasOnGroundLeft = onGroundLeft;
         mWasOnGroundRight = onGroundRight;
 
-        // <FS:PP> FIRE-3169: Option to change the default footsteps sound
-        // if ( playSound )
-        static LLCachedControl<bool> PlayModeUISndFootsteps(gSavedSettings, "PlayModeUISndFootsteps");
-        if ( playSound && PlayModeUISndFootsteps )
-        // </FS:PP>
+        // <FS> step 23: this runs in the avatar's pool job; the sound (parcel, mute list, the audio engine) is played by the completion (playFootstepPending)
+        if (playSound)
         {
-            const F32 STEP_VOLUME = 0.1f;
-            const LLUUID& step_sound_id = getStepSound();
+            mFootstepPlay = true;
+            mFootstepPos = foot_pos_agent;
+        }
+    }
+}
 
-            LLVector3d foot_pos_global = gAgent.getPosGlobalFromAgent(foot_pos_agent);
+// <FS> step 23: main thread. What updateFootstepSounds decided (mWasOnGround and the ground under the feet are the avatar's own; the sound is not).
+void LLVOAvatar::playFootstepPending()
+{
+    if (!mFootstepPlay)
+    {
+        return;
+    }
+    mFootstepPlay = false;
+    // <FS:PP> FIRE-3169: Option to change the default footsteps sound
+    static LLCachedControl<bool> PlayModeUISndFootsteps(gSavedSettings, "PlayModeUISndFootsteps");
+    if (PlayModeUISndFootsteps && gAudiop)
+    // </FS:PP>
+    {
+        const F32 STEP_VOLUME = 0.1f;
+        const LLUUID& step_sound_id = getStepSound();
 
-            if (LLViewerParcelMgr::getInstance()->canHearSound(foot_pos_global)
-                && !LLMuteList::getInstance()->isMuted(getID(), LLMute::flagObjectSounds))
-            {
-                gAudiop->triggerSound(step_sound_id, getID(), STEP_VOLUME, LLAudioEngine::AUDIO_TYPE_AMBIENT, foot_pos_global);
-            }
+        LLVector3d foot_pos_global = gAgent.getPosGlobalFromAgent(mFootstepPos);
+
+        if (LLViewerParcelMgr::getInstance()->canHearSound(foot_pos_global)
+            && !LLMuteList::getInstance()->isMuted(getID(), LLMute::flagObjectSounds))
+        {
+            gAudiop->triggerSound(step_sound_id, getID(), STEP_VOLUME, LLAudioEngine::AUDIO_TYPE_AMBIENT, foot_pos_global);
         }
     }
 }
@@ -7121,7 +7158,7 @@ void LLVOAvatar::updateTimeStep()
     // </FS:Zi>
 }
 
-void LLVOAvatar::updateRootPositionAndRotation(LLAgent& agent, F32 speed, bool was_sit_ground_constrained)
+void LLVOAvatar::updateRootPositionAndRotation(LLAgent& agent, F32 speed, bool was_sit_ground_constrained, bool place_animesh)
 {
     if (!(isSitting() && getParent()))
     {
@@ -7227,7 +7264,10 @@ void LLVOAvatar::updateRootPositionAndRotation(LLAgent& agent, F32 speed, bool w
         if (cav)
         {
             // SL-1350: Moved to LLDrawable::updateXform()
-            cav->matchVolumeTransform();
+            if (place_animesh)      // (false: an animated object worn by an avatar is placed by the batch's second phase, see updateCharacter)
+            {
+                cav->matchVolumeTransform();
+            }
         }
         else
         {
@@ -7567,9 +7607,14 @@ unsigned char LLVOAvatar::pendingEvents(bool visible)
     {
         ev |= RKAvatarTable::EV_LOADING;
     }
+    if (skeletonChanged())
+    {
+        ev |= RKAvatarTable::EV_SKELETON;
+    }
     static LLCachedControl<bool> debug_av_appearance_message(gSavedSettings, "DebugAvatarAppearanceMessage");
     static LLCachedControl<bool> debug_av_composite_baked(gSavedSettings, "DebugAvatarCompositeBaked");
-    if (isSelf() || isControlAvatar() || debug_av_appearance_message || debug_av_composite_baked || LLVOAvatar::sShowAnimationDebug || mText.notNull() || !mDebugText.empty())
+    static LLCachedControl<bool> debug_animated_objects(gSavedSettings, "DebugAnimatedObjects");      // (LLControlAvatar::updateDebugText adds its lines only with this on)
+    if (isSelf() || (isControlAvatar() && debug_animated_objects) || debug_av_appearance_message || debug_av_composite_baked || LLVOAvatar::sShowAnimationDebug || mText.notNull() || !mDebugText.empty())
     {
         ev |= RKAvatarTable::EV_DEBUG;
     }
@@ -7669,6 +7714,34 @@ void RKAvatarTable::noteCheck(int which, bool same)
 namespace
 {
 bool sVoiceProximal = false;
+bool sVoiceInCalls = false;         // <FS> step 27: ShowVoiceVisualizersInCalls and VoiceVisualizerEnabled, read once a frame by beginFrame (the visualizer runs in the avatars' pool jobs: no setting is read there)
+bool sVoiceVisualizerOn = false;
+}
+
+bool RKAvatarTable::voiceVisualizerOn()
+{
+    return sVoiceVisualizerOn;
+}
+
+bool RKAvatarTable::voiceShown(const LLVOAvatar* av)
+{
+    return voiceEnabled(av) && (sVoiceInCalls || sVoiceProximal);
+}
+
+bool RKAvatarTable::voiceShowSpeaking(const LLVOAvatar* av)
+{
+    const Row* r = row(av);
+    if (!r)
+    {
+        return voiceSpeaking(av) && (!av->isInMuteList() || av->isSelf());
+    }
+    return r->mShowSpeaking;
+}
+
+F32 RKAvatarTable::voicePower(const LLVOAvatar* av)
+{
+    const Row* r = row(av);
+    return r ? r->mPower : LLVoiceClient::getInstance()->getCurrentPower(av->getID());
 }
 
 bool RKAvatarTable::voiceProximal()
@@ -7717,6 +7790,12 @@ void RKAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
     voice_speaking.clear();
     LLVoiceClient::getInstance()->getParticipantList(voice_participants);
     sVoiceProximal = !voice_participants.empty() && LLVoiceClient::getInstance()->inProximalChannel();
+    {
+        static LLUICachedControl<bool> visualizers_in_calls("ShowVoiceVisualizersInCalls", false);
+        static LLCachedControl<bool> voice_visualizer_enabled(gSavedSettings, "VoiceVisualizerEnabled");
+        sVoiceInCalls = visualizers_in_calls;
+        sVoiceVisualizerOn = voice_visualizer_enabled;
+    }
     for (const LLUUID& id : voice_participants)
     {
         if (LLVoiceClient::getInstance()->getIsSpeaking(id))
@@ -7755,6 +7834,15 @@ void RKAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
         {
             r.mVoice = voice_participants.count(av->getID()) != 0;
             r.mSpeaking = voice_speaking.count(av->getID()) != 0;
+            if (r.mSpeaking)
+            {
+                // step 27 (D): what the visualizer shows and with what power, asked here on the main thread (the mute list cache and the voice client are not the avatar's pool job's)
+                r.mShowSpeaking = !av->isInMuteList() || av->isSelf();
+                if (r.mShowSpeaking)
+                {
+                    r.mPower = LLVoiceClient::getInstance()->getCurrentPower(av->getID());
+                }
+            }
         }
         av->mAvTableSlot = (S32)sAvatarRows.size();
         sAvatarRows.emplace_back(av, r);
@@ -7964,7 +8052,16 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     {
         return false;
     }
-    { RK_CPU_ZONE("av char: ensureJointLocals"); ensureJointLocals(); }        // <FS> stage C: the joints' locals live in the flat array (main thread, before this frame's jobs)
+    // <FS> stage C: the joints' locals live in the flat array (main thread, before this frame's jobs); made when what the array is made from changed (step C: EV_SKELETON)
+    if (events & RKAvatarTable::EV_SKELETON)
+    {
+        RK_CPU_ZONE("av char: ensureJointLocals");
+        ensureJointLocals();
+    }
+    else if (kEventsVerify)
+    {
+        ev_note(6, jointLocalsStale(), "skeleton", this);
+    }
 
     // <FS> 2026-11-22: the own avatar's box is what lists it for drawing (ownersCollect): after a region change it was off by the region offset (LLVOAvatar::onShift) and the avatar was only its name tag. A box that stays
     // far from the avatar is logged once (at most 10 times in a session), with the numbers that say where it is: if this ever shows up the cause is not the one fixed in onShift and the bridges' shiftPos
@@ -8096,12 +8193,37 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // thread: the root only feeds the pose job's world pass (nothing between here and the batch reads it: begin and the hidden motion update do not), and it reads the terrain and writes the avatar's own fields.
     // The viewer's own avatar, animesh, UI avatars, special render modes and an avatar sitting on an object keep the inline form.
     // (step B: decided once a frame with the rest of the avatar's plan, RKAvatarTable / LLVOAvatar::planPoolJob; the same conditions this block had)
-    const int can_defer_known = RKAvatarTable::canDefer(this);
+    int can_defer_known = RKAvatarTable::canDefer(this);
     const bool root_in_job = RKAvatarTable::rootJob(this);
+    // <FS> ownership map, animesh: an animated object worn by an avatar that is going to join the motion batch is placed by the batch's second phase, from its host's final pose (LLControlAvatar::placeFromHost), after the
+    // host's pose job: the placement made here read the host's joint on this thread while the host's job could still be running, and the second phase made it again. The rest of the root update stays here.
+    bool worn_in_batch = false;
+    if (!root_in_job && isControlAvatar() && static_cast<LLControlAvatar*>(this)->hostJobOwned())
+    {
+        if (!visible && !isSelf())
+        {
+            worn_in_batch = sMotionUpdateBatch && mSpecialRenderMode == 0 && !isUIAvatar() && mRoot;      // (the hidden form below)
+        }
+        else
+        {
+            if (can_defer_known < 0)
+            {
+                can_defer_known = canDeferMotionUpdate() ? 1 : 0;
+            }
+            worn_in_batch = can_defer_known == 1;
+        }
+        static std::atomic<U64> worn_total{ 0 }, worn_by_batch{ 0 };
+        ++worn_total;
+        worn_by_batch += worn_in_batch ? 1 : 0;
+        if (rk_diag_on() && worn_total % 2000 == 0)
+        {
+            RK_DIAG("AnimRoot") << "animated objects worn by an avatar: " << worn_total.load() << " updates, placed by the batch's second phase " << worn_by_batch.load() << ", placed here (not joining the batch) " << (worn_total.load() - worn_by_batch.load()) << LL_ENDL;
+        }
+    }
     if (!root_in_job)
     {
         AvScope root_scope(AV_CHAR_ROOT);
-        updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained);
+        updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained, !worn_in_batch);
     }
 
     //-------------------------------------------------------------------------
@@ -8127,6 +8249,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             mHoverDone = false;
             mDeferredVisible = visible;
             mRootInJob = root_in_job;
+            mPostInJob = root_in_job;
             mDeferredSpeed = speed;
             mFactsInJob = facts_in_job;
             { RK_CPU_ZONE("av char: push to the batch (and the job launch)"); pushMotionBatch(this); }
@@ -8172,6 +8295,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             mHoverDone = false;
             mDeferredVisible = visible;
             mRootInJob = root_in_job;
+            mPostInJob = root_in_job;
             mDeferredSpeed = speed;
             mFactsInJob = facts_in_job;
             { RK_CPU_ZONE("av char: push to the batch (and the job launch)"); pushMotionBatch(this); }
@@ -8199,9 +8323,19 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         }
         updateRootPositionAndRotation(agent, speed, was_sit_ground_constrained);
     }
+    else if (worn_in_batch)
+    {
+        // (not expected: the animated object was going to join the batch and did not; placed now, late)
+        static std::atomic<U32> late{ 0 };
+        if (++late <= 5)
+        {
+            LL_WARNS("AnimRoot") << "an animated object worn by an avatar did not join the motion batch; placed from its host now, late" << LL_ENDL;
+        }
+        static_cast<LLControlAvatar*>(this)->placeFromHost();
+    }
     {
         AvScope post_scope(AV_CHAR_POST);
-        updateCharacterPostMotion(was_sit_ground_constrained, visible);
+        updateCharacterPostMotion(was_sit_ground_constrained, visible, false);
     }
 
     return visible;
@@ -8291,11 +8425,10 @@ void LLVOAvatar::cleanJointMatrices()
 // <FS> PLAN-avatars-100.md D2c: the ground sit hover offset, added at the end of the pool job, where the completion's post motion step added it (updateCharacterPostMotion): the same write, the same
 // order (after the pass, then the children follow), moved before the join. The skeleton is final when the job ends: nothing writes the joints after it, the attachment loop and the palette job read the
 // array the job made, the rewalk of the completion and the stale array it caused are gone. The offset and the sit state are the avatar's own, nothing else runs while the batch's jobs do.
-// RK_VK_HOVERJOB=0: as before (the completion adds it).
+// (The switch that turned it off, RK_VK_HOVERJOB, is gone: step 23 reads the skeleton where the frame ends, in the same job.)
 void LLVOAvatar::applyGroundSitHoverInJob(bool try_flat)
 {
-    static const bool on = !getenv("RK_VK_HOVERJOB") || atoi(getenv("RK_VK_HOVERJOB")) != 0;
-    if (!on || !mRoot || getParent() || !(isSitting() || mDeferredSitGroundConstrained))
+    if (!mRoot || getParent() || !(isSitting() || mDeferredSitGroundConstrained))
     {
         return;
     }
@@ -8365,6 +8498,10 @@ void LLVOAvatar::runDeferredMotionBlend()
             mRoot->updateWorldMatrixChildren();
         }
         applyGroundSitHoverInJob(false);
+        if (mPostInJob)
+        {
+            postMotionInJob();
+        }
         mPoseJobFrame.store((U32)LLFrameTimer::getFrameCount(), std::memory_order_release);
         return;
     }
@@ -8386,7 +8523,34 @@ void LLVOAvatar::runDeferredMotionBlend()
         }
     }
     applyGroundSitHoverInJob(true);
+    if (mPostInJob)
+    {
+        postMotionInJob();
+    }
     mPoseJobFrame.store((U32)LLFrameTimer::getFrameCount(), std::memory_order_release);
+}
+
+// <FS> ownership map step 23: what the completion's post motion step made first (the head offset, the footstep decision, the skin flag), made at the end of the avatar's pool job for an avatar the row planned
+// for it: after the hover offset (the eyes and the feet are where the frame ends). Reads the avatar's own joints, its drawable, the camera's near plane and the frame rate; writes mHeadOffset, mWasOnGround and the
+// pending footstep (the sound is played by the completion). mPostInJob stays set until the completion has seen it.
+void LLVOAvatar::postMotionInJob()
+{
+    updateHeadOffset();
+    updateFootstepSounds();
+    if (mDeferredVisible)
+    {
+        mNeedsSkin = true;
+    }
+    // step 26: the name tag position (the camera, the water height and the avatar's own joints; the smoothing of its head offset is the avatar's own), used by the completion's voice visualizer and name tag
+    mHudNamePos = idleCalcNameTagPosition(mLastRootPos);
+    // step 27: the voice visualizer (the avatar's own visualizer object, the voice facts from the row; the morph reset when it stops speaking is the completion's)
+    idleUpdateVoiceVisualizer(RKAvatarTable::voiceShown(this), mHudNamePos);
+    mPostFactsInJob = true;
+    static std::atomic<U64> in_job{ 0 };
+    if (rk_diag_on() && ++in_job % 50000 == 0)
+    {
+        RK_DIAG("PostJob") << "head offset, footstep decision, skin flag, name tag position and voice visualizer made in the avatar's pool job: " << in_job.load() << " so far" << LL_ENDL;
+    }
 }
 
 void LLVOAvatar::completeDeferredMotionUpdate()
@@ -8399,9 +8563,13 @@ void LLVOAvatar::completeDeferredMotionUpdate()
     mDeferredMatricesOnly = false;
     mBeginInJob = false;        // (the job has run: it made the begin, or this avatar did not take that path)
     mFactsInJob = false;
+    const bool post_in_job = mPostInJob;      // (step 23: the job made the head offset and the footstep decision)
+    mPostInJob = false;
 
     if (isDead())
     {
+        mFootstepPlay = false;
+        mPostFactsInJob = false;
         mAttJobDone = false;
         mLedgerPending = false;
         mFrontPending = false;
@@ -8413,7 +8581,7 @@ void LLVOAvatar::completeDeferredMotionUpdate()
     AvImpTimer imp_done_timer(2, this);
     { AvSelfScope self_scope(0, this); flushDeferredStopRequests(); }        // <FS> stage d: the motions the own avatar's blend stopped
     // (the blend job cleaned the skeleton's world matrices: the walk of updateCharacterPostMotion only runs when something dirtied a joint since)
-    { AvSelfScope self_scope(1, this); RK_CPU_ZONE("av post: updateCharacterPostMotion"); updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, LLJoint::sTouchSerial); }
+    { AvSelfScope self_scope(1, this); RK_CPU_ZONE("av post: updateCharacterPostMotion"); updateCharacterPostMotion(mDeferredSitGroundConstrained, mDeferredVisible, post_in_job, LLJoint::sTouchSerial); }
     { AvSelfScope self_scope(2, this); idleUpdatePostCharacter(mDeferredDetailedUpdate); }
 }
 
@@ -8421,7 +8589,7 @@ void LLVOAvatar::completeDeferredMotionUpdate()
 // updateCharacterPostMotion()
 // Everything updateCharacter() does after the motions have been updated.
 //-----------------------------------------------------------------------------
-void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible, U32 clean_serial)
+void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible, bool post_in_job, U32 clean_serial)
 {
     // Special handling for sitting on ground.
     if (!getParent() && (isSitting() || was_sit_ground_constrained))
@@ -8450,17 +8618,20 @@ void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool
         mHoverDone = false;
     }
 
-    // update head position
+    // update head position, and decide on a footstep (an avatar whose pool job did it, step 23, only plays the sound)
+    if (!post_in_job)
     {
-        AvScope s(AV_PM_HEADOFFSET);
-        updateHeadOffset();
+        {
+            AvScope s(AV_PM_HEADOFFSET);
+            updateHeadOffset();
+        }
+        {
+            AvScope s(AV_PM_FOOTSTEP);
+            updateFootstepSounds();
+        }
     }
-
     // Generate footstep sounds when feet hit the ground
-    {
-        AvScope s(AV_PM_FOOTSTEP);
-        updateFootstepSounds();
-    }
+    playFootstepPending();
 
     // Update child joints as needed.
     if (clean_serial != LLJoint::sTouchSerial)
@@ -8469,7 +8640,7 @@ void LLVOAvatar::updateCharacterPostMotion(bool was_sit_ground_constrained, bool
         walkWorldAfterPass(true);
     }
 
-    if (visible)
+    if (visible && !post_in_job)
     {
         // System avatar mesh vertices need to be reskinned.
         mNeedsSkin = true;
@@ -10881,6 +11052,7 @@ void LLVOAvatar::initAttachmentPoints(bool ignore_hud_joints)
         if (newly_created)
         {
             mAttachmentPoints[attachmentID] = attachment;
+            markSkeletonChanged();      // <FS> step C: the flat joint arrays are made from the attachment points too
 
             // now add attachment joint
             parent_joint->addChild(attachment);
@@ -14502,6 +14674,7 @@ void LLVOAvatar::ensureJointLocals()
     }
     if (flat.mLocalsKey == key && flat.mLocals.size() == N)
     {
+        clearSkeletonChanged();
         return;
     }
     if (flat.mLocals.size() != N)
@@ -14526,6 +14699,25 @@ void LLVOAvatar::ensureJointLocals()
         }
     }
     flat.mLocalsKey = key;
+    clearSkeletonChanged();
+}
+
+// <FS> step C: what ensureJointLocals tested before it did anything, every frame for every avatar (the same conditions, in the same order); now the avatar's EV_SKELETON bit says when it has something to do, and this is
+// the check RK_VK_AVEVENTS_VERIFY makes beside a clear bit
+bool LLVOAvatar::jointLocalsStale()
+{
+    if (!mRoot || mMatrixPaletteCache.empty())
+    {
+        return false;
+    }
+    if (!mFlatSkel)
+    {
+        return true;
+    }
+    const RKFlatSkeleton& flat = *mFlatSkel;
+    const U32 N = LL_CHARACTER_MAX_ANIMATED_JOINTS;
+    const U32 key = (U32)mSkeletonSerialNum ^ ((U32)mNumBones << 8) ^ ((U32)mNumCollisionVolumes << 20) ^ ((U32)mAttachmentPoints.size() << 26);
+    return flat.mWorld.size() != N || flat.mStructKey != key || flat.mOrder.empty() || flat.mLocalsKey != key || flat.mLocals.size() != N;
 }
 
 void LLVOAvatar::walkWorldAfterPass(bool rerun_pass)

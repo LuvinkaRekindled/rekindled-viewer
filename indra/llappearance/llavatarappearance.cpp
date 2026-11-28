@@ -697,6 +697,7 @@ bool LLAvatarAppearance::allocateCharacterJoints( S32 num )
         // mSkeleton = avatar_joint_list_t(num,NULL);
         mSkeleton = avatar_joint_list_t(num, static_cast< LLAvatarJoint*>( NULL ));
         mNumBones = num;
+        markSkeletonChanged();
     }
 
     return true;
@@ -1556,6 +1557,7 @@ bool LLAvatarAppearance::allocateCollisionVolumes( U32 num )
         }
 
         mNumCollisionVolumes = num;
+        markSkeletonChanged();
     }
     return true;
 }

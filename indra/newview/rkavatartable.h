@@ -37,7 +37,8 @@ public:
         EV_TEXTURE = 4,         // the visibility differs from the baked texture callbacks' state, or the first full load is still counting: checkTextureLoading
         EV_LOADING = 8,         // not fully loaded: idleUpdateLoadingEffect (the cloud, the first visible handlers)
         EV_DEBUG = 16,          // the debug text: a debug setting, a text object, the own avatar and animesh (their overrides add text)
-        EV_ALL = 31
+        EV_SKELETON = 32,       // what the flat joint arrays are made from changed (LLCharacter::skeletonChanged): ensureJointLocals
+        EV_ALL = 63
     };
 
     // what the presentation of the avatar has to do this frame (step 2: one bit at a time, each decided here and read by the piece)
@@ -61,6 +62,8 @@ public:
         U8 mAppearance = 0;             // getOverallAppearance() (LLVOAvatar::AvatarOverallAppearance: normal, jellydoll, invisible)
         bool mVoice = false;            // PLAN-avatars.md B3d: the avatar is a participant of a voice channel (LLVoiceClient::getVoiceEnabled), taken once a frame from the participant list, not asked of the voice client per avatar
         bool mSpeaking = false;         // ... and the voice client says it is speaking (LLVoiceClient::getIsSpeaking), asked for the participants only
+        bool mShowSpeaking = false;     // <FS> step 27 (D): speaking and not on the mute list (or the own avatar): what the voice visualizer shows (isInMuteList writes a cache: asked here, on the main thread, for the speakers only)
+        F32 mPower = 0.f;               // ... and its voice power (LLVoiceClient::getCurrentPower), asked once a frame for the speakers
         U16 mBits = 0;
         U32 mFrame = 0;
         // <FS> ownership map step B: who runs what this frame, decided once here (LLVOAvatar::planPoolJob) and read by idleUpdate and updateCharacter, which used to decide it each for itself
@@ -79,6 +82,10 @@ public:
     static bool voiceProximal();                                                     // B3d: LLVoiceClient::inProximalChannel() once a frame (false without voice participants)
     static bool voiceEnabled(const LLVOAvatar* av);                                  // B3d: the avatar's voice enabled fact from the row (the voice client asked when there is no row)
     static bool voiceSpeaking(const LLVOAvatar* av);                                 // B3d: the speaking fact from the row
+    static bool voiceShown(const LLVOAvatar* av);                                    // step 27: voice enabled for the avatar and (calls shown or the proximal channel): what the visualizer and the lip sync run on (settings read once a frame)
+    static bool voiceShowSpeaking(const LLVOAvatar* av);                             // step 27 (D): speaking and not muted (or own), from the row
+    static F32 voicePower(const LLVOAvatar* av);                                     // step 27 (D): the voice power from the row
+    static bool voiceVisualizerOn();                                                 // step 27: the VoiceVisualizerEnabled setting, read once a frame
     static U8 events(const LLVOAvatar* av);                                          // step C: the row's event bits (all of them without a row)
     static bool rootJob(const LLVOAvatar* av);                                       // step B: the row's plan
     static bool frontJob(const LLVOAvatar* av);

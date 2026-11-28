@@ -348,8 +348,11 @@ public:
     bool            computeVisuallyMutedLive();         // isVisuallyMuted() derived likewise
     bool            computeImpostorLive();      // isImpostor() derived from the avatar's state (what the table caches at endFrame)
     bool            reducedHiddenSkip();        // idleUpdate's reduced update of an avatar nobody sees (every 2nd or 4th frame)
-    void            updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible, U32 clean_serial = ~0u);
-    void            applyGroundSitHoverInJob(bool try_flat);      // <FS> PLAN-avatars-100.md D2c: the ground sit hover offset, added at the end of the pool job (RK_VK_HOVERJOB=0: in the completion as before)
+    void            updateCharacterPostMotion(bool was_sit_ground_constrained, bool visible, bool post_in_job, U32 clean_serial = ~0u);
+    void            applyGroundSitHoverInJob(bool try_flat);      // <FS> PLAN-avatars-100.md D2c: the ground sit hover offset, added at the end of the pool job
+    void            postMotionInJob();                              // <FS> ownership map step 23: the head offset and the footstep decision, made at the end of the avatar's pool job (the row planned it)
+    void            playFootstepPending();                          // main thread: the sound the footstep decision asked for
+    void            applyLipSyncReset();                            // main thread: the lip sync morphs reset the visualizer step asked for
     void            idleUpdatePostCharacter(bool detailed_update);
     bool            canDeferMotionUpdate() const;
     // Runs the deferred pose blend phase. Safe to call from a worker thread
@@ -371,7 +374,7 @@ public:
     void            computeUpdatePeriod();
     void            updateOrientation(LLAgent &agent, F32 speed, F32 delta_time);
     void            updateTimeStep();
-    void            updateRootPositionAndRotation(LLAgent &agent, F32 speed, bool was_sit_ground_constrained);
+    void            updateRootPositionAndRotation(LLAgent &agent, F32 speed, bool was_sit_ground_constrained, bool place_animesh = true);
 
     void            idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &position);
     void            idleUpdateMisc(bool detailed_update);
@@ -384,6 +387,7 @@ public:
     // <FS> PLAN-avatars.md stage C: the flat world array (RKFlatSkeleton) is the OUTPUT of the avatar's pose job: filled at its end, from the world
     // walk's result; the attachment rows and the palette job read it, and the palette job fills it again only when a joint was touched after (skeletonDirty)
     void            ensureJointLocals();        // the joints' locals into the flat array
+    bool            jointLocalsStale();         // <FS> step C, the verify mode's check: would ensureJointLocals make anything (the test it made every frame); EV_SKELETON is the event it is asked for now
     void            releaseJointViews();        // the joints stop pointing into this avatar's arrays
     void            walkWorldAfterPass(bool rerun_pass);   // the xform chain walked outside the pose job (a root move, a lazy clean): the flat array of this frame no longer holds, so it is made stale, or the pass runs again
     bool            flatWorldPass();            // the flat world pass over the joints in array order; false: the walk does it
@@ -755,6 +759,12 @@ private:
     bool        mBelowWaterDone = false;        // <FS> B3d: the pool job already worked out mBelowWater this frame
     U32         mWindFrame = 0xFFFFFFFFu;       // <FS> B3d: the frame the cloth wind state was last worked out (at draw)
     bool        mRootInJob = false;             // <FS> stage B3d: the root position and rotation are worked out at the start of the pool job (updateCharacter set it with the batch entry)
+    bool        mPostInJob = false;             // <FS> step 23: the head offset, the footstep decision and the skin flag are made at the end of the pool job (set with mRootInJob, cleared by the completion)
+    bool        mPostFactsInJob = false;        // <FS> steps 26 and 27: mHudNamePos and the voice visualizer were made in the pool job this frame (the completion uses them)
+    bool        mLipSyncReset = false;          // step 27: the visualizer saw the avatar stop speaking while its lip sync morphs were active: the completion resets them (applyLipSyncReset)
+    LLVector3   mHudNamePos;
+    bool        mFootstepPlay = false;         // a foot hit the ground and the step sound is due (decided by updateFootstepSounds, played on the main thread)
+    LLVector3   mFootstepPos;                   // (where, agent coordinates)
     F32         mDeferredSpeed = 0.f;           // (the speed updateCharacter worked out, for the root update in the job)
     bool        mDeferredMatricesOnly = false; // <FS> hidden avatar: only its skeleton's world matrices are worked out on the worker (no pose blend)
     bool        mDeferredSitGroundConstrained = false;
@@ -1446,7 +1456,7 @@ public:
     // <FS> true while this avatar's deferred motion update (the batched pose blend, completeDeferredMotionUpdate) has not made its post motion step yet, and that step is going to add the ground sit hover
     // offset to the root (updateCharacterPostMotion): until then the skeleton is one hover offset below where the frame ends
     bool            hasPendingGroundSitHover() const { return mMotionUpdateDeferred && !mHoverDone && !getParent() && (mIsSitting || mDeferredSitGroundConstrained); }
-    // <FS> the avatar's pose job (blend + world pass) has finished for this frame: its joints hold this frame's pose WITHOUT the ground-sit hover (the post motion step adds it; with RK_VK_HOVERJOB the job adds it itself and hasPendingGroundSitHover is then false). Before that they still hold last frame's final
+    // <FS> the avatar's pose job (blend + world pass) has finished for this frame: its joints hold this frame's pose WITHOUT the ground-sit hover (the pool job adds the offset itself and hasPendingGroundSitHover is then false; the post motion step adds it only for an avatar that did not run a pool job). Before that they still hold last frame's final
     // value, which has the hover in. An animated object worn by this avatar adds the hover only in the first case (LLControlAvatar::matchVolumeTransform).
     bool            poseJobDoneThisFrame() const { return mPoseJobFrame.load(std::memory_order_acquire) == (U32)LLFrameTimer::getFrameCount(); }
     std::atomic<U32> mPoseJobFrame{ ~0u };
