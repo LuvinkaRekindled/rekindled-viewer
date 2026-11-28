@@ -331,7 +331,9 @@ public:
     virtual bool    computeNeedsUpdate();
     virtual bool    updateCharacter(LLAgent &agent);
     // <FS> PLAN-avatars.md stage A: the avatar table's decision for this avatar this frame (rkavatartable.h): the gates of idleUpdate / updateCharacter in their order; returns a RKAvatarTable::Mode
-    unsigned char   decideFrameMode(bool& visible, bool& needs_update, bool& root_job, bool& front_job, signed char& can_defer);
+    unsigned char   decideFrameMode(bool& visible, bool& needs_update, bool& root_job, bool& front_job, signed char& can_defer, unsigned char& events);
+    unsigned char   pendingEvents(bool visible);            // <FS> ownership map step C: RKAvatarTable::Events
+    void            updateSitState();                       // the sit / get off transitions updateCharacter made every frame (the seat set or cleared since the last frame: EV_SIT)
     // <FS> ownership map step B: who runs what, decided once a frame by decideFrameMode (the row): the pool job's share (root and below water, and for the avatars that can the moves idleUpdate used to make first)
     void            planPoolJob(bool visible, bool& root_job, bool& front_job, signed char& can_defer);
     void            frontMoves(LLAgent& agent, const F64& time);     // the drawable's move and the object's interpolation: in idleUpdate, or at the start of the avatar's pool job (mFrontPending)
@@ -743,6 +745,9 @@ private:
 
     // state carried across a deferred motion update, see sMotionUpdateBatch
     bool        mMotionUpdateDeferred = false;
+    F32         mFactsExpectSpeed = 0.f;        // (RK_VK_AVEVENTS_VERIFY: what updateCharacter would have made on this thread, for the job to compare)
+    bool        mFactsExpectSit = false;
+    bool        mFactsInJob = false;            // <FS> step C: the speed and the ground sit fact are made at the start of the pool job (the row planned the job and no event is pending)
     bool        mFrontPending = false;          // <FS> step B: the front moves are made at the start of the pool job (the row planned it)
     F64         mFrontTime = 0.0;               // (the frame time idleUpdate was called with)
     bool        mLedgerPending = false;         // the avatar's ledger (mAttLedger) holds writes from this frame's job: replayLedger makes them

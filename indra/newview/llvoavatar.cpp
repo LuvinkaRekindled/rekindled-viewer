@@ -3444,6 +3444,28 @@ struct AvImpTimer
 // before the avatars run: the extent refresh period, and the nearby avatar count (a loop over all characters on a 1 s timer, with the automatic tuning on; it was a call of the complexity pass)
 S32 LLVOAvatar::sExtentUpdFreq = 1;
 
+// <FS> ownership map step C, RK_VK_AVEVENTS_VERIFY=1: a handler whose event bit is clear is run as before and the state it can write is compared; a change is a bit that should have been set (logged, first 5 of each kind)
+namespace
+{
+const bool kEventsVerify = getenv("RK_VK_AVEVENTS_VERIFY") != nullptr;
+std::atomic<U64> sEvChecked[6], sEvMissed[6];
+void ev_note(int which, bool missed, const char* name, LLVOAvatar* av)
+{
+    ++sEvChecked[which];
+    if (missed && ++sEvMissed[which] <= 5)
+    {
+        LL_WARNS("AvEvents") << "the event bit of " << name << " was clear and its handler changed the avatar's state: " << av->getFullname() << LL_ENDL;
+    }
+    U64 total = 0;
+    for (int k = 0; k < 6; ++k) { total += sEvChecked[k].load(std::memory_order_relaxed); }
+    if (total % 400000 == 0)
+    {
+        RK_DIAG("AvEvents") << "handlers run beside a clear bit (checked / changed state): sit " << sEvChecked[0].load() << "/" << sEvMissed[0].load() << ", appearance " << sEvChecked[1].load() << "/" << sEvMissed[1].load()
+            << ", texture loading " << sEvChecked[2].load() << "/" << sEvMissed[2].load() << ", loading effect " << sEvChecked[3].load() << "/" << sEvMissed[3].load() << ", debug text " << sEvChecked[4].load() << "/" << sEvMissed[4].load() << ", speed and sit fact made in the job " << sEvChecked[5].load() << "/" << sEvMissed[5].load() << LL_ENDL;
+    }
+}
+}
+
 void LLVOAvatar::beginFrameShared()
 {
     static LLCachedControl<S32> refreshPeriod(gSavedSettings, "AvatarExtentRefreshPeriodBatch");
@@ -3611,7 +3633,25 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
 
     {
         RK_CPU_ZONE("av idle: texture check, pixel area");
-        checkTextureLoading() ;
+        // <FS> ownership map step C: the texture callbacks are looked at when the row says visibility or the first load changed; the timer of an avatar in view is what checkTextureLoading starts with
+        if (RKAvatarTable::events(this) & RKAvatarTable::EV_TEXTURE)
+        {
+            checkTextureLoading();
+        }
+        else
+        {
+            if (table_row->mVisible)
+            {
+                mInvisibleTimer.reset();
+            }
+            if (kEventsVerify)
+            {
+                const bool paused = mLoadedCallbacksPaused;
+                const S32 count = mLoadedCallbackTextures;
+                checkTextureLoading();
+                ev_note(2, paused != mLoadedCallbacksPaused || count != mLoadedCallbackTextures, "texture loading", this);
+            }
+        }
 
         // force immediate pixel area update on avatars using last frames data (before drawable or camera updates)
         setPixelAreaAndAngle(gAgent);
@@ -3734,7 +3774,17 @@ void LLVOAvatar::idleUpdatePostCharacter(bool detailed_update)
         AvSelfScope self_scope(10, this);
         RK_CPU_ZONE("av post: lipsync, loading, water, wind");
         idleUpdateLipSync( voice_enabled );
-        idleUpdateLoadingEffect();
+        if (RKAvatarTable::events(this) & RKAvatarTable::EV_LOADING)
+        {
+            idleUpdateLoadingEffect();
+        }
+        else if (kEventsVerify)
+        {
+            const bool loaded = mFullyLoaded;
+            const bool first = mFirstFullyVisible;
+            idleUpdateLoadingEffect();
+            ev_note(3, loaded != mFullyLoaded || first != mFirstFullyVisible, "loading effect", this);
+        }
         // <FS> B3d: the below water fact is worked out in the avatar's pool job next to the root (mBelowWaterDone); the wind effect at draw time, where its cloth uniforms are set (updateWindEffectForDraw)
         if (mBelowWaterDone)
         {
@@ -7450,12 +7500,13 @@ bool LLVOAvatar::reducedHiddenSkip()
 }
 
 // the gates of idleUpdate and updateCharacter, in their order (idleUpdate: dead / exiting, friends only, tooSlow, render type off, the reduced update; updateCharacter: not built, visible, computeNeedsUpdate)
-unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update, bool& root_job, bool& front_job, signed char& can_defer)
+unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update, bool& root_job, bool& front_job, signed char& can_defer, unsigned char& events)
 {
     visible = false;
     needs_update = false;
     root_job = front_job = false;
     can_defer = -1;
+    events = RKAvatarTable::EV_ALL;        // (an avatar that leaves before the gates below keeps every handler: idleUpdate still reaches some of them)
     if (LLApp::isExiting() || isDead())
     {
         return RKAvatarTable::MODE_OTHER;
@@ -7481,6 +7532,7 @@ unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update, boo
     }
     visible = isVisible();
     needs_update = computeNeedsUpdate();
+    events = pendingEvents(visible);
     if (!needs_update && !isSelf())
     {
         return RKAvatarTable::MODE_SKIP;
@@ -7491,6 +7543,37 @@ unsigned char LLVOAvatar::decideFrameMode(bool& visible, bool& needs_update, boo
         return RKAvatarTable::MODE_MATRICES;
     }
     return RKAvatarTable::MODE_POSE;
+}
+
+// <FS> ownership map step C: what changed for this avatar since the last frame, in the terms of the handlers' own tests (each a superset of when the handler does anything). The handlers run when their bit is set:
+// they were asked every frame for every avatar and did nothing, almost always. RK_VK_AVEVENTS_VERIFY=1 runs the handler of a clear bit as well and counts a change of the state it could write (LLVOAvatar::verifyEvent).
+unsigned char LLVOAvatar::pendingEvents(bool visible)
+{
+    unsigned char ev = 0;
+    if ((getParent() && !isSitting()) || (!getParent() && isSitting() && !isMotionActive(ANIM_AGENT_SIT_GROUND_CONSTRAINED)))
+    {
+        ev |= RKAvatarTable::EV_SIT;
+    }
+    const AvatarOverallAppearance appearance = getOverallAppearance();
+    if (appearance != mOverallAppearance || appearance == AOA_JELLYDOLL)
+    {
+        ev |= RKAvatarTable::EV_APPEARANCE;
+    }
+    if ((!visible) != mLoadedCallbacksPaused || (visible && mFirstFullyVisible && mLoadedCallbackTextures < (S32)mCallbackTextureList.size()))
+    {
+        ev |= RKAvatarTable::EV_TEXTURE;
+    }
+    if (!mFullyLoaded)
+    {
+        ev |= RKAvatarTable::EV_LOADING;
+    }
+    static LLCachedControl<bool> debug_av_appearance_message(gSavedSettings, "DebugAvatarAppearanceMessage");
+    static LLCachedControl<bool> debug_av_composite_baked(gSavedSettings, "DebugAvatarCompositeBaked");
+    if (isSelf() || isControlAvatar() || debug_av_appearance_message || debug_av_composite_baked || LLVOAvatar::sShowAnimationDebug || mText.notNull() || !mDebugText.empty())
+    {
+        ev |= RKAvatarTable::EV_DEBUG;
+    }
+    return ev;
 }
 
 // <FS> ownership map step B: what updateCharacter decided for itself when it got to the batch (RK_VK_ROOTJOB), decided here once with the rest of the frame's plan: the same conditions, in the same terms. The root
@@ -7650,7 +7733,7 @@ void RKAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
         }
         LLVOAvatar* av = static_cast<LLVOAvatar*>(object);
         Row r;
-        r.mMode = av->decideFrameMode(r.mVisible, r.mNeedsUpdate, r.mRootJob, r.mFrontJob, r.mCanDefer);
+        r.mMode = av->decideFrameMode(r.mVisible, r.mNeedsUpdate, r.mRootJob, r.mFrontJob, r.mCanDefer, r.mEvents);
         r.mClass = av->isSelf() ? CLASS_OWN : (r.mVisible ? CLASS_SEEN : CLASS_UNSEEN);
         r.mFrame = frame;
         if (av->mDrawable.notNull() && !av->isSelf())
@@ -7698,6 +7781,12 @@ bool RKAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
         reads = different = 0;
     }
     return bit;
+}
+
+U8 RKAvatarTable::events(const LLVOAvatar* av)
+{
+    const Row* r = row(av);
+    return r ? r->mEvents : (U8)EV_ALL;
 }
 
 bool RKAvatarTable::rootJob(const LLVOAvatar* av)
@@ -7837,16 +7926,45 @@ bool LLVOAvatar::computeNeedsUpdate()
 // simulator.
 //
 //------------------------------------------------------------------------
+// <FS> ownership map step C: the sit / get off transitions that updateCharacter tested for every frame (the same code), made when the row's EV_SIT bit says the seat was set or cleared
+void LLVOAvatar::updateSitState()
+{
+    if (getParent() && !isSitting())
+    {
+        sitOnObject((LLViewerObject*)getParent());
+    }
+    else if (!getParent() && isSitting() && !isMotionActive(ANIM_AGENT_SIT_GROUND_CONSTRAINED))
+    {
+        // If we are starting up, motion might be loading
+        LLMotion *motionp = mMotionController.findMotion(ANIM_AGENT_SIT_GROUND_CONSTRAINED);
+        if (!motionp || !mMotionController.isMotionLoading(motionp))
+        {
+            getOffObject();
+        }
+    }
+}
+
 bool LLVOAvatar::updateCharacter(LLAgent &agent)
 {
     AvScope char_total_scope(AV_CHAR_TOTAL);
-    updateDebugText();
+    const U8 events = RKAvatarTable::events(this);        // <FS> ownership map step C: which handlers have something to do this frame
+    if (events & RKAvatarTable::EV_DEBUG)
+    {
+        updateDebugText();
+    }
+    else if (kEventsVerify)
+    {
+        const LLHUDText* text = mText.get();
+        const size_t size = mDebugText.size();
+        updateDebugText();
+        ev_note(4, text != mText.get() || size != mDebugText.size(), "debug text", this);
+    }
 
     if (!mIsBuilt)
     {
         return false;
     }
-    ensureJointLocals();        // <FS> stage C: the joints' locals live in the flat array (main thread, before this frame's jobs)
+    { RK_CPU_ZONE("av char: ensureJointLocals"); ensureJointLocals(); }        // <FS> stage C: the joints' locals live in the flat array (main thread, before this frame's jobs)
 
     // <FS> 2026-11-22: the own avatar's box is what lists it for drawing (ownersCollect): after a region change it was off by the region offset (LLVOAvatar::onShift) and the avatar was only its name tag. A box that stays
     // far from the avatar is logged once (at most 10 times in a session), with the numbers that say where it is: if this ever shows up the cause is not the one fixed in onShift and the bridges' shiftPos
@@ -7908,7 +8026,18 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // Handle transitions between regular rendering, jellydoll, or invisible.
     // Can trigger skeleton reset or animation changes
     //--------------------------------------------------------------------
-    updateOverallAppearance();
+    if (events & RKAvatarTable::EV_APPEARANCE)
+    {
+        updateOverallAppearance();
+    }
+    else if (kEventsVerify)
+    {
+        const AvatarOverallAppearance appearance = mOverallAppearance;
+        const size_t jelly = mJellyAnims.size();
+        const bool impostor = mNeedsImpostorUpdate;
+        updateOverallAppearance();
+        ev_note(1, appearance != mOverallAppearance || jelly != mJellyAnims.size() || impostor != mNeedsImpostorUpdate, "overall appearance", this);
+    }
 
     //--------------------------------------------------------------------
     // change animation time quanta based on avatar render load
@@ -7919,29 +8048,43 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     //--------------------------------------------------------------------
     // Update sitting state based on parent and active animation info.
     //--------------------------------------------------------------------
-    if (getParent() && !isSitting())
+    if (events & RKAvatarTable::EV_SIT)
     {
-        sitOnObject((LLViewerObject*)getParent());
+        updateSitState();
     }
-    else if (!getParent() && isSitting() && !isMotionActive(ANIM_AGENT_SIT_GROUND_CONSTRAINED))
+    else if (kEventsVerify)
     {
-        // If we are starting up, motion might be loading
-        LLMotion *motionp = mMotionController.findMotion(ANIM_AGENT_SIT_GROUND_CONSTRAINED);
-        if (!motionp || !mMotionController.isMotionLoading(motionp))
-        {
-            getOffObject();
-        }
+        const bool sitting = isSitting();
+        const LLViewerObject* parent = (const LLViewerObject*)getParent();
+        updateSitState();
+        ev_note(0, sitting != isSitting() || parent != (const LLViewerObject*)getParent(), "sit state", this);
     }
 
     //--------------------------------------------------------------------
     // create local variables in world coords for region position values
     //--------------------------------------------------------------------
-    LLVector3 xyVel = getVelocity();
-    xyVel.mV[VZ] = 0.0f;
-    F32 speed = xyVel.length();
-    // remembering the value here prevents a display glitch if the
-    // animation gets toggled during this update.
-    bool was_sit_ground_constrained = isMotionActive(ANIM_AGENT_SIT_GROUND_CONSTRAINED);
+    // <FS> ownership map step C: for an avatar the row planned for the pool job with no event pending, the speed and the ground sit fact are made at the start of its job (runDeferredMotionBlend, mFactsInJob):
+    // they only feed the root update and the motions, which run there, and nothing on this thread reads them first
+    const bool facts_in_job = RKAvatarTable::rootJob(this) && events == 0;
+    F32 speed = 0.f;
+    bool was_sit_ground_constrained = false;
+    if (facts_in_job && kEventsVerify)
+    {
+        LLVector3 v = getVelocity();
+        v.mV[VZ] = 0.0f;
+        mFactsExpectSpeed = v.length();
+        mFactsExpectSit = isMotionActive(ANIM_AGENT_SIT_GROUND_CONSTRAINED);
+    }
+    if (!facts_in_job)
+    {
+        RK_CPU_ZONE("av char: speed, sit fact");
+        LLVector3 xyVel = getVelocity();
+        xyVel.mV[VZ] = 0.0f;
+        speed = xyVel.length();
+        // remembering the value here prevents a display glitch if the
+        // animation gets toggled during this update.
+        was_sit_ground_constrained = isMotionActive(ANIM_AGENT_SIT_GROUND_CONSTRAINED);
+    }
 
     //--------------------------------------------------------------------
     // This does a bunch of state updating, including figuring out
@@ -7965,7 +8108,10 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // Update character motions
     //-------------------------------------------------------------------------
     // store data relevant to motions
-    mSpeed = speed;
+    if (!facts_in_job)
+    {
+        mSpeed = speed;
+    }
 
     // update animations
     if (!visible && !isSelf()) // NOTE: never do a "hidden update" for self avatar as it interrupts controller processing
@@ -7982,7 +8128,8 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             mDeferredVisible = visible;
             mRootInJob = root_in_job;
             mDeferredSpeed = speed;
-            pushMotionBatch(this);
+            mFactsInJob = facts_in_job;
+            { RK_CPU_ZONE("av char: push to the batch (and the job launch)"); pushMotionBatch(this); }
             return visible;
         }
     }
@@ -8026,7 +8173,8 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
             mDeferredVisible = visible;
             mRootInJob = root_in_job;
             mDeferredSpeed = speed;
-            pushMotionBatch(this);
+            mFactsInJob = facts_in_job;
+            { RK_CPU_ZONE("av char: push to the batch (and the job launch)"); pushMotionBatch(this); }
             return visible;
         }
     }
@@ -8176,6 +8324,20 @@ void LLVOAvatar::runDeferredMotionBlend()
     {
         runFrontInJob();        // <FS> step B: the moves idleUpdate used to make first (planned by the row), before anything of the job reads the avatar's position
     }
+    if (mFactsInJob)
+    {
+        // <FS> step C: what updateCharacter made for the avatars with no event pending (after the front moves: the velocity is the one it read)
+        mFactsInJob = false;
+        LLVector3 xyVel = getVelocity();
+        xyVel.mV[VZ] = 0.0f;
+        mSpeed = xyVel.length();
+        mDeferredSpeed = mSpeed;
+        mDeferredSitGroundConstrained = isMotionActive(ANIM_AGENT_SIT_GROUND_CONSTRAINED);
+        if (kEventsVerify)
+        {
+            ev_note(5, mSpeed != mFactsExpectSpeed || mDeferredSitGroundConstrained != mFactsExpectSit, "speed and sit fact", this);
+        }
+    }
     if (mRootInJob)
     {
         // <FS> stage B3d: the root position and rotation, worked out here (see updateCharacter); the job's own thread, the avatar's own fields and joints
@@ -8236,6 +8398,7 @@ void LLVOAvatar::completeDeferredMotionUpdate()
     mMotionUpdateDeferred = false;
     mDeferredMatricesOnly = false;
     mBeginInJob = false;        // (the job has run: it made the begin, or this avatar did not take that path)
+    mFactsInJob = false;
 
     if (isDead())
     {

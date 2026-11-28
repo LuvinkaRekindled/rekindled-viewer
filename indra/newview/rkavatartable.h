@@ -28,6 +28,18 @@ public:
     // importance: 0 the viewer's own, 1 seen in the main view, 2 seen by nothing (3 reserved: seen only by a probe or snapshot)
     enum Class : U8 { CLASS_OWN = 0, CLASS_SEEN = 1, CLASS_UNSEEN = 2, CLASS_COUNT = 4 };
 
+    // <FS> ownership map step C: what has changed for this avatar, decided once a frame (LLVOAvatar::pendingEvents) and read by the handlers, which used to ask it every frame for every avatar: a handler runs only when
+    // its bit is set. Each bit is a superset of when its handler does anything; an avatar that leaves before the update gates (not built, dead) has all of them.
+    enum Events : U8
+    {
+        EV_SIT = 1,             // a seat to sit on or to get off (updateCharacter: sitOnObject, getOffObject)
+        EV_APPEARANCE = 2,      // the overall appearance changed, or a jelly-doll (its sit / stand motion is chosen every frame): updateOverallAppearance
+        EV_TEXTURE = 4,         // the visibility differs from the baked texture callbacks' state, or the first full load is still counting: checkTextureLoading
+        EV_LOADING = 8,         // not fully loaded: idleUpdateLoadingEffect (the cloud, the first visible handlers)
+        EV_DEBUG = 16,          // the debug text: a debug setting, a text object, the own avatar and animesh (their overrides add text)
+        EV_ALL = 31
+    };
+
     // what the presentation of the avatar has to do this frame (step 2: one bit at a time, each decided here and read by the piece)
     enum Bits : U16
     {
@@ -54,6 +66,7 @@ public:
         // <FS> ownership map step B: who runs what this frame, decided once here (LLVOAvatar::planPoolJob) and read by idleUpdate and updateCharacter, which used to decide it each for itself
         bool mRootJob = false;          // the root position and rotation (and the below water fact) are made at the start of the avatar's pool job
         bool mFrontJob = false;         // and so are the moves the avatar's idleUpdate used to make first (the drawable's move, the object's interpolation): the job's writes to shared state are one ledger replayed in the completion
+        U8 mEvents = EV_ALL;            // step C
         S8 mCanDefer = -1;              // canDeferMotionUpdate() when it was asked for the plan (-1: not asked: the live answer is used)
     };
 
@@ -66,6 +79,7 @@ public:
     static bool voiceProximal();                                                     // B3d: LLVoiceClient::inProximalChannel() once a frame (false without voice participants)
     static bool voiceEnabled(const LLVOAvatar* av);                                  // B3d: the avatar's voice enabled fact from the row (the voice client asked when there is no row)
     static bool voiceSpeaking(const LLVOAvatar* av);                                 // B3d: the speaking fact from the row
+    static U8 events(const LLVOAvatar* av);                                          // step C: the row's event bits (all of them without a row)
     static bool rootJob(const LLVOAvatar* av);                                       // step B: the row's plan
     static bool frontJob(const LLVOAvatar* av);
     static S8 canDefer(const LLVOAvatar* av);
