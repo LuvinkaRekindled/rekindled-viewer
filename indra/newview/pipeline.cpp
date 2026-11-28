@@ -5308,9 +5308,26 @@ void LLPipeline::applySortDeltasRange(const SortDelta* begin, const SortDelta* e
 {
     sSortSink = nullptr;
     sSortTee = nullptr;
+    // 2026-11-28 (RK_VK_SORTKINDS=1, a diagnostic: the effects the sort's loops left, applied here, by kind and the time each kind takes; one SortKinds line every 600 frames)
+    static const bool kinds_on = getenv("RK_VK_SORTKINDS") != nullptr;
+    static U64 kind_count[8] = {}, kind_ns[8] = {}, kind_applies = 0;
+    static U32 kind_frame0 = 0;
     for (const SortDelta* delta_ptr = begin; delta_ptr != end; ++delta_ptr)
     {
         const SortDelta& d = *delta_ptr;
+        const auto kind_t0 = kinds_on ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
+        struct KindTimer
+        {
+            bool mOn; U32 mKind; std::chrono::steady_clock::time_point mT0; U64* mCount; U64* mNs;
+            ~KindTimer()
+            {
+                if (mOn)
+                {
+                    ++mCount[mKind];
+                    mNs[mKind] += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - mT0).count();
+                }
+            }
+        } kind_timer = { kinds_on, std::min<U32>((U32)d.mKind, 7u), kind_t0, kind_count, kind_ns };
         switch (d.mKind)
         {
         case SortDelta::REBUILD_DRAWABLE:
@@ -5350,6 +5367,28 @@ void LLPipeline::applySortDeltasRange(const SortDelta* begin, const SortDelta* e
                 wakeRequest(d.mGroup);
             }
             break;
+        }
+    }
+    if (kinds_on && begin != end)
+    {
+        ++kind_applies;
+        const U32 frame = LLFrameTimer::getFrameCount();
+        if (!kind_frame0)
+        {
+            kind_frame0 = frame;
+        }
+        else if (frame - kind_frame0 >= 600)
+        {
+            static const char* const names[7] = { "rebuild drawable", "partition move", "rebuild group", "object LOD", "rebuild mesh", "bridge dead", "wake group" };
+            std::string text;
+            for (int k = 0; k < 7; ++k)
+            {
+                text += llformat(" [%s: %.2f a frame, %.1f us each, %.3f ms a frame]", names[k], (double)kind_count[k] / (frame - kind_frame0), kind_count[k] ? (double)kind_ns[k] / kind_count[k] / 1000.0 : 0.0, (double)kind_ns[k] / 1.0e6 / (frame - kind_frame0));
+            }
+            RK_DIAG("SortKinds") << "sort effects applied over " << (frame - kind_frame0) << " frames (" << kind_applies << " applies):" << text << LL_ENDL;
+            for (int k = 0; k < 8; ++k) { kind_count[k] = kind_ns[k] = 0; }
+            kind_applies = 0;
+            kind_frame0 = frame;
         }
     }
 }
@@ -14418,26 +14457,32 @@ static void scene_resident_pass(const glm::mat4& view_proj, U32 pass, const LLPi
     }
     sPendingResident.clear();
 
-    // the region matrices by slot: a slot whose region is gone is the identity
-    std::unordered_set<const LLMatrix4*> live;
-    for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
+    // the region matrices by slot: a slot whose region is gone is the identity. The table is the same for every pass of a frame (the slots only grow, and the regions and their matrices are set before the passes),
+    // and the worker keeps what it was sent: made and sent once per frame, and again when a pass of the frame has added a slot (2026-11-28: it was made and sent by every pass, 6 to 7 a frame)
+    static U32 sent_frame = ~0u;
+    static size_t sent_slots = 0;
+    if (sent_frame != (U32)gFrameCount || sent_slots != sSlotMatrix.size())
     {
-        live.insert(&region->mRenderMatrix);
-    }
-    std::vector<F32> matrices(16 * sSlotMatrix.size(), 0.f);
-    for (size_t k = 0; k < sSlotMatrix.size(); ++k)
-    {
-        F32* m = matrices.data() + 16 * k;
-        if (k && sSlotMatrix[k] && live.count(sSlotMatrix[k]))
+        sent_frame = (U32)gFrameCount;
+        sent_slots = sSlotMatrix.size();
+        std::unordered_set<const LLMatrix4*> live;
+        for (LLViewerRegion* region : LLWorld::getInstance()->getRegionList())
         {
-            memcpy(m, (const F32*)sSlotMatrix[k]->mMatrix, 16 * sizeof(F32));
+            live.insert(&region->mRenderMatrix);
         }
-        else
+        std::vector<F32> matrices(16 * sSlotMatrix.size(), 0.f);
+        for (size_t k = 0; k < sSlotMatrix.size(); ++k)
         {
-            m[0] = m[5] = m[10] = m[15] = 1.f;
+            F32* m = matrices.data() + 16 * k;
+            if (k && sSlotMatrix[k] && live.count(sSlotMatrix[k]))
+            {
+                memcpy(m, (const F32*)sSlotMatrix[k]->mMatrix, 16 * sizeof(F32));
+            }
+            else
+            {
+                m[0] = m[5] = m[10] = m[15] = 1.f;
+            }
         }
-    }
-    {
         RKVkBridge::ShadowPacketsHeader header;
         header.mKind = 15;
         header.mMatrices = (U32)sSlotMatrix.size();

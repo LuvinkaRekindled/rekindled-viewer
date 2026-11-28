@@ -204,15 +204,23 @@ void LLDrawPoolTerrain::renderShadow(S32 pass)
 void LLDrawPoolTerrain::drawShadowPull()
 {
     gRender.flush();
-    static thread_local std::vector<RKVkBridge::ShadowPacketEntry> entries;
-    static thread_local std::vector<F32> matrices;
-    static thread_local std::vector<const LLMatrix4*> keys;
-    static thread_local std::vector<U8> blob;
-    entries.clear();
-    keys.clear();
-    matrices.assign(16, 0.f);
-    matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;
+    // 2026-11-28: the record is the same in every pass but for the view-projection matrix of its header. A pass walks the faces and makes a signature of each (the buffers, the index range, the region's matrix by
+    // address); when the signatures and the matrix values are those the last blob was made from, the blob is sent again with the new matrix: no key search, no entry and matrix vectors, no blob copy.
+    // Anything that differs (an edited or re-levelled patch, a face added or removed, a region moved) makes the blob again, from the faces as they are now.
+    struct TerrainShadowSig
+    {
+        const LLFace* mFace; U32 mVertexBuffer, mIndexBuffer, mStart, mCount; const LLMatrix4* mModel;
+        bool operator==(const TerrainShadowSig& o) const
+        {
+            return mFace == o.mFace && mVertexBuffer == o.mVertexBuffer && mIndexBuffer == o.mIndexBuffer && mStart == o.mStart && mCount == o.mCount && mModel == o.mModel;
+        }
+    };
+    static thread_local std::vector<TerrainShadowSig> sigs, cached_sigs;
+    static thread_local std::vector<const LLMatrix4*> keys;     // (the regions of the cached blob, in the order of their matrices)
+    static thread_local std::vector<U8> blob;                   // (the entries, then the matrices, as the record takes them)
+    static thread_local U32 blob_entries = 0, blob_matrices = 0;
     static U32 not_drawn = 0;
+    sigs.clear();
     for (LLFace* facep : mDrawFace)
     {
         const LLVertexBuffer* vb = facep->getVertexBuffer();
@@ -229,41 +237,71 @@ void LLDrawPoolTerrain::drawShadowPull()
             }
             continue;
         }
-        const LLMatrix4* model = &facep->getDrawable()->getRegion()->mRenderMatrix;
-        U32 matrix = 0;
+        sigs.push_back({ facep, vb->getVertexBufferId(), vb->getIndexBufferId(), (U32)facep->getIndicesStart(), (U32)facep->getIndicesCount(), &facep->getDrawable()->getRegion()->mRenderMatrix });
+    }
+    if (sigs.empty())
+    {
+        cached_sigs.clear();
+        return;
+    }
+    bool same = sigs == cached_sigs && blob_entries == sigs.size() && blob_matrices == keys.size() + 1;
+    if (same)
+    {
+        // (the matrices of the blob follow its entries; matrix 0 is the identity, matrix k + 1 is the k-th region)
+        const U8* stored = blob.data() + (size_t)blob_entries * sizeof(RKVkBridge::ShadowPacketEntry) + 16 * sizeof(F32);
         for (size_t k = 0; k < keys.size(); ++k)
         {
-            if (keys[k] == model)
+            if (memcmp(stored + k * 16 * sizeof(F32), keys[k]->mMatrix, 16 * sizeof(F32)) != 0)
             {
-                matrix = (U32)k + 1;
+                same = false;
                 break;
             }
         }
-        if (!matrix)
-        {
-            keys.push_back(model);
-            matrices.insert(matrices.end(), (const F32*)model->mMatrix, (const F32*)model->mMatrix + 16);
-            matrix = (U32)keys.size();
-        }
-        RKVkBridge::ShadowPacketEntry e = { vb->getVertexBufferId(), vb->getIndexBufferId(), (U32)facep->getIndicesStart(), facep->getIndicesCount(), matrix, 0 };
-        entries.push_back(e);
     }
-    if (entries.empty())
+    if (!same)
     {
-        return;
+        static thread_local std::vector<RKVkBridge::ShadowPacketEntry> entries;
+        static thread_local std::vector<F32> matrices;
+        entries.clear();
+        keys.clear();
+        matrices.assign(16, 0.f);
+        matrices[0] = matrices[5] = matrices[10] = matrices[15] = 1.f;
+        for (const TerrainShadowSig& s : sigs)
+        {
+            U32 matrix = 0;
+            for (size_t k = 0; k < keys.size(); ++k)
+            {
+                if (keys[k] == s.mModel)
+                {
+                    matrix = (U32)k + 1;
+                    break;
+                }
+            }
+            if (!matrix)
+            {
+                keys.push_back(s.mModel);
+                matrices.insert(matrices.end(), (const F32*)s.mModel->mMatrix, (const F32*)s.mModel->mMatrix + 16);
+                matrix = (U32)keys.size();
+            }
+            RKVkBridge::ShadowPacketEntry e = { s.mVertexBuffer, s.mIndexBuffer, s.mStart, s.mCount, matrix, 0 };
+            entries.push_back(e);
+        }
+        const size_t entries_bytes = entries.size() * sizeof(entries[0]), matrix_bytes = matrices.size() * sizeof(F32);
+        blob.resize(entries_bytes + matrix_bytes);
+        memcpy(blob.data(), entries.data(), entries_bytes);
+        memcpy(blob.data() + entries_bytes, matrices.data(), matrix_bytes);
+        blob_entries = (U32)entries.size();
+        blob_matrices = (U32)(matrices.size() / 16);
+        cached_sigs = sigs;
     }
     RKVkBridge::ShadowPacketsHeader header;
     header.mKind = 0;
-    header.mEntries = (U32)entries.size();
-    header.mMatrices = (U32)(matrices.size() / 16);
+    header.mEntries = blob_entries;
+    header.mMatrices = blob_matrices;
     header.mPass = 6;           // "other" (the ray scene is not told: mFragment)
     header.mFragment = 1;
     const glm::mat4 view_proj = gRender.getShaderProjectionMatrix() * glm::make_mat4(gRenderModelView);
     memcpy(header.mViewProj, glm::value_ptr(view_proj), sizeof(header.mViewProj));
-    const size_t entries_bytes = entries.size() * sizeof(entries[0]), matrix_bytes = matrices.size() * sizeof(F32);
-    blob.resize(entries_bytes + matrix_bytes);
-    memcpy(blob.data(), entries.data(), entries_bytes);
-    memcpy(blob.data() + entries_bytes, matrices.data(), matrix_bytes);
     RKVkBridge::shadowPackets(header, blob.data(), blob.size());
 }
 
