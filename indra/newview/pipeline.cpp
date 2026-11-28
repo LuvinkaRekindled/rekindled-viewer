@@ -4608,22 +4608,39 @@ OwnerPass sOwner;
 
 // stage 9 (3.3): a bridge's own LOD rule (it was its region group's changeLOD()): the distance of its extents' centre to the camera (the ramp under 16 m as calcDistance has it), the slop test against the distance of its last
 // update (ratio 0.25 over the larger of that and its radius), the round robin of period 16 by its own hash, a changed field of view, a first sort always. The state (mLodDistance) is the main view's
-static void rk_bridge_lod_decide(LLSpatialBridge* b, const LLVector3& co, bool fov_changed, U32 frame_now)
+static void rk_bridge_lod_compute(const LLSpatialBridge* b, F32 last, const LLVector3& co, bool fov_changed, U32 frame_now, bool& yes, F32& d)
 {
-    const LLVector4a* ex = b->getSpatialExtents();
+    const LLVector4a* ex = const_cast<LLSpatialBridge*>(b)->getSpatialExtents();
     const F32 dx = 0.5f * (ex[0][0] + ex[1][0]) - co.mV[0], dy = 0.5f * (ex[0][1] + ex[1][1]) - co.mV[1], dz = 0.5f * (ex[0][2] + ex[1][2]) - co.mV[2];
-    F32 d = sqrtf(dx * dx + dy * dy + dz * dz);
+    d = sqrtf(dx * dx + dy * dy + dz * dz);
     if (d < 16.f)
     {
         d = d / 16.f * d / 16.f * 16.f;
     }
-    const F32 last = b->mLodDistance;
-    const bool yes = last == 0.f || fov_changed || fabsf(d - last) / llmax(last, b->getRadius()) >= 0.25f || (frame_now % 16u) == (U32)((reinterpret_cast<uintptr_t>(b) >> 4) % 16u);
+    yes = last == 0.f || fov_changed || fabsf(d - last) / llmax(last, const_cast<LLSpatialBridge*>(b)->getRadius()) >= 0.25f || (frame_now % 16u) == (U32)((reinterpret_cast<uintptr_t>(b) >> 4) % 16u);
+}
+
+static void rk_bridge_lod_decide(LLSpatialBridge* b, const LLVector3& co, bool fov_changed, U32 frame_now)
+{
+    bool yes;
+    F32 d;
+    rk_bridge_lod_compute(b, b->mLodDistance, co, fov_changed, frame_now, yes, d);
     b->mLodUpdate = yes;
     if (yes)
     {
         b->mLodDistance = d;
     }
+}
+
+// <FS> one bridge's tests of ownersCollect (read only): not dead, not hidden by the impostor rule, not a HUD attachment's, in view for the camera. Bits: 1 = listed (not hidden by its Hi-Z verdict), 2 = its box joins the next Hi-Z pass
+// (no verdict awaited); 0 = none. The tests read the bridge, its avatar's fields (isVisible reads the listing stamp the avatars' loop wrote: that loop runs first) and the camera.
+static inline U32 rk_owner_bridge_test(LLSpatialBridge* b, LLCamera& camera)
+{
+    if (b->isDead() || rk_attachment_bridge_hidden(b) || (b->mDrawable && b->mDrawable->getVObj() && b->mDrawable->getVObj()->isHUDAttachment()) || !b->inViewFor(camera))
+    {
+        return 0;
+    }
+    return (b->hizHides() ? 0u : 1u) | (b->isHizAwaiting() ? 0u : 2u);
 }
 
 // the views other than the main view's that sort the world camera's bridges (the avatar impostor render, the planar mirror) keep no state of their own: the impostor render updates every bridge, the others the round robin and a field of view change
@@ -4632,9 +4649,10 @@ static inline bool rk_bridge_lod_other(LLSpatialBridge* b, bool fov_changed, U32
     return LLPipeline::sImpostorRender || fov_changed || (frame_now % 16u) == (U32)((reinterpret_cast<uintptr_t>(b) >> 4) % 16u);
 }
 
-void LLPipeline::ownersCollect(LLCamera& camera)
+// <FS> the avatars' part of the owners' collect: serial, and first: an avatar listed here gets its listing stamp (mOwnerListedFrame), which the tests of its attachments' bridges read (avatarGateOpen -> LLVOAvatar::isVisible).
+// The parallel sort runs this on the main thread and lets the pool test and mark the bridges in fork 1 (sortLoopsParallel); the serial sort goes on in ownersCollect.
+static void rk_owners_collect_avatars(LLCamera& camera)
 {
-    RK_CPU_ZONE("stateSort: avatar and bridge owners (collect)");
     OwnerPass& o = sOwner;
     o.mFirst.clear();
     o.mBoxBridges.clear();
@@ -4673,21 +4691,25 @@ void LLPipeline::ownersCollect(LLCamera& camera)
         }
     }
     o.mAvatars = (U32)o.mFirst.size();
+}
+
+void LLPipeline::ownersCollect(LLCamera& camera)
+{
+    RK_CPU_ZONE("stateSort: avatar and bridge owners (collect)");
+    OwnerPass& o = sOwner;
+    rk_owners_collect_avatars(camera);       // (the parallel sort calls that part alone and tests the bridges in fork 1: rk_owner_bridge_test)
     // the bridges: listed by their own test and their own Hi-Z verdict, not by their group in a region octree (stage 9: the groups only gave them the frustum test, which the bridge makes itself, and the hierarchical occlusion, which the
     // verdict gives); a bridge the impostor rule hides is not listed, a HUD attachment's bridge belongs to the HUD view
     static std::vector<LLSpatialBridge*> ready;
     ready.clear();
     for (LLSpatialBridge* b : LLSpatialBridge::allBridges())
     {
-        if (b->isDead() || rk_attachment_bridge_hidden(b) || (b->mDrawable && b->mDrawable->getVObj() && b->mDrawable->getVObj()->isHUDAttachment()) || !b->inViewFor(camera))
-        {
-            continue;
-        }
-        if (!b->hizHides())
+        const U32 bits = rk_owner_bridge_test(b, camera);
+        if (bits & 1u)
         {
             ready.push_back(b);
         }
-        if (!b->isHizAwaiting())
+        if (bits & 2u)
         {
             o.mBoxBridges.push_back(b);     // (the box of the next pass: a bridge hidden now is tested again)
         }
@@ -5477,8 +5499,9 @@ namespace
 {
 struct SortChunk
 {
-    U8 mKind = 0;                       // 0 drawable groups, 1 visible groups, 2 bridges, 3 visible drawables
+    U8 mKind = 0;                       // 0 drawable groups (the main view: the avatars' drawables, then the bridges in the registry's order, each tested and marked by the chunk), 1 visible groups, 2 bridges, 3 visible drawables
     U32 mBegin = 0, mEnd = 0;
+    std::vector<LLSpatialBridge*> mReady, mBox;     // kind 0, the main view: the bridges this chunk's range found listed (ready) and in view and not awaiting a verdict (box), in the registry's order
     std::vector<LLPipeline::SortDelta> mLedger;
     LLCullResult* mLocal = nullptr;
     SortJournal mJournal;
@@ -5603,11 +5626,21 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     };
 
     // ---- fork-join 1: the owners' marking (stage 9: the avatars' drawables and the bridges the cull listed; loop (a)'s chunks were over the drawable groups) and the LOD candidates
+    // <FS> the avatars' part of the owners' collect runs here, serial and first (it stamps the avatars it lists: the tests of their attachments' bridges read that stamp); the bridges are tested, given their LOD decision and
+    // marked by the chunks of this fork, a range of the registry a job, their lists made chunk by chunk and joined in chunk order after it (the registry's order: what the serial collect made). (2026-11-29: the check against the
+    // serial answer, RK_VK_OWNERFOLD_VERIFY, found 0 differences in the lists, the box lists and the LOD decisions over 4,800 sorts of about 456 listed bridges, and is gone.)
     if (sOwnerA)
     {
-        ownersCollect(camera);
+        RK_CPU_ZONE("stateSort: avatar and bridge owners (collect)");
+        rk_owners_collect_avatars(camera);
     }
-    const U32 n_k0 = sOwnerA ? (U32)sOwner.mFirst.size() : n_dg;
+    const std::vector<LLSpatialBridge*>& all_bridges = LLSpatialBridge::allBridges();
+    const U32 n_own_av = sOwnerA ? (U32)sOwner.mFirst.size() : 0;       // (the avatars' drawables: all that mFirst holds until the join of this fork)
+    const U32 n_own_br = sOwnerA ? (U32)all_bridges.size() : 0;
+    const bool own_fov_changed = LLViewerCamera::getInstance()->isDefaultFOVChanged();
+    const U32 own_frame_now = (U32)LLViewerOctreeEntryData::getCurrentFrame();
+    const LLVector3 own_origin = camera.getOrigin();
+    const U32 n_k0 = sOwnerA ? n_own_av + n_own_br : n_dg;
     std::vector<SortChunk> first;
     // (loop (c) removed, sLoopCSkip: the groups the three owners cover need nothing here, so the pool is not woken for them: the visible groups the cull found are read once, the ones that are not covered go through the serial pass below)
     static std::vector<LLSpatialGroup*> loopc_rest;
@@ -5664,7 +5697,25 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             {
                 if (sOwnerA)
                 {
-                    markVisible(sOwner.mFirst[k], camera);
+                    if (k < n_own_av)
+                    {
+                        markVisible(sOwner.mFirst[k], camera);
+                    }
+                    else
+                    {
+                        LLSpatialBridge* b = all_bridges[k - n_own_av];
+                        const U32 bits = rk_owner_bridge_test(b, camera);
+                        if (bits & 2u)
+                        {
+                            chunk.mBox.push_back(b);
+                        }
+                        if (bits & 1u)
+                        {
+                            rk_bridge_lod_decide(b, own_origin, own_fov_changed, own_frame_now);
+                            chunk.mReady.push_back(b);
+                            markVisible(b, camera);
+                        }
+                    }
                 }
                 else
                 {
@@ -5697,6 +5748,11 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             if (chunk.mKind != 0)
             {
                 continue;
+            }
+            if (sOwnerA)
+            {
+                sOwner.mBoxBridges.insert(sOwner.mBoxBridges.end(), chunk.mBox.begin(), chunk.mBox.end());
+                sOwner.mFirst.insert(sOwner.mFirst.end(), chunk.mReady.begin(), chunk.mReady.end());
             }
             for (LLCullResult::drawable_iterator d = chunk.mLocal->beginVisibleList(); d != chunk.mLocal->endVisibleList(); ++d) sCull->pushDrawable(*d);
             for (LLCullResult::bridge_iterator b = chunk.mLocal->beginVisibleBridge(); b != chunk.mLocal->endVisibleBridge(); ++b) sCull->pushBridge(*b);
