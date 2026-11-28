@@ -2372,11 +2372,11 @@ void LLPipeline::applyAvOpsRange(const AvOp* begin, const AvOp* end)
     for (const AvOp* op_ptr = begin; op_ptr != end; ++op_ptr)
     {
         const AvOp& op = *op_ptr;
-        // <FS> the recorded request names its drawable by a raw pointer, made on a pool thread and replayed here: one that was freed since is not touched (and a moved list entry made of it would dangle). Logged with the stack of its destruction.
-        // C1a: the vtable test alone passes a drawable freed earlier in this very replay (its base class vtable stays in the freed block): a MOVED_BRIDGE op for a bridge that an earlier MOVE_PARTITION op of the same avatar
-        // just destroyed pushed it onto the moved bridge list as a counted pointer to freed memory (the stale entries of lap c1b-new1: "moved list entry 0 ... is not a live drawable", destroyed in the same frame by markDead
-        // < cleanupReferences). The instance row names its owner only while the drawable lives.
-        if (op.mDrawable && op.mKind != AvOp::UPDATE_TEXT && op.mKind != AvOp::DIRTY_GROUP && !(rk_drawable_looks_live(op.mDrawable) && op.mDrawable->ownsInstanceRow()))
+        // <FS> the recorded request names its drawable by the drawable's instance row and its pointer (made on a pool thread, replayed here): one destroyed since is dropped, and its memory is not read: the check is the
+        // row's owner against the pointer (RKInstances::ownedBy), which is false for a free or quarantined row and for a row that another drawable has been given. (The first form tested the first word of the pointed-at
+        // memory for a vtable and then read the instance field out of it: a drawable freed earlier in this very replay, a bridge an earlier MOVE_PARTITION op of the same avatar destroyed, still passed the vtable test, see lap c1b-new1.)
+        // Logged with the stack of its destruction.
+        if (op.mDrawable && op.mKind != AvOp::UPDATE_TEXT && op.mKind != AvOp::DIRTY_GROUP && !RKInstances::ownedBy(op.mInst, op.mDrawable))
         {
             static std::atomic<int> logged{0};
             if (logged.fetch_add(1) < 8)
@@ -2709,8 +2709,9 @@ void LLPipeline::updateMovedListSerial(LLDrawable::drawable_vector_t& moved_list
         // (the slot is cleared in place: dropping the LLPointer would write the reference count of freed memory)
         if (const LLDrawable* raw = moved_list[cur].get())
         {
-            // <FS> C1a: a destroyed drawable's instance row no longer names it (a vtable test alone passes a drawable that is mid-destruction or freed with its base class vtable still in place)
-            if (!rk_drawable_looks_live(raw) || !raw->ownsInstanceRow())
+            // <FS> C1a: a destroyed drawable's instance row no longer names it. The list holds counted pointers and everything that pushes onto it is a live drawable on the main thread (markMoved) or a record the replay
+            // has checked by handle (applyAvOpsRange), so the entry's memory is valid; the row test below is an assertion (a drawable destroyed with a counted reference left on the list), logged, never expected.
+            if (!raw->ownsInstanceRow())
             {
                 static std::atomic<int> logged{0};
                 if (logged.fetch_add(1) < 8)

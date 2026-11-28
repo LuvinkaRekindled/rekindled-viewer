@@ -262,6 +262,8 @@ public:
     void wakeForList() const;
     void stampChanged();    // after mFaceStamp went up: a dormant texture wakes, RKTexRecs tells its worker
     void bumpFaceStamp() { ++mFaceStamp; stampChanged(); }
+    U32 mStampedFrame = ~0u;    // <FS> the frame of the last bumpOnce: the avatars' replayed stamps raise a texture's stamp once a frame, however many of its faces moved
+    void bumpFaceStampOnce(U32 frame) { if (mStampedFrame != frame) { mStampedFrame = frame; bumpFaceStamp(); } }
 protected:
     ll_face_list_t    mFaceList[LLRender::NUM_TEXTURE_CHANNELS]; //reverse pointer pointing to the faces using this image as texture
     U32               mNumFaces[LLRender::NUM_TEXTURE_CHANNELS];

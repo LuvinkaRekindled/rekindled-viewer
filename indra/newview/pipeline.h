@@ -389,6 +389,11 @@ public:
         enum Kind : U8 { MOVED_LIST = 0, MOVED_BRIDGE, MOVE_PARTITION, MAKE_ACTIVE_SHARED, UPDATE_TEXT, DIRTY_GROUP } mKind;
         LLDrawable* mDrawable;
         LLViewerObject* mObject = nullptr;      // UPDATE_TEXT, DIRTY_GROUP
+        // <FS> a record names its drawable by the drawable's instance row as well as by the pointer: the apply step checks RKInstances::ownedBy(mInst, mDrawable) before it uses the pointer, so a drawable destroyed
+        // since the record was made (the idle loop of the main thread runs beside the avatars' jobs) is dropped without its memory being read
+        U32 mInst = 0;
+        AvOp() : mKind(MOVED_LIST), mDrawable(nullptr) {}
+        AvOp(Kind kind, LLDrawable* drawable, LLViewerObject* object = nullptr) : mKind(kind), mDrawable(drawable), mObject(object), mInst(drawable ? drawable->getInstance() : 0) {}
     };
     static thread_local std::vector<AvOp>* sAvSink;
     void applyAvOps(std::vector<AvOp>& ops);

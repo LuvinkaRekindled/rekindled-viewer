@@ -4109,7 +4109,7 @@ struct AvJobLedger
 {
     std::vector<LLPipeline::AvOp> mOps;
     std::vector<LLPipeline::SortDelta> mSort;
-    std::vector<LLFace*> mStamps;       // the faces whose centre the loop's drawable moves refreshed: their textures are stamped when the job's writes are made (LLFace::updateCenterAgent)
+    std::vector<LLFace::Ref> mStamps;       // the faces whose centre the loop's drawable moves refreshed: their textures are stamped when the job's writes are made (LLFace::updateCenterAgent)
 };
 }
 
@@ -4918,7 +4918,7 @@ void LLVOAvatar::runAttachmentJob()
         led.mSort.clear();
         led.mStamps.clear();
     }
-    std::vector<LLFace*>* saved_stamps = LLFace::sStampSink;
+    std::vector<LLFace::Ref>* saved_stamps = LLFace::sStampSink;
     LLPipeline::sAvSink = &led.mOps;
     LLPipeline::sSortSink = &led.mSort;
     // <FS> stage C: the drawable moves of the loop stamp the textures of every face they move (stampTextures marks the face's texture record dirty and bumps the textures' face stamps: shared state of the
@@ -4944,7 +4944,7 @@ void LLVOAvatar::runFrontInJob()
     led.mStamps.clear();
     std::vector<LLPipeline::AvOp>* saved_av = LLPipeline::sAvSink;
     std::vector<LLPipeline::SortDelta>* saved_sort = LLPipeline::sSortSink;
-    std::vector<LLFace*>* saved_stamps = LLFace::sStampSink;
+    std::vector<LLFace::Ref>* saved_stamps = LLFace::sStampSink;
     LLPipeline::sAvSink = &led.mOps;
     LLPipeline::sSortSink = &led.mSort;
     LLFace::sStampSink = &led.mStamps;
@@ -4964,14 +4964,36 @@ void LLVOAvatar::replayLedger()
     { RK_CPU_ZONE("att replay: ledger ops"); gPipeline.applyAvOps(led.mOps); }
     { RK_CPU_ZONE("att replay: sort deltas"); gPipeline.applySortDeltas(led.mSort); }
     led.mSort.clear();
-    {
-        RK_CPU_ZONE("att replay: face stamps");
-        for (LLFace* face : led.mStamps)
-        {
-            face->stampTextures();      // (the faces the loop's drawable moves refreshed; the main thread owns the texture records)
-        }
-    }
+    // the faces the loop's drawable moves refreshed: their stamps are made once a frame for all the avatars (applyFrameStamps, after the avatars' update)
+    sFrameStamps.insert(sFrameStamps.end(), led.mStamps.begin(), led.mStamps.end());
     led.mStamps.clear();
+}
+
+std::vector<LLFace::Ref> LLVOAvatar::sFrameStamps;
+
+void LLVOAvatar::applyFrameStamps()
+{
+    if (sFrameStamps.empty())
+    {
+        return;
+    }
+    RK_CPU_ZONE("att replay: face stamps (the frame's, once)");
+    const U32 frame = (U32)LLFrameTimer::getFrameCount();
+    for (const LLFace::Ref& ref : sFrameStamps)
+    {
+        // The main thread owns the texture records. A record names its face by the face's row: a face destroyed since it was made (the idle loop ran beside the job) is dropped unread.
+        if (!RKFaceRows::ownedBy(ref.mRow, ref.mFace))
+        {
+            static std::atomic<U64> dropped{ 0 };
+            if (++dropped <= 8)
+            {
+                LL_WARNS("LedgerStale") << "a face stamp names a face that is gone (row " << ref.mRow << "); dropped, " << dropped.load() << " so far" << LL_ENDL;
+            }
+            continue;
+        }
+        ref.mFace->stampTexturesOnce(frame);
+    }
+    sFrameStamps.clear();
 }
 
 void LLVOAvatar::idleUpdateMisc(bool detailed_update)
@@ -7958,6 +7980,14 @@ U32 LLVOAvatar::farUpdatePeriod()
 
 bool LLVOAvatar::computeNeedsUpdate()
 {
+    // <FS> ownership map, animesh: answered once a frame. An animated object worn by this avatar asks for the avatar's answer too (LLControlAvatar::computeNeedsUpdate: it follows its host's cadence), before or after
+    // the avatar's own turn in the list: the second ask used to work it all out again (the period, the impostor flag).
+    const U32 frame = LLFrameTimer::getFrameCount();
+    if (mNeedsUpdateFrame == frame)
+    {
+        return mNeedsUpdateAnswer;
+    }
+    mNeedsUpdateFrame = frame;
     const F32 MAX_IMPOSTOR_INTERVAL = 4.0f;
     computeUpdatePeriod();
 
@@ -7989,6 +8019,7 @@ bool LLVOAvatar::computeNeedsUpdate()
             //mLastImpostorUpdateReason = 10;
         }
     }
+    mNeedsUpdateAnswer = needs_update;
     return needs_update;
 }
 

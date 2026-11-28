@@ -139,10 +139,14 @@ public:
     LLFacePool*     getPool()           const   { return mDrawPoolp; }
     U32             getPoolType()       const   { return mPoolType; }
     LLDrawable*     getDrawable()       const   { return mDrawablep; }
+    void            stampTexturesOnce(U32 frame);
     void            stampTextures();    // <FS> native-vk: something the texture priority reads from this face changed (see LLViewerTexture::mFaceStamp)
     // <FS> R3b2: set on the thread that fills the faces of a render batch when the caller has stamped the batch's faces itself (the stamps are main thread work: they raise the counter of a texture the faces share)
     static thread_local bool sStampedByCaller;
-    static thread_local std::vector<LLFace*>* sStampSink;      // <FS> set while an attachment job runs: updateCenterAgent lists the face here and the main thread stamps it when the job's writes are replayed
+    // <FS> a deferred record names a face by its row and its pointer: the row is checked against the pointer (RKFaceRows::ownedBy) before the pointer is used, so a face destroyed in between is dropped without being read
+    struct Ref { LLFace* mFace; U32 mRow; };
+    static thread_local std::vector<Ref>* sStampSink;      // <FS> set while an attachment job runs: updateCenterAgent lists the face here and the main thread stamps it when the job's writes are replayed
+    U32             rowId() const { return mRowId; }
     bool            hasSelectionBuffer() const { return mVertexBufferGLTF.notNull(); }
     LLViewerObject* getViewerObject()   const   { return mVObjp; }
     S32             getLOD()            const   { return mVObjp.notNull() ? mVObjp->getLOD() : 0; }

@@ -367,9 +367,8 @@ inline S32 LLDrawable::getNumFaces()const
     return (S32)mFaces.size();
 }
 
-// <FS> RK_VK_DRAWABLE_RING (default on, 0 = off): the last few thousand drawables destroyed, each with the stack of its destruction (the code that released the last reference), and a test of whether a pointer
-// still points at a live drawable (its first word is a vtable inside the executable). For the moved list crash of 2026-11-01: an entry already freed when the pass started.
-bool rk_drawable_looks_live(const void* p);
+// <FS> RK_VK_DRAWABLE_RING (default on, 0 = off): the last few thousand drawables destroyed, each with the stack of its destruction (the code that released the last reference). For the log lines of a stale record
+// (the ledger's apply step, the moved list). Whether a pointer names a live drawable is the instance row's question (RKInstances::ownedBy), not a read of the pointed-at memory.
 std::string rk_drawable_destroy_info(const void* p);      // when and where the drawable at that address was last destroyed (or why not known), stack included
 
 #endif

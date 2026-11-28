@@ -87,7 +87,7 @@ static LLStaticHashedString sColorIn("color_in");
 
 bool LLFace::sSafeRenderSelect = true; // false
 thread_local bool LLFace::sStampedByCaller = false;
-thread_local std::vector<LLFace*>* LLFace::sStampSink = nullptr;
+thread_local std::vector<LLFace::Ref>* LLFace::sStampSink = nullptr;
 
 
 #define DOTVEC(a,b) (a.mV[0]*b.mV[0] + a.mV[1]*b.mV[1] + a.mV[2]*b.mV[2])
@@ -438,6 +438,20 @@ void LLFace::stampTextures()
     }
 }
 
+// <FS> the same as stampTextures, for a batch of stamps made in one frame: each texture is bumped once that frame (the stamp is only ever compared for equality)
+void LLFace::stampTexturesOnce(U32 frame)
+{
+    row().lastPixelAreaUpdate = 0.f;
+    RKTexRecs::faceChanged(this);
+    for (U32 ch = 0; ch < LLRender::NUM_TEXTURE_CHANNELS; ++ch)
+    {
+        if (mTexture[ch].notNull())
+        {
+            mTexture[ch]->bumpFaceStampOnce(frame);
+        }
+    }
+}
+
 void LLFace::setTEOffset(const S32 te_offset)
 {
     row().teOffset = te_offset;
@@ -562,7 +576,7 @@ void LLFace::updateCenterAgent()
 {
     if (sStampSink)
     {
-        sStampSink->push_back(this);
+        sStampSink->push_back({ this, mRowId });
     }
     else
     {

@@ -44,6 +44,7 @@
 #include "llchat.h"
 #include "lldrawpoolalpha.h"
 #include "llviewerobject.h"
+#include "llface.h"        // <FS> LLFace::Ref (the avatars' deferred face stamps)
 #include "llcharacter.h"
 #include "llcontrol.h"
 #include "llviewerjointmesh.h"
@@ -338,7 +339,9 @@ public:
     void            planPoolJob(bool visible, bool& root_job, bool& front_job, signed char& can_defer);
     void            frontMoves(LLAgent& agent, const F64& time);     // the drawable's move and the object's interpolation: in idleUpdate, or at the start of the avatar's pool job (mFrontPending)
     void            runFrontInJob();
-    void            replayLedger();                                  // the writes to shared state the pool job made (the front moves, the attachment loop), made in the completion in the order they were recorded
+    static std::vector<LLFace::Ref> sFrameStamps;       // the face stamps the avatars' ledgers left this frame, checked by row and made once (applyFrameStamps)
+    static void     applyFrameStamps();                 // main thread, once a frame after the avatars' update
+    void            replayLedger();                              // the writes to shared state the pool job made (the front moves, the attachment loop), made in the completion in the order they were recorded
     bool            nameTagBusy() const { return mTyping || !mChats.empty(); }      // chat bubbles or the typing indicator show: the tag is updated whatever the camera sees
     std::shared_ptr<RKFlatSkeleton> mFlatSkel;          // <FS> stage B0
     bool            flatPaletteRel(LLMatrix4a* mat, S32 count, const LLMeshSkinInfo* skin, const F32* anchor);       // <FS> avatar relative skinning: the same palette from world matrices made relative to the anchor (false: not possible, the plain one stands)
@@ -956,6 +959,8 @@ public:
 // [/RLVa:KB]
 //  bool        mNeedsImpostorUpdate;
     S32         mLastImpostorUpdateReason;
+    U32         mNeedsUpdateFrame = ~0u;        // <FS> computeNeedsUpdate is answered once a frame: the frame of the answer below (an animated object worn by this avatar asks for it too, and it may ask before the avatar's own turn)
+    bool        mNeedsUpdateAnswer = false;
     bool        mIsAnimesh; // <FS:minerjr> FIRE-35735: Imposter/Impostor Avatar Exclusions (Flag to track if avatar or attachments have Animated Mesh flagged)
     F32SecondsImplicit mLastImpostorUpdateFrameTime;
     const LLVector3*  getLastAnimExtents() const { return mLastAnimExtents; }

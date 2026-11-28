@@ -1770,6 +1770,7 @@ void LLViewerObjectList::update(LLAgent &agent)
             { RK_CPU_ZONE("objectlist: avatar motion batch"); run_avatar_motion_batch(motion_batch); }
             motion_batch.clear();
         }
+        LLVOAvatar::applyFrameStamps(); // <FS> the face stamps of the avatars' ledgers, checked by row and made once for the frame
         RKAvatarTable::endFrame();      // <FS> PLAN-avatars.md stage A step 4: the facts of the avatars' update are final: the render side reads them from the rows
         // </FS>
 
