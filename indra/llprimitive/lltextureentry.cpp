@@ -93,6 +93,7 @@ LLTextureEntry &LLTextureEntry::operator=(const LLTextureEntry &rhs)
         mOffsetS = rhs.mOffsetS;
         mOffsetT = rhs.mOffsetT;
         mRotation = rhs.mRotation;
+        ++sChangeEpoch;
         mColor = rhs.mColor;
         mBump = rhs.mBump;
         mMediaFlags = rhs.mMediaFlags;
@@ -144,6 +145,7 @@ void LLTextureEntry::init(const LLUUID& tex_id, F32 scale_s, F32 scale_t, F32 of
     mOffsetS = offset_s;
     mOffsetT = offset_t;
     mRotation = rotation;
+    ++sChangeEpoch;
     mBump = bump;
     mMediaFlags = 0x0;
     mGlow = 0;
@@ -356,6 +358,7 @@ S32 LLTextureEntry::setScale(F32 s, F32 t)
     {
         mScaleS = s;
         mScaleT = t;
+        ++sChangeEpoch;
 
         retval = TEM_CHANGE_TEXTURE;
     }
@@ -368,6 +371,7 @@ S32 LLTextureEntry::setScaleS(F32 s)
     if (mScaleS != s)
     {
         mScaleS = s;
+        ++sChangeEpoch;
         retval = TEM_CHANGE_TEXTURE;
     }
     return retval;
@@ -379,6 +383,7 @@ S32 LLTextureEntry::setScaleT(F32 t)
     if (mScaleT != t)
     {
         mScaleT = t;
+        ++sChangeEpoch;
         retval = TEM_CHANGE_TEXTURE;
     }
     return retval;
@@ -424,6 +429,7 @@ S32 LLTextureEntry::setOffset(F32 s, F32 t)
     {
         mOffsetS = s;
         mOffsetT = t;
+        ++sChangeEpoch;
 
         retval = TEM_CHANGE_TEXTURE;
     }
@@ -436,6 +442,7 @@ S32 LLTextureEntry::setOffsetS(F32 s)
     if (mOffsetS != s)
     {
         mOffsetS = s;
+        ++sChangeEpoch;
         retval = TEM_CHANGE_TEXTURE;
     }
     return retval;
@@ -447,6 +454,7 @@ S32 LLTextureEntry::setOffsetT(F32 t)
     if (mOffsetT != t)
     {
         mOffsetT = t;
+        ++sChangeEpoch;
         retval = TEM_CHANGE_TEXTURE;
     }
     return retval;
@@ -457,6 +465,7 @@ S32 LLTextureEntry::setRotation(F32 theta)
     if (mRotation != theta && llfinite(theta))
     {
         mRotation = theta;
+        ++sChangeEpoch;
         return TEM_CHANGE_TEXTURE;
     }
     return TEM_CHANGE_NONE;

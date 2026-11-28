@@ -181,6 +181,14 @@ void LLFace::init(LLDrawable* drawablep, LLViewerObject* objp)
     row().referenceIndex = -1;
 
     mTextureMatrix = NULL;
+    // <FS> a new face of a volume with a texture animation has no matrix slot, so no parameters yet: the animation is visited at the next updateClass (the GPU path writes parameters when an input changed)
+    if (objp && objp->getPCode() == LL_PCODE_VOLUME)
+    {
+        if (LLViewerTextureAnim* anim = static_cast<LLVOVolume*>(objp)->mTextureAnimp)
+        {
+            anim->markDirty();
+        }
+    }
 
     row().faceColor = LLColor4(1,0,0,1);
 

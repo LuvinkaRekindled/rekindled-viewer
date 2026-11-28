@@ -54,9 +54,17 @@ public:
     void forceRecalc() { mLastFrame = -1.f; }     // (the next animateTextures call returns a result and the faces get their matrices written again)
     bool mGpuWritten = false;                      // this animation's faces were last written by the GPU path (parameters in their matrix slots)
 
+    // <FS> 2026-11-28: on the GPU path the animation's parameters are written when an input of them changed, not by a visit of every animation every frame. Dirty: the parameters have to be made again at the next
+    // updateClass. Set by: the animation's creation and every message that changes it (LLVOVolume), a new face of its volume (LLFace::init), and any change of a texture entry's offset, scale or rotation (all animations,
+    // LLTextureEntry::sChangeEpoch). An animation that is off or has no rate (the main thread path) stays dirty: it is visited every frame as before.
+    void markDirty() { if (!mDirty) { mDirty = true; sDirtyList.push_back(this); } }
+    bool mDirty = false;
+    static std::vector<LLViewerTextureAnim*> sDirtyList;
+    friend class LLVOVolume;
+
     struct Stats
     {
-        U32 mFrames = 0, mInstances = 0, mHidden = 0, mCpuCalls = 0, mGpuChecked = 0, mGpuFaces = 0, mGpuWrites = 0, mSmallFaces = 0, mCompared = 0, mMismatched = 0;
+        U32 mFrames = 0, mInstances = 0, mHidden = 0, mCpuCalls = 0, mGpuChecked = 0, mGpuFaces = 0, mGpuWrites = 0, mSmallFaces = 0, mCompared = 0, mMismatched = 0, mEpochMoves = 0, mVerifyChecked = 0, mVerifyMissed = 0;
         F32 mMaxDiff = 0.f;
         U64 mNs = 0;                    // time spent in updateClass (the whole loop), nanoseconds
     };

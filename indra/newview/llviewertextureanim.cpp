@@ -32,6 +32,9 @@
 #include "llspatialpartition.h"
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
+#include "pipeline.h"
+#include "lltextureentry.h"
+#include <algorithm>
 #include <chrono>
 #include "rkvkbridge.h"
 #include "rkvktexanim.h"
@@ -40,6 +43,7 @@
 #include "llerror.h"
 
 std::vector<LLViewerTextureAnim*> LLViewerTextureAnim::sInstanceList;
+std::vector<LLViewerTextureAnim*> LLViewerTextureAnim::sDirtyList;
 
 LLViewerTextureAnim::LLViewerTextureAnim(LLVOVolume* vobj) : LLTextureAnim()
 {
@@ -52,10 +56,16 @@ LLViewerTextureAnim::LLViewerTextureAnim(LLVOVolume* vobj) : LLTextureAnim()
 
     mInstanceIndex = static_cast<S32>(sInstanceList.size());
     sInstanceList.push_back(this);
+    markDirty();        // <FS> a new animation: its parameters are made at the next updateClass
 }
 
 LLViewerTextureAnim::~LLViewerTextureAnim()
 {
+    if (mDirty)
+    {
+        sDirtyList.erase(std::remove(sDirtyList.begin(), sDirtyList.end(), this), sDirtyList.end());
+        mDirty = false;
+    }
     S32 end_idx = static_cast<S32>(sInstanceList.size()) - 1;
 
     if (end_idx != mInstanceIndex)
@@ -107,6 +117,7 @@ static void report_texture_anim(LLViewerTextureAnim::Stats& st, S32 mode)
     LL_INFOS("TexAnim") << "texture animation, " << st.mFrames << " frames, " << (mode == 1 ? "shader" : (mode == 2 ? "main thread, compared" : "main thread")) << ": update loop " << (double)st.mNs / 1.0e6 / st.mFrames << " ms a frame, animations "
         << st.mInstances / st.mFrames << " a frame (" << st.mHidden / st.mFrames << " not in view), main thread calls " << st.mCpuCalls / st.mFrames << ", shader path checks " << st.mGpuChecked / st.mFrames
         << ", faces on the shader path " << st.mGpuFaces / st.mFrames << ", small faces left alone " << st.mSmallFaces / st.mFrames << ", parameter writes " << st.mGpuWrites
+        << "; texture entry changes seen (all animations made dirty) " << st.mEpochMoves << ", verify: " << st.mVerifyChecked << " checks, " << st.mVerifyMissed << " found stale (a missed event)"
         << "; compare: " << st.mCompared << " faces, " << st.mMismatched << " differ by more than 0.001, largest difference " << st.mMaxDiff << LL_ENDL;
     st = LLViewerTextureAnim::Stats();
 }
@@ -132,6 +143,87 @@ void LLViewerTextureAnim::updateClass()
         last_mode = mode;
     }
     ++st.mFrames;
+
+    // <FS> 2026-11-28: on the GPU path only the animations whose parameters may have changed are visited (see markDirty). The old visit of every animation every frame is kept for the other modes. An animation in a cold
+    // group (the expiry modes of the pipeline, on by default) is skipped by animateTexturesGpu and stays dirty, so it is tried again every frame until its group is warm, as before. RK_VK_TEXANIM_VERIFY=1: every clean
+    // animation in view is also checked, read only, against what its parameters would be now; one that differs is a change no event reported (logged, counted in the TexAnim line, and made dirty so the picture is right).
+    static bool event_mode = false;
+    static U32 last_epoch = 0;
+    static const bool verify = getenv("RK_VK_TEXANIM_VERIFY") != nullptr;
+    if (mode == 1)
+    {
+        if (!event_mode || last_epoch != LLTextureEntry::sChangeEpoch)
+        {
+            if (event_mode)
+            {
+                ++st.mEpochMoves;
+            }
+            for (LLViewerTextureAnim* anim : sInstanceList)
+            {
+                anim->markDirty();
+            }
+        }
+        event_mode = true;
+        st.mInstances += (U32)sInstanceList.size();
+        const size_t n = sDirtyList.size();
+        size_t keep = 0;
+        for (size_t k = 0; k < n; ++k)
+        {
+            LLViewerTextureAnim* anim = sDirtyList[k];
+            LLVOVolume* vobj = anim->mVObj;
+            bool done = false;
+            if (skip && vobj->mDrawable.notNull() && !vobj->mDrawable->isVisible() && !seen_by_other_cameras(vobj->mDrawable))
+            {
+                ++st.mHidden;       // (stays dirty: written when it is in view)
+            }
+            else
+            {
+                ++st.mGpuChecked;
+                done = vobj->animateTexturesGpu(true);
+            }
+            if (done)
+            {
+                anim->mDirty = false;
+            }
+            else
+            {
+                sDirtyList[keep++] = anim;
+            }
+        }
+        sDirtyList.erase(sDirtyList.begin() + keep, sDirtyList.begin() + n);        // (what a visit added to the list stays)
+        if (verify)
+        {
+            static U32 reported = 0;
+            for (LLViewerTextureAnim* anim : sInstanceList)
+            {
+                LLVOVolume* vobj = anim->mVObj;
+                if (anim->mDirty || (skip && vobj->mDrawable.notNull() && !vobj->mDrawable->isVisible() && !seen_by_other_cameras(vobj->mDrawable)))
+                {
+                    continue;
+                }
+                ++st.mVerifyChecked;
+                if (vobj->texAnimGpuStale())
+                {
+                    ++st.mVerifyMissed;
+                    if (reported++ < 20)
+                    {
+                        LL_WARNS("TexAnim") << "texture animation event missed: object " << vobj->getID() << ", mode " << (U32)anim->mMode << ", rate " << anim->mRate << ", face " << (S32)anim->mFace << ", faces "
+                            << (vobj->mDrawable.notNull() ? vobj->mDrawable->getNumFaces() : -1) << ", texture entry epoch " << LLTextureEntry::sChangeEpoch << LL_ENDL;
+                    }
+                    anim->markDirty();
+                }
+            }
+        }
+        last_epoch = LLTextureEntry::sChangeEpoch;      // (after the visits: the entries a visit changed itself, an animation that bakes its last state, are not a reason to visit all again)
+        st.mNs += (U64)std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - update_start).count();
+        if (st.mFrames >= 600)
+        {
+            report_texture_anim(st, mode);
+        }
+        return;
+    }
+    event_mode = false;
+
     for (std::vector<LLViewerTextureAnim*>::iterator iter = sInstanceList.begin(); iter != sInstanceList.end(); ++iter)
     {
         LLViewerTextureAnim* anim = *iter;

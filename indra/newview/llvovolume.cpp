@@ -428,6 +428,7 @@ U32 LLVOVolume::processUpdateMessage(LLMessageSystem *mesgsys,
                 mTexAnimMode = 0;
 
                 mTextureAnimp->unpackTAMessage(mesgsys, block_num);
+                mTextureAnimp->markDirty();        // <FS> the animation's parameters changed: written again (LLViewerTextureAnim::markDirty)
             }
             else
             {
@@ -636,6 +637,7 @@ U32 LLVOVolume::processUpdateMessage(LLMessageSystem *mesgsys,
                 }
                 mTexAnimMode = 0;
                 mTextureAnimp->unpackTAMessage(*dp);
+                mTextureAnimp->markDirty();        // <FS> as above
             }
             else if (mTextureAnimp)
             {
@@ -1021,11 +1023,11 @@ void LLVOVolume::resolveTexAnimMatrices()
     }
 }
 
-void LLVOVolume::animateTexturesGpu()
+bool LLVOVolume::animateTexturesGpu(bool events)
 {
     if (mDead || !mDrawable || !mTextureAnimp)
     {
-        return;
+        return true;        // (nothing to write: not dirty any more)
     }
     LLViewerTextureAnim* anim = mTextureAnimp;
     // not for the shader: an animation that is off, and one with no rate (animateTextures bakes its final state into the texture entries once)
@@ -1039,7 +1041,7 @@ void LLVOVolume::animateTexturesGpu()
         }
         ++LLViewerTextureAnim::sStats.mCpuCalls;
         animateTextures();
-        return;
+        return false;       // (stays dirty: animateTextures bakes its final state in two calls, and is visited every frame as before)
     }
     if (LLPipeline::coldMode() > 0 && !isAttachment() && !isAvatar())
     {
@@ -1049,7 +1051,7 @@ void LLVOVolume::animateTexturesGpu()
             ++LLPipeline::sColdTexAnimSkipped;
             if (LLPipeline::coldMode() >= 2)
             {
-                return;
+                return false;
             }
         }
     }
@@ -1070,7 +1072,8 @@ void LLVOVolume::animateTexturesGpu()
     {
         LLFace* facep = mDrawable->getFace(i);
         if (!facep) continue;
-        const bool small = facep->getVirtualSize() <= MIN_TEX_ANIM_SIZE;
+        // (events: a dirty animation's faces all get the parameters, small ones too: whether a face is small depends on the camera, and nothing reports it when it grows; the shader makes their matrices like any other's)
+        const bool small = !events && facep->getVirtualSize() <= MIN_TEX_ANIM_SIZE;
         if (small && facep->mTextureMatrix)
         {
             ++stats.mSmallFaces;        // (as animateTextures: a small face keeps the matrix it has)
@@ -1117,6 +1120,54 @@ void LLVOVolume::animateTexturesGpu()
             anim->mGpuWritten = true;
         }
     }
+    return true;
+}
+
+// <FS> RK_VK_TEXANIM_VERIFY: the checks of animateTexturesGpu(true) without its writes. True when a visit would change something: the animation's state bits are not the ones a visit sets, a face has no matrix slot,
+// or a face's slot holds other parameters than the ones the animation and the face's texture entry give now. An animation on the main thread path (off, or no rate) is never reported: it stays on the dirty list.
+bool LLVOVolume::texAnimGpuStale()
+{
+    if (mDead || !mDrawable || !mTextureAnimp)
+    {
+        return false;
+    }
+    LLViewerTextureAnim* anim = mTextureAnimp;
+    if (!(anim->mMode & LLTextureAnim::ON) || anim->mRate == 0.f)
+    {
+        return false;
+    }
+    if (mTexAnimMode != (RKVkTexAnim::resultBits(anim->mMode, anim->mSizeX, anim->mSizeY) | anim->mMode))
+    {
+        return true;
+    }
+    RKVkTexAnim::Source src;
+    texanim_source(anim, src);
+    S32 start, end;
+    texanim_face_range(this, anim, start, end);
+    for (S32 i = start; i <= end; i++)
+    {
+        LLFace* facep = mDrawable->getFace(i);
+        if (!facep) continue;
+        const LLTextureEntry* te = facep->getTextureEntry();
+        if (!te)
+        {
+            continue;
+        }
+        if (!facep->mTextureMatrix)
+        {
+            return true;
+        }
+        te->getOffset(&src.mOffS, &src.mOffT);
+        te->getScale(&src.mScaleS, &src.mScaleT);
+        te->getRotation(&src.mRot);
+        F32 params[16];
+        RKVkTexAnim::makeParams(params, src);
+        if (memcmp(facep->mTextureMatrix->mMatrix, params, 64) != 0)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 // the compare mode (texanim=2): animateTextures has just made the matrices; the shader's formula (the C++ twin in rkvktexanim.h) is evaluated for the same faces at the same clock

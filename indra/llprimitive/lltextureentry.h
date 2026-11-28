@@ -73,6 +73,10 @@ class LLTextureEntry
 public:
     static LLTextureEntry* newTextureEntry();
 
+    // <FS> 2026-11-28: counts every change of an entry's offset, scale or rotation (the setters when the value changes, the assignment and the constructor's init). The texture animations that run on the GPU
+    // (RKTexAnimOnGPU) hold these in their parameters: they are written again when this counter has moved, not every frame.
+    static inline U32 sChangeEpoch = 0;
+
     typedef enum e_texgen
     {
         TEX_GEN_DEFAULT         = 0x00,

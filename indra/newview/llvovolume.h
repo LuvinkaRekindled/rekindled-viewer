@@ -142,7 +142,8 @@ public:
                 void    deleteFaces();
 
                 void    animateTextures();
-                void    animateTexturesGpu();           // <FS> RKTexAnimOnGPU: the faces' matrix slots hold the animation's parameters, written when they change (rkvktexanim.h)
+                bool    animateTexturesGpu(bool events = false);        // <FS> RKTexAnimOnGPU: the faces' matrix slots hold the animation's parameters, written when they change (rkvktexanim.h). events: the visit is for a dirty animation (small faces are not left alone); true: the animation is on the shader path and done, false: it is off or has no rate (the main thread path)
+                bool    texAnimGpuStale();              // <FS> read only: would a visit change this animation's faces (RK_VK_TEXANIM_VERIFY)
                 void    compareTexAnimGpu();            // ... the compare mode: the matrices animateTextures just made against the shader's formula
                 void    resolveTexAnimMatrices();       // ... a parameter slot made a matrix again (the animation goes back to the main thread, or stops)
 
