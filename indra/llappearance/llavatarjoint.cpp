@@ -41,6 +41,7 @@ const F32 DEFAULT_AVATAR_JOINT_LOD = 0.0f;
 // Static Data
 //-----------------------------------------------------------------------------
 bool                    LLAvatarJoint::sDisableLOD = false;
+U32                     LLAvatarJoint::sLodEpoch = 0;
 
 //-----------------------------------------------------------------------------
 // LLAvatarJoint()
@@ -196,6 +197,28 @@ bool LLAvatarJoint::updateLOD(F32 pixel_area, bool activate)
         }
     }
     return lod_changed;
+}
+
+// <FS> the walk above compares a child's threshold with the area, in the order of the children: what it does is set by which thresholds the area has reached, so these two serve the cache of LLVOAvatar::updateJointLODs
+void LLAvatarJoint::collectLODThresholds(std::vector<F32>& out)
+{
+    if (mMinPixelArea != DEFAULT_AVATAR_JOINT_LOD)
+    {
+        out.push_back(mMinPixelArea);
+    }
+    for (LLJoint* child : mChildren)
+    {
+        static_cast<LLAvatarJoint*>(child)->collectLODThresholds(out);
+    }
+}
+
+void LLAvatarJoint::collectValid(std::vector<U8>& out)
+{
+    out.push_back(mValid ? 1 : 0);
+    for (LLJoint* child : mChildren)
+    {
+        static_cast<LLAvatarJoint*>(child)->collectValid(out);
+    }
 }
 
 void LLAvatarJoint::dump()

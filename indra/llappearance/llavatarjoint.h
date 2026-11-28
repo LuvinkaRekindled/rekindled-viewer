@@ -85,7 +85,13 @@ public:
     // specified minimum, the node is rendered, but no other siblings
     // of this node under the same parent will be.
     F32 getLOD() { return mMinPixelArea; }
-    void setLOD( F32 pixelArea ) { mMinPixelArea = pixelArea; }
+    void setLOD( F32 pixelArea ) { mMinPixelArea = pixelArea; ++sLodEpoch; }
+
+    // <FS> 2026-11-28: the LOD walk's cache (LLVOAvatar::updateJointLODs). sLodEpoch counts every change of a joint's threshold (the mesh parts' at load, an attachment point's when its attachments change): an avatar's list of
+    // thresholds is made again when it differs. collectLODThresholds adds the non-default thresholds of this joint and all below it; collectValid adds the valid flag of this joint and all below it, in the walk's order (the verify mode)
+    static U32 sLodEpoch;
+    void collectLODThresholds(std::vector<F32>& out);
+    void collectValid(std::vector<U8>& out);
 
     void setPickName(LLJointPickName name) { mPickName = name; }
     LLJointPickName getPickName() { return mPickName; }

@@ -2706,6 +2706,8 @@ void LLVOAvatar::resetSkeleton(bool reset_animations)
         LL_WARNS() << "Can't reset avatar " << getID() << "; no appearance message has been received yet." << LL_ENDL;
         return;
     }
+    mLodCacheKey = -1;      // <FS> the skeleton is built again below (new joints, not walked yet): the LOD walk's cache starts over
+    mLodCacheEpoch = ~0u;
 
     // Save mPelvis state
     //LLVector3 pelvis_pos = getJoint("mPelvis")->getPosition();
@@ -2817,6 +2819,9 @@ void LLVOAvatar::releaseMeshData()
     {
         return;
     }
+
+    // <FS> every mesh part becomes invalid below: the LOD walk's cache must not skip the walk that makes them valid again
+    mLodCacheKey = -1;
 
     // cleanup mesh data
     for (avatar_joint_list_t::iterator iter = mMeshLOD.begin();
@@ -10697,7 +10702,61 @@ bool LLVOAvatar::updateJointLODs()
         bool res = false;
         if (root)
         {
-            res = root->updateLOD(mAdjustedPixelArea, true);
+            // <FS> 2026-11-28: the walk (LLAvatarJoint::updateLOD) sets each mesh part valid or not by comparing the area with the thresholds of the joints, in order: what it does is set by how many of the thresholds the area has
+            // reached (the sorted list of the avatar's distinct non-default ones), and by nothing else that changes while the joint tree stays. When that count is the one of the last walk, the walk would change nothing: skipped.
+            // The cache starts over when a threshold changes (sLodEpoch: the mesh parts' at load, an attachment point's when its attachments change), when the mesh data is released (it makes every mesh part invalid) or the skeleton is
+            // reset (new joints), and with the debug switch that turns the LODs off. RK_VK_LODCACHE_VERIFY=1 runs the walk on every skip as well and logs any change it makes.
+            if (mLodCacheEpoch != LLAvatarJoint::sLodEpoch)
+            {
+                mLodThresholds.clear();
+                root->collectLODThresholds(mLodThresholds);
+                std::sort(mLodThresholds.begin(), mLodThresholds.end());
+                mLodThresholds.erase(std::unique(mLodThresholds.begin(), mLodThresholds.end()), mLodThresholds.end());
+                mLodCacheEpoch = LLAvatarJoint::sLodEpoch;
+                mLodCacheKey = -1;
+            }
+            S32 key = -1;       // (-1: no key: an area that is not a number or is below 0 always walks)
+            if (LLAvatarJoint::sDisableLOD)
+            {
+                key = -2;
+            }
+            else if (mAdjustedPixelArea >= 0.f)
+            {
+                key = (S32)(std::upper_bound(mLodThresholds.begin(), mLodThresholds.end(), mAdjustedPixelArea) - mLodThresholds.begin());
+            }
+            static const bool verify = getenv("RK_VK_LODCACHE_VERIFY") != nullptr;
+            static U64 walks = 0, skips = 0, mismatches = 0;
+            if (key != -1 && key == mLodCacheKey)
+            {
+                ++skips;
+                if (verify)
+                {
+                    static thread_local std::vector<U8> before, after;
+                    before.clear();
+                    after.clear();
+                    root->collectValid(before);
+                    const bool changed = root->updateLOD(mAdjustedPixelArea, true);
+                    root->collectValid(after);
+                    if (changed || before != after)
+                    {
+                        if (mismatches++ < 20)
+                        {
+                            LL_WARNS("LodCache") << "the LOD walk changed something the cache skipped: avatar " << getFullname() << ", key " << key << ", area " << mAdjustedPixelArea << ", walk result " << changed
+                                << ", valid flags changed " << (before != after) << LL_ENDL;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                ++walks;
+                res = root->updateLOD(mAdjustedPixelArea, true);
+                mLodCacheKey = key;
+            }
+            if ((walks + skips) % 20000 == 0)
+            {
+                RK_DIAG("AvatarLodCache") << "LOD walks " << walks << ", skipped by the cache " << skips << (verify ? ", verify mismatches " : ", (verify off) ") << mismatches << LL_ENDL;
+            }
         }
         if (res)
         {

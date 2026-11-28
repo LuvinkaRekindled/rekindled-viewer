@@ -1576,6 +1576,10 @@ private:
     F32                 mMinPixelArea;
     F32                 mMaxPixelArea;
     F32                 mAdjustedPixelArea;
+    // <FS> the cache of the LOD walk (updateJointLODs): the key of the last walk (how many of the thresholds the area had reached; -1 none), the epoch of the thresholds, the avatar's sorted distinct thresholds
+    S32                 mLodCacheKey = -1;
+    U32                 mLodCacheEpoch = ~0u;
+    std::vector<F32>    mLodThresholds;
     std::string         mDebugText;
     std::string         mBakedTextureDebugText;
 
