@@ -473,8 +473,7 @@ bool LLSpatialGroup::addObject(LLDrawable *drawablep)
     {
         drawablep->setGroup(this);
         setState(static_cast<U32>(OBJECT_DIRTY) | static_cast<U32>(GEOM_DIRTY));
-        hizInvalidate();
-        hizEntryMoved(drawablep->getSpatialExtents());
+        hizEntryMoved(drawablep->getSpatialExtents());      // (the state of the chain, and the verdict this group awaits, as hizInvalidate would)
         gPipeline.markRebuild(this);
         if (drawablep->isSpatialBridge())
         {

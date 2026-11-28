@@ -1100,53 +1100,6 @@ public:
 };
 
 
-namespace
-{
-// <FS> one bit per group row: the world camera's OCCLUDED state is set (see LLOcclusionCullingGroup::worldOccluded)
-std::atomic<U64> sWorldOccBits[RKGroupRows::kCapacity / 64];
-inline void world_occ_bit(U32 row_id, bool on)
-{
-    if (row_id && row_id < RKGroupRows::kCapacity)
-    {
-        const U64 bit = 1ull << (row_id & 63u);
-        if (on) { sWorldOccBits[row_id >> 6].fetch_or(bit, std::memory_order_relaxed); }
-        else { sWorldOccBits[row_id >> 6].fetch_and(~bit, std::memory_order_relaxed); }
-    }
-}
-}
-
-void LLOcclusionCullingGroup::worldOccluded(std::vector<LLOcclusionCullingGroup*>& out)
-{
-    out.clear();
-    if (!RKGroupRows::sChunks)
-    {
-        return;
-    }
-    for (U32 w = 0; w < RKGroupRows::kCapacity / 64; ++w)
-    {
-        U64 bits = sWorldOccBits[w].load(std::memory_order_relaxed);
-        while (bits)
-        {
-            unsigned long b;
-#if LL_WINDOWS
-            _BitScanForward64(&b, bits);
-#else
-            b = (unsigned long)__builtin_ctzll(bits);
-#endif
-            bits &= bits - 1;
-            const U32 id = (w << 6) + (U32)b;
-            RKGroupRows::Row* chunk = RKGroupRows::sChunks[id >> RKGroupRows::kChunkShift];
-            const void* owner = chunk ? chunk[id & (RKGroupRows::kChunkRows - 1)].owner : nullptr;
-            if (!owner || !(chunk[id & (RKGroupRows::kChunkRows - 1)].occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
-            {
-                world_occ_bit(id, false);       // (a group that is gone, a row handed out again, a state cleared where nothing noted it)
-                continue;
-            }
-            out.push_back(static_cast<LLOcclusionCullingGroup*>(const_cast<LLViewerOctreeGroup*>(static_cast<const LLViewerOctreeGroup*>(owner))));
-        }
-    }
-}
-
 LLOcclusionCullingGroup::LLOcclusionCullingGroup(OctreeNode* node, LLViewerOctreePartition* part) :
     LLViewerOctreeGroup(node),
     mSpatialPartition(part)
@@ -1162,7 +1115,6 @@ LLOcclusionCullingGroup::LLOcclusionCullingGroup(OctreeNode* node, LLViewerOctre
         row().occlusion[i] = parent ? SG_STATE_INHERIT_MASK & parent->row().occlusion[i] : 0;
         row().visible[i] = 0;
     }
-    world_occ_bit(mRowId, (row().occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED) != 0);
 }
 
 LLOcclusionCullingGroup::~LLOcclusionCullingGroup()
@@ -1221,10 +1173,6 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
             RKTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), true);       // <FS> H6: the texture records of its faces are filled again
         }
         row().occlusion[LLViewerCamera::sCurCameraID] |= state;
-        if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
-        {
-            world_occ_bit(mRowId, true);
-        }
         break;
 
     case STATE_MODE_DIFF:
@@ -1255,10 +1203,6 @@ void LLOcclusionCullingGroup::setOcclusionState(U32 state, S32 mode /* = STATE_M
         for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
         {
             row().occlusion[i] |= state;
-        }
-        if (state & OCCLUDED)
-        {
-            world_occ_bit(mRowId, true);
         }
         break;
 
@@ -1318,10 +1262,6 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
                 RKTexRecs::groupOcclusion(static_cast<LLSpatialGroup*>(this), false);
             }
             row().occlusion[LLViewerCamera::sCurCameraID] &= ~state;
-            if ((state & OCCLUDED) && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD)
-            {
-                world_occ_bit(mRowId, false);
-            }
             break;
 
         case STATE_MODE_DIFF:
@@ -1353,10 +1293,6 @@ void LLOcclusionCullingGroup::clearOcclusionState(U32 state, S32 mode /* = STATE
             for (U32 i = 0; i < LLViewerCamera::NUM_CAMERAS; i++)
             {
                 row().occlusion[i] &= ~state;
-            }
-            if (state & OCCLUDED)
-            {
-                world_occ_bit(mRowId, false);
             }
             break;
 
@@ -1443,17 +1379,26 @@ void LLOcclusionCullingGroup::checkOcclusion()
     if (parent && parent->isOcclusionState(LLOcclusionCullingGroup::OCCLUDED))
     {   //if the parent has been marked as occluded, the child is implicitly occluded: no verdict of its own is awaited
         mHizSerial = 0;
-        mHizStale = false;
         return;
     }
+    // (a group that asked to be discarded while its verdict was awaited is handled where it asks: hizInvalidate, hizEntryMoved)
+}
 
-    if (mHizStale && mHizSerial)
-    {   // a verdict is awaited and the group asked to be discarded (an object was added): visible until the next box has a result
-        clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
-        rk_hiz_visible_above(this);
-        mHizSerial = 0;
-        mHizStale = false;
+// <FS> cull and sort: the group changed (an object was added, its draw data was reset, an entry moved into it while it was visible and awaiting): the verdict awaited, if any, was tested without the change. It is discarded at
+// once, the occluded state of the group and its subtree is dropped and the ones above it are made visible, until the next box has a result. This was a flag (mHizStale) that whichever poll visited the group first acted on
+// (the retest, the walk's earlyFail, the object cache): a group that is not asked this frame waited for its turn, and the parallel sort had to give up and run on the main thread for any group with the flag set.
+void LLOcclusionCullingGroup::hizInvalidate()
+{
+    if (!mHizSerial)
+    {
+        return;         // (no verdict is awaited: hizCollect sends the next box as it is)
     }
+    const LLViewerCamera::eCameraID saved_camera = LLViewerCamera::sCurCameraID;
+    LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;        // the occlusion state arrays are per camera, the boxes were the world camera's
+    clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
+    rk_hiz_visible_above(this);
+    mHizSerial = 0;
+    LLViewerCamera::sCurCameraID = saved_camera;
 }
 
 void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shift)
@@ -1469,7 +1414,6 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
     if (!mOctreeNode || !mOctreeNode->getParent())
     {
         mHizSerial = 0;
-        mHizStale = false;
         mHizOccludedOnce = false;
         if (isOcclusionState(LLOcclusionCullingGroup::OCCLUDED))
         {
@@ -1495,16 +1439,14 @@ void LLOcclusionCullingGroup::hizCollect(LLCamera* camera, const LLVector4a* shi
     if (earlyFail(camera, bounds))
     {   // the camera is inside the box: nothing to test, visible
         mHizSerial = 0;
-        mHizStale = true;
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
         rk_hiz_visible_above(this);
         return;
     }
-    if (mHizSerial && !mHizStale)
+    if (mHizSerial)
     {
         return;         // a verdict is awaited
     }
-    mHizStale = false;
     // Water is depth clamped (as the cubes were) so it is not rejected for being behind the far clip plane
     const bool water = mSpatialPartition->mDrawableType == LLPipeline::RENDER_TYPE_WATER || mSpatialPartition->mDrawableType == LLPipeline::RENDER_TYPE_VOIDWATER;
     RKHiz::add(this, bounds[0], bounds[1][0] + SG_OCCLUSION_FUDGE, bounds[1][1] + SG_OCCLUSION_FUDGE, bounds[1][2] + OCCLUSION_FUDGE_Z, water);
@@ -1532,6 +1474,7 @@ void LLOcclusionCullingGroup::hizEntryMoved(const LLVector4a* entry_extents)
     {
         top->clearOcclusionState(OCCLUDED, STATE_MODE_DIFF);
     }
+    mHizSerial = 0;     // (the verdict awaited for this group, if any, was tested without the object: discarded, the next box decides; what hizInvalidate does for the other events, whose clearing of the state is this)
     LLViewerCamera::sCurCameraID = saved_camera;
 }
 
@@ -1568,11 +1511,28 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
 
 std::vector<U32> LLOcclusionCullingGroup::sReaskRows;
 
-void LLOcclusionCullingGroup::takeReasks(std::vector<LLOcclusionCullingGroup*>& out)
+void LLOcclusionCullingGroup::takeReasks(std::vector<LLOcclusionCullingGroup*>& out, U32 now_frame, U32 list_frame)
 {
     out.clear();
+    static std::vector<std::pair<U32, U32>> held;      // (row, the frame of the event)
     for (const U32 id : sReaskRows)
     {
+        held.emplace_back(id, now_frame);
+    }
+    sReaskRows.clear();
+    size_t keep = 0;
+    for (size_t i = 0; i < held.size(); ++i)
+    {
+        if (list_frame >= held[i].second + 2 || now_frame > held[i].second + 8)
+        {
+            continue;       // (the worker's list is made from a table that has this group's bit: it names the group itself; with no list, the event is kept 8 frames)
+        }
+        held[keep++] = held[i];
+    }
+    held.resize(keep);
+    for (const std::pair<U32, U32>& e : held)
+    {
+        const U32 id = e.first;
         // the row names its owner while the group lives (a group destroyed since is not read); a group that is not occluded any more has nothing to ask
         if (!id || id >= RKGroupRows::kCapacity || !RKGroupRows::sChunks)
         {
