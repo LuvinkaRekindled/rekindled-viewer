@@ -8,6 +8,7 @@
 #include "rkvkcontext.h"
 #include "rkvkupscale.h"
 #include "rkvkdenoise.h"
+#include "rkvknative.h"         // <FS> nativeKey: the live keys of rt-debug.txt (vsync=0/1)
 
 #if defined(RK_VULKAN)
 
@@ -3886,6 +3887,14 @@ std::atomic<bool> gVsyncPref{ true };
 
 VkPresentModeKHR wanted_present_mode()
 {
+    // <FS> rt-debug.txt vsync=1 / vsync=0, read live (twice a second at most): 1 = vsync on (fifo), 0 = off (immediate). While the line is there it wins over the environment variable and the settings: a lap or a run can
+    // switch vsync at any time without touching the launcher or the settings (the swapchain is made again when the wanted mode changes). No line: the environment variable and the settings decide, as before.
+    switch (nativeKey("vsync", -1))
+    {
+    case 1: return VK_PRESENT_MODE_FIFO_KHR;
+    case 0: return VK_PRESENT_MODE_IMMEDIATE_KHR;
+    default: break;
+    }
     static const char* env = getenv("RK_VK_PRESENT");        // experiment: fifo, mailbox, immediate, relaxed; wins over the settings
     if (env)
     {
