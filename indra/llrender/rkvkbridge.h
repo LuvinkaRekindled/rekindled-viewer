@@ -381,7 +381,9 @@ namespace RKVkBridge
     // the two unit vectors) since the worker last named them: LLSpatialGroup::updateDistance's alpha branch did this for every group the walk kept and set ALPHA_DIRTY and asked for a rebuild (the faces of an alpha group are sorted
     // for one view direction); the viewer sets the state for the slots named
     // mKept (stage 8f): a bit set by slot of the groups the walk keeps for the main view (markNotCulled is called for them): the walk's chain over the rows, not dead, not a bridge's, not empty; no fragment handle is needed (a group still to be built is kept too)
-    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mAlphaDirty, mKept; };
+    // mOccAsk (<FS> cull and sort, the occluded retest): the slots of the groups the viewer asks for their next Hi-Z verdict: the occluded groups (cull row flag 4, not the root, not a bridge's group) whose parent is neither occluded nor outside
+    // the frustum and whose own box is in the frustum (the walk's chain: the same states the kept set uses). Made from the worker's table copy, one to three frames before the viewer reads it.
+    struct ConsumerList { U32 mFrame = 0, mTable = 0; std::vector<U32> mHandles, mSlots, mAlphaDirty, mKept, mOccAsk; };
     void consumerListPublish(std::shared_ptr<const ConsumerList> list);
     std::shared_ptr<const ConsumerList> consumerListRead();
     // stage 10a (RK_VK_CUBE_KEPT): the view request service. A view that is not the main view (a probe cube face) asks the worker for the groups its walk would keep (the kept set of stage 8f, by slot, no occlusion, no render type filter: the owner

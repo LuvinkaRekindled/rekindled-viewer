@@ -1559,7 +1559,37 @@ void LLOcclusionCullingGroup::hizResult(bool occluded)
         clearOcclusionState(LLOcclusionCullingGroup::OCCLUDED, LLOcclusionCullingGroup::STATE_MODE_DIFF);
         rk_hiz_visible_above(this);
     }
+    if (occluded && isOcclusionState(LLOcclusionCullingGroup::OCCLUDED))
+    {
+        sReaskRows.push_back(mRowId);       // (held occluded: the next box is asked by the retest, this frame's, from this list)
+    }
     LLViewerCamera::sCurCameraID = saved_camera;
+}
+
+std::vector<U32> LLOcclusionCullingGroup::sReaskRows;
+
+void LLOcclusionCullingGroup::takeReasks(std::vector<LLOcclusionCullingGroup*>& out)
+{
+    out.clear();
+    for (const U32 id : sReaskRows)
+    {
+        // the row names its owner while the group lives (a group destroyed since is not read); a group that is not occluded any more has nothing to ask
+        if (!id || id >= RKGroupRows::kCapacity || !RKGroupRows::sChunks)
+        {
+            continue;
+        }
+        RKGroupRows::Row* chunk = RKGroupRows::sChunks[id >> RKGroupRows::kChunkShift];
+        if (!chunk)
+        {
+            continue;
+        }
+        const RKGroupRows::Row& r = chunk[id & (RKGroupRows::kChunkRows - 1)];
+        if (r.owner && (r.occlusion[LLViewerCamera::CAMERA_WORLD] & OCCLUDED))
+        {
+            out.push_back(static_cast<LLOcclusionCullingGroup*>(const_cast<LLViewerOctreeGroup*>(static_cast<const LLViewerOctreeGroup*>(r.owner))));
+        }
+    }
+    sReaskRows.clear();
 }
 
 //-------------------------------------------------------------------------------------------

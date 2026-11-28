@@ -3917,7 +3917,7 @@ void LLPipeline::updateCull(LLCamera& camera, LLCullResult& result, bool hud_att
         rk_main_set_note();
         RK_CPU_ZONE("updateCull: kept groups");
         rk_cull_derived_pass(camera, view, !RKGpuZoneTimer::isActive());
-        rk_occluded_retest(camera);         // the walk that would ask for the next verdict of the groups held occluded does not exist any more: this does
+        { RK_CPU_ZONE("updateCull: occluded retest"); rk_occluded_retest(camera); }         // the walk that would ask for the next verdict of the groups held occluded does not exist any more: this does
     }
     if (hasRenderType(LLPipeline::RENDER_TYPE_SKY) &&
         gSky.mVOSkyp.notNull() &&
@@ -12089,35 +12089,122 @@ static void rk_main_set_note()
 // 2026-11-17: the walk of the covered partitions is not made while the worker's kept set is the list (stage 8f), and a group the CPU holds occluded is not in that set. The walk's earlyFail was what asked for such a
 // group's next verdict (markOccluder, every frame): without it nothing ever did, and a group that a verdict had hidden (two agreeing ones) stayed hidden until an object was added to it or the walk ran again (a shift frame, a
 // stale set): chair and floor pieces that stayed bare while identical ones next to them were drawn (the selected group of the audit: occluded, not awaiting, not in the occlusion list, parents clear). The top-most occluded
-// groups inside the frustum are asked now, as the walk did (the ones under an occluded group are occluded with it). The groups come from a bit per group row kept by the occlusion setters.
+// groups inside the frustum are asked now, as the walk did (the ones under an occluded group are occluded with it).
+// <FS> cull and sort: the groups no longer come from a scan of every group row's occluded bit (16,384 words and every group held occluded, each frame): they come from the two things that make a group due. (a) A verdict for it arrived this frame
+// and it is held occluded (hizResult lists it: no lag, this frame's retest asks it). (b) The worker's list (ConsumerList::mOccAsk, one to three frames old, made from its copy of the table): the top-most occluded groups inside the frustum, which
+// covers a group that came into the frustum or became occluded, and a verdict that was lost. Each group is tested again with its live state (the same tests as before), then asked.
+// RK_VK_OCCRETEST_VERIFY=1: the old scan runs as well and is what asks; the groups it asks that the two lists did not name, and the other way, are counted (one VkOccRetest line every 600 frames).
+static bool rk_retest_candidate(LLSpatialGroup* g, LLCamera& camera)
+{
+    OctreeNode* node = g->getOctreeNode();
+    if (g->isDead() || !node || !node->getParent())      // (never the root: the walk never occlusion culls it)
+    {
+        return false;
+    }
+    LLSpatialPartition* part = g->getSpatialPartition();
+    if (!part || part->asBridge() || !rk_cull_derived_covers(part) || !part->isOcclusionEnabled())
+    {
+        return false;
+    }
+    LLSpatialGroup* parent = g->getParent();
+    if (parent && parent->isOcclusionState(LLSpatialGroup::OCCLUDED))
+    {
+        return false;
+    }
+    const LLVector4a* bb = g->getBounds();
+    return camera.AABBInFrustumNoFarClip(bb[0], bb[1]) != 0;
+}
+
 static void rk_occluded_retest(LLCamera& camera)
 {
-    static std::vector<LLOcclusionCullingGroup*> occluded;
-    LLOcclusionCullingGroup::worldOccluded(occluded);
-    U32 tops = 0, asked = 0;
-    for (LLOcclusionCullingGroup* o : occluded)
+    static const bool verify = getenv("RK_VK_OCCRETEST_VERIFY") != nullptr;
+    static std::vector<LLOcclusionCullingGroup*> events, scanned;
+    static std::vector<LLSpatialGroup*> due;
+    due.clear();
+    LLOcclusionCullingGroup::takeReasks(events);
+    for (LLOcclusionCullingGroup* o : events)
     {
-        LLSpatialGroup* g = static_cast<LLSpatialGroup*>(o);
-        OctreeNode* node = g->getOctreeNode();
-        if (g->isDead() || !node || !node->getParent())      // (never the root: the walk never occlusion culls it)
+        due.push_back(static_cast<LLSpatialGroup*>(o));
+    }
+    const size_t from_events = due.size();
+    if (const std::shared_ptr<const RKVkBridge::ConsumerList> wl = RKVkBridge::consumerListRead())
+    {
+        std::lock_guard<std::mutex> lock(sCullMutex);
+        const U32 n = (U32)sSlotGroup.size();
+        for (const U32 slot : wl->mOccAsk)
         {
-            continue;
+            // (a slot given to a group after the list was made is not the group the list is about: the same guard as the kept set's)
+            if (slot < n && sSlotGroup[slot] && !sSlotGroup[slot]->isDead() && sSlotGroup[slot]->mCullFirstFrame <= wl->mFrame)
+            {
+                due.push_back(static_cast<LLSpatialGroup*>(sSlotGroup[slot]));
+            }
         }
-        LLSpatialPartition* part = g->getSpatialPartition();
-        if (!part || part->asBridge() || !rk_cull_derived_covers(part) || !part->isOcclusionEnabled())
+    }
+    const size_t from_worker = due.size() - from_events;
+    std::sort(due.begin(), due.end());
+    due.erase(std::unique(due.begin(), due.end()), due.end());
+    static std::vector<LLSpatialGroup*> chosen;
+    chosen.clear();
+    U32 tops = 0, asked = 0;
+    if (!verify)
+    {
+        for (LLSpatialGroup* g : due)
         {
-            continue;
+            if (rk_retest_candidate(g, camera) && g->isOcclusionState(LLSpatialGroup::OCCLUDED))
+            {
+                chosen.push_back(g);
+            }
         }
-        LLSpatialGroup* parent = g->getParent();
-        if (parent && parent->isOcclusionState(LLSpatialGroup::OCCLUDED))
+    }
+    else
+    {
+        LLOcclusionCullingGroup::worldOccluded(scanned);
+        for (LLOcclusionCullingGroup* o : scanned)
         {
-            continue;
+            LLSpatialGroup* g = static_cast<LLSpatialGroup*>(o);
+            if (rk_retest_candidate(g, camera))
+            {
+                chosen.push_back(g);        // (the old scan asks)
+            }
         }
-        const LLVector4a* bb = g->getBounds();
-        if (camera.AABBInFrustumNoFarClip(bb[0], bb[1]) == 0)
+        static U64 frames = 0, old_asked = 0, missed = 0, missed_idle = 0, extra = 0;
+        ++frames;
+        old_asked += chosen.size();
+        std::vector<LLSpatialGroup*> sorted_old = chosen;
+        std::sort(sorted_old.begin(), sorted_old.end());
+        for (LLSpatialGroup* g : sorted_old)
         {
-            continue;
+            if (!std::binary_search(due.begin(), due.end(), g))
+            {
+                ++missed;       // (due is sorted: the old scan asked it and neither list named it)
+                static U32 described = 0;
+                missed_idle += g->mHizSerial ? 0 : 1;      // (not awaiting a verdict: the old scan's ask was a real one)
+                if (gFrameCount > 200 && !g->mHizSerial && described < 24)
+                {
+                    ++described;
+                    LLSpatialGroup* parent = g->getParent();
+                    RK_DIAG("VkOccRetest") << "verify: a group the old scan asked and neither list named: frame " << gFrameCount << ", awaiting verdict " << (g->mHizSerial ? 1 : 0) << ", occluded once " << (g->mHizOccludedOnce ? 1 : 0)
+                                           << ", elements " << g->getElementCount() << ", slot given " << ((S32)gFrameCount - (S32)g->mCullFirstFrame) << " frames ago, parent " << (parent ? (parent->isOcclusionState(LLSpatialGroup::OCCLUDED) ? "occluded" : "clear") : "none")
+                                           << ", parent awaiting " << (parent && parent->mHizSerial ? 1 : 0) << ", has a cull slot " << (g->mCullId ? 1 : 0) << ", dirty " << (g->isDirty() ? 1 : 0) << LL_ENDL;
+                }
+            }
         }
+        for (LLSpatialGroup* g : due)
+        {
+            if (rk_retest_candidate(g, camera) && g->isOcclusionState(LLSpatialGroup::OCCLUDED) && !std::binary_search(sorted_old.begin(), sorted_old.end(), g))
+            {
+                ++extra;
+            }
+        }
+        if (frames % 600 == 0)
+        {
+            RK_DIAG("VkOccRetest") << "verify, a frame over 600: the old scan asks " << (F64)old_asked / 600.0 << ", the lists name " << (F64)from_events << " (events, this frame) + " << (F64)from_worker << " (worker, this frame); the old scan asked " << (F64)missed / 600.0
+                                   << " a frame that neither list named (of them " << (F64)missed_idle / 600.0 << " not awaiting a verdict: the real asks), the lists name " << (F64)extra / 600.0 << " a frame that the old scan did not ask" << LL_ENDL;
+            old_asked = missed = missed_idle = extra = 0;
+        }
+    }
+    for (LLSpatialGroup* g : chosen)
+    {
         ++tops;
         g->checkOcclusion();        // (what earlyFail did first: a verdict that was discarded clears the state)
         if (g->isOcclusionState(LLSpatialGroup::OCCLUDED))
@@ -12126,17 +12213,18 @@ static void rk_occluded_retest(LLCamera& camera)
             ++asked;
         }
     }
-    if (rk_diag_on())
+    if (rk_diag_on() && !verify)
     {
-        static U64 frames = 0, sum_all = 0, sum_tops = 0, sum_asked = 0;
+        static U64 frames = 0, sum_events = 0, sum_worker = 0, sum_tops = 0, sum_asked = 0;
         ++frames;
-        sum_all += occluded.size();
+        sum_events += from_events;
+        sum_worker += from_worker;
         sum_tops += tops;
         sum_asked += asked;
         if (frames % 600 == 0)
         {
-            RK_DIAG("VkOccRetest") << "groups held occluded (world) " << (F64)sum_all / 600.0 << " a frame, top-most inside the frustum " << (F64)sum_tops / 600.0 << ", asked for a verdict " << (F64)sum_asked / 600.0 << LL_ENDL;
-            sum_all = sum_tops = sum_asked = 0;
+            RK_DIAG("VkOccRetest") << "a frame over 600: named by verdict events " << (F64)sum_events / 600.0 << ", by the worker's list " << (F64)sum_worker / 600.0 << ", top-most inside the frustum " << (F64)sum_tops / 600.0 << ", asked for a verdict " << (F64)sum_asked / 600.0 << LL_ENDL;
+            sum_events = sum_worker = sum_tops = sum_asked = 0;
         }
     }
 }
@@ -12199,6 +12287,7 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     static std::vector<LLSpatialGroup*> groups;
     groups.clear();
     {
+        RK_CPU_ZONE("updateCull: kept pass: the groups of the set");
         std::lock_guard<std::mutex> lock(sCullMutex);
         const U32 n = (U32)sSlotGroup.size();
         for (U32 w = 0; w < (U32)kept_bits.size(); ++w)
@@ -12436,6 +12525,7 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     RKForkJoinPool* pool = parallel_ok ? RKForkJoinPool::shared() : nullptr;
     if (!pool || groups.size() < 400)
     {
+        RK_CPU_ZONE("updateCull: kept pass: the marks (serial, fewer than 400 groups)");
         KeptPassScope kscope;
         for (LLSpatialGroup* g : groups)
         {
@@ -12482,6 +12572,7 @@ void rk_cull_derived_pass(LLCamera& camera, const LLPipeline::View& view, bool p
     }
     std::vector<LLPipeline::SortDelta> ledger;
     size_t pushed = 0;
+    RK_CPU_ZONE("updateCull: kept pass: merge of the chunks and the ledger");
     for (CullChunk& chunk : chunks)
     {
         LLCullResult& l = *chunk.mLocal;

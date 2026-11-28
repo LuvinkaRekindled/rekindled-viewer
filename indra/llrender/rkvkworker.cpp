@@ -12544,6 +12544,30 @@ void derive_publish(const CullShadowState& s, const DerivePub& job)
                     kept_prev = list->mKept;
                 }
             }
+            {
+                // the groups the viewer's occluded retest asks for a verdict (ConsumerList::mOccAsk): occluded (flag 4), not the root, not a bridge's group, the parent neither occluded nor out of the frustum (the walk's chain, with the occlusion
+                // cut) and the group's own box in the frustum (the chain without it: the far quirk is in it, a group past the far limit is asked when it comes inside). One slot each. The viewer tests each again with its live state.
+                std::vector<U8> memo_occ(table, 0), memo_frustum(table, 0);        // (not static: this publish can run on more than one thread)
+                for (U32 slot = 0; slot < table; ++slot)
+                {
+                    const RKVkBridge::CullRow& row = s.mTable[slot];
+                    const U32 flags = row.mFlags;
+                    if ((flags & (32u | 64u | 1u)) || !(flags & 4u) || row.mParent >= table)
+                    {
+                        continue;
+                    }
+                    const U8 parent_state = cull_chain_state(s, P, true, row.mParent, memo_occ, 0);
+                    if (parent_state == ST_OCC || parent_state == ST_OUT)
+                    {
+                        continue;
+                    }
+                    if (cull_chain_state(s, P, false, slot, memo_frustum, 0) == ST_OUT)
+                    {
+                        continue;
+                    }
+                    list->mOccAsk.push_back(slot);
+                }
+            }
             RKVkBridge::consumerListPublish(std::move(list));
         }
     }
