@@ -4059,8 +4059,20 @@ void LLPipeline::replayMemberShadow(LLSpatialGroup* group, U8 kind)
     }
 }
 
+// <FS> the chunks of the parallel sort (SortTaskScope) record the groups they would queue instead of queueing them: the kind 1 chunks have no cull result of their own (sCull is the shared one), and the epoch stamp of a parent
+// is shared by its children in other chunks. The sort replays the recorded groups on the main thread, in chunk order, after each fork-join (replayDeferredOccluders), so markOccluder's list and stamps are the main thread's.
+static thread_local std::vector<LLSpatialGroup*>* sDeferOccluders = nullptr;
+
 void LLPipeline::markOccluder(LLSpatialGroup* group)
 {
+    if (sDeferOccluders)
+    {
+        if (group)
+        {
+            sDeferOccluders->push_back(group);
+        }
+        return;
+    }
     // <FS> 2026-11-20: "already queued" is the group's stamp against the epoch of the cull result lists (LLCullResult::sOccListEpoch, one more each time any result is cleared), not the flag ACTIVE_OCCLUSION: the flag
     // was cleared only by doOcclusion (and by a walk of the result's occlusion groups for a result the early sort redoes), so a result thrown away on another way left it on and the group was skipped here for good.
     // The flag is not set for these groups any more (nothing read it); the object cache partition keeps its own use of it.
@@ -5502,6 +5514,8 @@ struct SortChunk
     U8 mKind = 0;                       // 0 drawable groups (the main view: the avatars' drawables, then the bridges in the registry's order, each tested and marked by the chunk), 1 visible groups, 2 bridges, 3 visible drawables
     U32 mBegin = 0, mEnd = 0;
     std::vector<LLSpatialBridge*> mReady, mBox;     // kind 0, the main view: the bridges this chunk's range found listed (ready) and in view and not awaiting a verdict (box), in the registry's order
+    std::vector<LLSpatialGroup*> mOccluded;         // the groups this chunk asked markOccluder for, in the order it asked (replayed on the main thread after the fork-join)
+    std::vector<LLPipeline::SortDelta> mLedgerY;    // kind 2, with the groups folded in: the effects of the third loop on the groups of this chunk's bridges (joined where the serial pass's ledger_y was)
     std::vector<LLPipeline::SortDelta> mLedger;
     LLCullResult* mLocal = nullptr;
     SortJournal mJournal;
@@ -5514,10 +5528,12 @@ struct SortTaskScope
     std::vector<LLPipeline::SortDelta>* mSink = LLPipeline::sSortSink;
     SortJournal* mJournal = sSortJournal;
     bool mParallel = LLPipeline::sParallelPrep;
+    std::vector<LLSpatialGroup*>* mDeferOcc = sDeferOccluders;
     ViewScope mView;
 
     SortTaskScope(SortChunk& chunk, bool journaling, const LLPipeline::View& view) : mView(view)
     {
+        sDeferOccluders = &chunk.mOccluded;
         LLPipeline::sParallelPrep = true;       // (the bridges' octrees are locked while they are culled, and the statistics are not shared)
         if (chunk.mLocal)
         {
@@ -5528,6 +5544,7 @@ struct SortTaskScope
     }
     ~SortTaskScope()
     {
+        sDeferOccluders = mDeferOcc;
         sCull = mCull;
         LLPipeline::sSortSink = mSink;
         sSortJournal = mJournal;
@@ -5564,21 +5581,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     {
         return false;       // (too little work to be worth a wake-up)
     }
-    if (view.mUseOcclusion > 1)
-    {
-        RK_CPU_ZONE("stateSort: pre-scan");
-        // checkOcclusion and markOccluder change the occlusion state of a group, its parent and its subtree: the main thread's, when any group needs it
-        for (LLCullResult::sg_iterator i = read.beginDrawableGroups(); !sOwnerA && i != read.endDrawableGroups(); ++i)
-        {
-            LLSpatialGroup* g = *i;
-            if (!g->isDead() && (g->isOcclusionState(LLSpatialGroup::OCCLUDED))) return false;
-        }
-        for (LLCullResult::sg_iterator i = read.beginVisibleGroups(); i != read.endVisibleGroups(); ++i)
-        {
-            LLSpatialGroup* g = *i;
-            if (!g->isDead() && !sort_loopc_skips(g) && g->isOcclusionState(LLSpatialGroup::OCCLUDED)) return false;       // (a group loop (c) is removed for is not asked: the counters say it has nothing to clear)
-        }
-    }
+    // (2026-11-29: the pre-scan that sent the whole sort to the serial path when a listed group was occluded is gone: the chunks record the groups they would queue and the sort replays them, see sDeferOccluders)
     const bool journaling = journal != nullptr;
     const size_t workers = pool->workerCount();
 
@@ -5760,6 +5763,13 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             for (LLCullResult::sg_iterator g = chunk.mLocal->beginVisibleGroups(); g != chunk.mLocal->endVisibleGroups(); ++g) sCull->pushVisibleGroup(*g);
             for (LLCullResult::sg_iterator g = chunk.mLocal->beginOcclusionGroups(); g != chunk.mLocal->endOcclusionGroups(); ++g) sCull->pushOcclusionGroup(*g);
         }
+        for (SortChunk& chunk : first)
+        {
+            for (LLSpatialGroup* g : chunk.mOccluded)
+            {
+                markOccluder(g);        // (the groups the chunks asked for, in chunk order, on this thread: sDeferOccluders)
+            }
+        }
     }
 
     // ---- serial: the drawable groups added by the bridges (the first loop of the serial sort goes on over them: its end is the end of the list as it grows)
@@ -5805,6 +5815,64 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
     }
 
     // ---- fork-join 2: the bridges' distances and the visible drawables
+    // <FS> The groups the bridges' marking added to the visible groups are the groups of the bridges' own octrees: a group's stateSort updates the LOD of the drawables in it, which are the children whose distance the bridge's
+    // updateDistance (kind 2, below) updates too, so the two cannot be separate chunks of one batch (that is why the serial pass stood after this fork-join). They are folded into the bridge's own job instead: its distance
+    // first, then the third loop for its groups, on one thread, the order the serial passes had for them. Only when it is exact by construction: the groups are all of bridges in the visible bridge list, of render-by-group
+    // partitions (their drawables are not in the visible drawable list that kind 3 walks), and grouped by bridge they come in the added list's own order (so the ledger joins in the serial order); otherwise the serial pass below.
+    static std::vector<LLSpatialGroup*> bridge_groups;
+    static std::vector<U32> bridge_group_at;
+    bool fold_groups = false;
+    {
+        const U32 n_vg_all = read.getVisibleGroupsSize();
+        if (sOwnerA && n_vg_all > n_vg && n_br > 0)
+        {
+            static std::unordered_map<const LLSpatialBridge*, U32> index_of;
+            index_of.clear();
+            LLCullResult::bridge_iterator vb = read.beginVisibleBridge();
+            for (U32 k = 0; k < n_br; ++k)
+            {
+                index_of[vb[k]] = k;
+            }
+            LLCullResult::sg_iterator vg = read.beginVisibleGroups();
+            bridge_group_at.assign((size_t)n_br + 1, 0u);
+            bool ok = true;
+            for (U32 k = n_vg; k < n_vg_all && ok; ++k)
+            {
+                LLSpatialGroup* g = vg[k];
+                LLSpatialPartition* part = g->getSpatialPartition();
+                LLSpatialBridge* br = part ? part->asBridge() : nullptr;
+                const auto it = br ? index_of.find(br) : index_of.end();
+                if (it == index_of.end() || !part->mRenderByGroup)
+                {
+                    ok = false;
+                }
+                else
+                {
+                    ++bridge_group_at[(size_t)it->second + 1];
+                }
+            }
+            if (ok)
+            {
+                for (U32 k = 0; k < n_br; ++k)
+                {
+                    bridge_group_at[(size_t)k + 1] += bridge_group_at[k];
+                }
+                bridge_groups.assign((size_t)n_vg_all - n_vg, nullptr);
+                static std::vector<U32> fill;
+                fill.assign(bridge_group_at.begin(), bridge_group_at.end() - 1);
+                for (U32 k = n_vg; k < n_vg_all; ++k)
+                {
+                    LLSpatialGroup* g = vg[k];
+                    bridge_groups[fill[index_of[g->getSpatialPartition()->asBridge()]]++] = g;
+                }
+                for (U32 i = 0; i < (U32)bridge_groups.size() && ok; ++i)
+                {
+                    ok = bridge_groups[i] == vg[n_vg + i];      // (grouped by bridge, the list is the added list's: every bridge's groups were contiguous and the bridges in the list's order)
+                }
+            }
+            fold_groups = ok;
+        }
+    }
     std::vector<SortChunk> second;
     {
         const U32 cs2 = sort_chunk_size(n_br, workers), cs3 = sort_chunk_size(n_vd, workers);
@@ -5838,6 +5906,16 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
                     bool force_update = false;
                     bridges[k]->updateDistance(camera, force_update);
                 }
+                if (fold_groups)
+                {
+                    std::vector<SortDelta>* bridge_sink = sSortSink;
+                    sSortSink = &chunk.mLedgerY;
+                    for (U32 i = bridge_group_at[k]; i < bridge_group_at[(size_t)k + 1]; ++i)
+                    {
+                        third_loop_body(bridge_groups[i]);
+                    }
+                    sSortSink = bridge_sink;
+                }
             }
         }
         else
@@ -5853,6 +5931,13 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         }
     };
     { RK_CPU_ZONE("stateSort: compute 2 (wait for the pool)"); pool->runLabeled("stateSort: compute 2", second.size(), second_job); }
+    for (SortChunk& chunk : second)
+    {
+        for (LLSpatialGroup* g : chunk.mOccluded)
+        {
+            markOccluder(g);
+        }
+    }
 
     // ---- serial: the visible groups the bridges' culls added (the third loop of the serial sort goes over the whole list, these at its end)
     std::vector<SortDelta> ledger_y;
@@ -5866,9 +5951,9 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         {
             third_loop_body(group);     // (the groups of the cull's list the owners do not cover, in list order, before the ones the bridges added)
         }
-        for (U32 k = n_vg; k < read.getVisibleGroupsSize(); ++k)
+        for (U32 k = n_vg; !fold_groups && k < read.getVisibleGroupsSize(); ++k)
         {
-            third_loop_body(read.beginVisibleGroups()[k]);
+            third_loop_body(read.beginVisibleGroups()[k]);      // (when the bridges' jobs did not take them: see fold_groups)
         }
         sSortSink = saved_sink;
         sSortJournal = saved_journal;
@@ -5890,6 +5975,13 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
         ledger.insert(ledger.end(), ledger_y.begin(), ledger_y.end());
         for (SortChunk& chunk : second)
         {
+            if (chunk.mKind == 2)
+            {
+                ledger.insert(ledger.end(), chunk.mLedgerY.begin(), chunk.mLedgerY.end());      // (the groups of the bridges, in the added list's order: after the serial pass's own groups, as the serial pass had them)
+            }
+        }
+        for (SortChunk& chunk : second)
+        {
             if (chunk.mKind == 3)
             {
                 ledger.insert(ledger.end(), chunk.mLedger.begin(), chunk.mLedger.end());
@@ -5909,6 +6001,7 @@ bool LLPipeline::sortLoopsParallel(const View& view, LLCullResult& read, std::ve
             }
         }
     }
+    // (the post-condition check of the deferral, RK_VK_OCCDEFER_VERIFY: in 7 windows of 600 sorts, 0 occluded groups of the visible list with a clear parent were left unqueued; it is gone)
     return true;
 }
 
