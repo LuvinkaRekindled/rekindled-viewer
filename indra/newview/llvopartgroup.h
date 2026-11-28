@@ -132,6 +132,7 @@ public:
     // budget cuts of updateGeometry), the faces are one a distinct texture (they carry the texture to the texture priority loop). A group the rows path cannot build gets its faces from
     // updateFacesLegacy (the quads path).
     bool updateRows(LLDrawable* drawable, S32 num_parts);
+    bool publishRunsInPlace(LLDrawable* drawable);      // <FS> the runs of a published record group are made here, no rebuild (PLAN-particle-runs-producer.md)
     bool updateFacesLegacy(LLDrawable* drawable, S32 num_parts);
     bool mRowsMode = false;
     bool mPure = false;             // G0: every particle of the group is a record and the store holds them (updateRows)

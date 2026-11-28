@@ -317,9 +317,15 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
     LL_PROFILE_ZONE_SCOPED;
     struct GeomTimer { U64 t0 = __rdtsc(); ~GeomTimer() { sPartStats.mGeomCycles += __rdtsc() - t0; ++sPartStats.mGeomCalls; } } geom_timer;
 
-    dirtySpatialGroup();
-
     S32 num_parts = mViewerPartGroupp->getCount();
+    // <FS> doc/vulkan/PLAN-particle-runs-producer.md: on the rows route the group is asked to be rebuilt only if its runs could not be made in place (publishRunsInPlace, after updateRows): a group that is published is
+    // not queued, cleared, given a new fragment and touched every frame. Every other route dirties the group first, as before.
+    const bool rows_route = num_parts && rk_gpu_particles_on() && getPartitionType() == LLViewerRegion::PARTITION_PARTICLE && gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES);
+    if (!rows_route)
+    {
+        dirtySpatialGroup();
+    }
+
     LLSpatialGroup* group = drawable->getSpatialGroup();
     if (!group && num_parts)
     {
@@ -327,7 +333,7 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
         group = drawable->getSpatialGroup();
     }
 
-    if (group && group->isVisible())
+    if (!rows_route && group && group->isVisible())
     {
         dirtySpatialGroup();
     }
@@ -350,13 +356,94 @@ bool LLVOPartGroup::updateGeometry(LLDrawable *drawable)
         return true;
     }
 
-    if (rk_gpu_particles_on() && getPartitionType() == LLViewerRegion::PARTITION_PARTICLE && updateRows(drawable, num_parts))
+    if (rows_route)
     {
-        mDrawable->movePartition();
-        LLPipeline::sCompiles++;
-        return true;
+        if (updateRows(drawable, num_parts))
+        {
+            if (!publishRunsInPlace(drawable))
+            {
+                dirtySpatialGroup();        // (a transition, or a group that is not on the fast path: the rebuild makes the runs, the fragment and the published state)
+            }
+            mDrawable->movePartition();
+            LLPipeline::sCompiles++;
+            return true;
+        }
+        dirtySpatialGroup();                // (the quads path below takes the group)
     }
     return updateFacesLegacy(drawable, num_parts);
+}
+
+// <FS> doc/vulkan/PLAN-particle-runs-producer.md: the runs of a record group, one a class (the classes' live counts give the ranges): the one function that makes them, for the rebuild (rk_make_class_draws) and for
+// the check below.
+static void rk_class_runs(const LLViewerPartGroup* parts, std::vector<RKParticleRun>& out)
+{
+    out.clear();
+    U32 first = 0;
+    for (U32 c = 0; c < parts->mClasses.size() && c < 4; ++c)
+    {
+        const U32 cnt = parts->mClassCount[c];
+        if (!cnt)
+        {
+            continue;
+        }
+        const LLViewerPartGroup::ClassKey& key = parts->mClasses[c];
+        RKParticleRun run;
+        run.mTexture = key.mTex.get();
+        run.mFirst = first;
+        run.mRows = cnt;
+        run.mBlendSrc = (U8)key.mSrc;
+        run.mBlendDst = (U8)key.mDst;
+        run.mFullbright = key.mFullbright;
+        run.mGlow = parts->mClassGlow[c] > 0;       // (a class without a glow in it draws no glow pass: the second draw over every particle was most of the GPU cost)
+        out.push_back(std::move(run));
+        first += cnt;
+    }
+}
+
+// <FS> step 2 of doc/vulkan/PLAN-particle-runs-producer.md: the producer makes the runs. A pure record group on the fast path whose last rebuild is still what it has (a scene fragment with the alpha key, runs, the rows
+// buffer) and that nothing else asked to rebuild (no GEOM_DIRTY, not queued) gets this frame's runs, the depth of its path box and the bookkeeping the rebuild did (changeLOD, lastUpdateTime) right here: no queue, no
+// clearDrawMap, no new fragment, no touch of the row. True: that was done. False: the rebuild is needed (a new group, a transition, a rows buffer that changed, any other event) and the caller asks for it, as before.
+bool LLVOPartGroup::publishRunsInPlace(LLDrawable* drawable)
+{
+    if (!mPure || !mEval.empty() || !mRowsMode)
+    {
+        return false;
+    }
+    LLViewerPartGroup* parts = mViewerPartGroupp;
+    LLSpatialGroup* group = drawable->getSpatialGroup();
+    if (!group || !parts || parts->mRecords.empty() || !rk_particle_sort_on() || group->isDead())
+    {
+        return false;
+    }
+    if (group->hasState(LLSpatialGroup::GEOM_DIRTY | LLSpatialGroup::IN_BUILD_Q1 | LLSpatialGroup::RK_RELEASED | LLSpatialGroup::RK_WAKING))
+    {
+        return false;       // (something else asked for a rebuild, or the group is released: the rebuild runs and makes the published state again)
+    }
+    if (!group->mSceneFragment || !rk_group_has_alpha_key(group) || group->mParticleRuns.empty() || group->mVertexBuffer.get() != parts->mRows.get())
+    {
+        return false;       // (not published)
+    }
+    static std::vector<RKParticleRun> runs;
+    rk_class_runs(parts, runs);
+    if (runs.empty())
+    {
+        return false;       // (no row to draw: the rebuild handles the group going empty)
+    }
+    LLViewerCamera* camera = LLViewerCamera::getInstance();
+    LLVector3 lo, hi;
+    if (parts->pathBox(lo, hi))
+    {
+        mDepth = ((lo + hi) * 0.5f - camera->getOrigin()) * camera->getAtAxis();
+    }
+    group->mBuilt = 1.f;
+    if (group->changeLOD())
+    {
+        group->row().lastUpdateDistance = group->row().distance;
+        group->row().lastUpdateViewAngle = group->row().viewAngle;
+    }
+    group->mParticleRuns.assign(runs.begin(), runs.end());
+    group->row().lastUpdateTime = gFrameTimeSeconds;
+    return true;
 }
 
 // <FS> GPU particles stage 1b / 2: the cuts of updateGeometry without a face a particle, and the particles of the group (the stepped ones and the records at this frame's clock) as RKPartEval rows.
@@ -1287,27 +1374,7 @@ static void rk_make_class_draws(LLSpatialGroup* group, LLViewerPartGroup* parts,
     LLVertexBuffer* rows = parts->mRows.get();
     group->mVertexBuffer = rows;
     group->mPendingDraws[render_pass];       // (C5 J2: the draw map keeps its entry, empty: the alpha group lists find the group by it; the draws are the group's particle runs)
-    group->mParticleRuns.clear();
-    U32 first = 0;
-    for (U32 c = 0; c < parts->mClasses.size() && c < 4; ++c)
-    {
-        const U32 cnt = parts->mClassCount[c];
-        if (!cnt)
-        {
-            continue;
-        }
-        const LLViewerPartGroup::ClassKey& key = parts->mClasses[c];
-        RKParticleRun run;
-        run.mTexture = key.mTex.get();
-        run.mFirst = first;
-        run.mRows = cnt;
-        run.mBlendSrc = (U8)key.mSrc;
-        run.mBlendDst = (U8)key.mDst;
-        run.mFullbright = key.mFullbright;
-        run.mGlow = parts->mClassGlow[c] > 0;       // (a class without a glow in it draws no glow pass: the second draw over every particle was most of the GPU cost)
-        group->mParticleRuns.push_back(std::move(run));
-        first += cnt;
-    }
+    rk_class_runs(parts, group->mParticleRuns);
 }
 
 // <FS> GPU particles stage 1 (doc/vulkan/PLAN-gpu-particles.md): the group's particles as rows (position, velocity for a follow-velocity particle, half size, colour, glow) in the vertex buffer, in
