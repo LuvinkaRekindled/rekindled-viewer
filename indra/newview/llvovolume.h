@@ -261,7 +261,10 @@ public:
     /*virtual*/ bool    updateLOD() override;
                 void    updateRadius() override;
     /*virtual*/ void    updateTextures() override;
-                void    updateTextureVirtualSize(bool forced = false);
+                // <FS> sweep (LLViewerObjectList::updateApparentAngles, run on a pool thread): not null = the faces' sizes only, nothing shared is written. *sweep has bit 1 on return when the main thread has to do the whole
+                // update (a HUD attachment, a sculpt, a light texture, a rigged face), bit 2 when a face crossed the texture animation size (its rebuild marks are the main thread's: markTextureAnimSizeCrossed)
+                void    updateTextureVirtualSize(bool forced = false, U8* sweep = nullptr);
+                void    markTextureAnimSizeCrossed();       // the rebuild marks of a face that crossed the texture animation size (main thread)
 
                 void    updateFaceFlags();
                 void    regenFaces();

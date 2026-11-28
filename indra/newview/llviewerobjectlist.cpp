@@ -94,6 +94,7 @@
 #include "object_flags.h"
 
 #include "llappviewer.h"
+#include "lltexturefetch.h"      // <FS> the face sweep asks whether the texture fetch is paused
 #include "rkattcensus.h"
 #include "llfloaterperms.h"
 #include "llvocache.h"
@@ -945,6 +946,8 @@ void LLViewerObjectList::setAllObjectPBRDefaultTextures(const LLUUID& override_i
 }
 // </FS>
 
+extern bool gCubeSnapshot;
+
 void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
 {
     // <FS> while the view is steady (see LLViewerTextureList::sViewSteady) the lazy texture priority pass runs every other frame: the objects' turn comes round half as often
@@ -969,6 +972,18 @@ void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
         max_value = llmin((S32) mObjects.size(), mCurLazyUpdateIndex + num_updates);
     }
 
+    // <FS> ownership map, objects step 2: the volumes of the slice have their faces' sizes worked out as pool jobs (updateTextureVirtualSize in its sweep form: the faces' own rows, nothing shared written), joined here,
+    // and what the jobs left for the main thread (the objects that have a HUD / sculpt / light texture / rigged face, the texture animation rebuild marks) is made after the join. Everything that is not a volume is as before.
+    // Not while a debug view that prints the sizes is on, the textures are switched off, the texture fetch is paused or a cube snapshot runs (those take the old path for every object).
+    static std::vector<LLVOVolume*> sweep_volumes;
+    static std::vector<U8> sweep_results;
+    static std::vector<LLVOVolume*> main_volumes;
+    sweep_volumes.clear();
+    main_volumes.clear();
+    static LLCachedControl<bool> texture_disable(gSavedSettings, "TextureDisable", false);
+    const bool sweep_on = !texture_disable && !LLAppViewer::getTextureFetch()->mDebugPause && !gCubeSnapshot
+        && !gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TEXTURE_PRIORITY | LLPipeline::RENDER_DEBUG_TEXTURE_AREA | LLPipeline::RENDER_DEBUG_FACE_AREA | LLPipeline::RENDER_DEBUG_TEXTURE_SIZE);
+
     // Iterate through some of the objects and lazy update their texture priorities
     for (i = mCurLazyUpdateIndex; i < max_value; i++)
     {
@@ -979,9 +994,84 @@ void LLViewerObjectList::updateApparentAngles(LLAgent &agent)
         }
         if (!objectp->isDead())
         {
+            if (sweep_on && objectp->getPCode() == LL_PCODE_VOLUME)
+            {
+                // (setPixelAreaAndAngle of a volume returns at once: it works per face.) A visible rigged volume reads its avatar's joints: the main thread's, done while the pool works on the others
+                LLVOVolume* volume = static_cast<LLVOVolume*>(objectp);
+                if (volume->mDrawable.notNull() && volume->mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD) && volume->isVisible())
+                {
+                    main_volumes.push_back(volume);
+                }
+                else
+                {
+                    sweep_volumes.push_back(volume);
+                }
+                continue;
+            }
             //  Update distance & gpw
             objectp->setPixelAreaAndAngle(agent); // Also sets the approx. pixel area
             objectp->updateTextures();  // Update the image levels of textures for this object.
+        }
+    }
+    if (!sweep_volumes.empty() || !main_volumes.empty())
+    {
+        RK_CPU_ZONE("objects: face sizes of the slice (pool jobs + join)");
+        const size_t count = sweep_volumes.size();
+        sweep_results.assign(count, 0);
+        RKForkJoinPool* pool = RKForkJoinPool::shared();
+        constexpr size_t kChunk = 16;
+        const std::function<void(size_t)> job = [](size_t c)
+        {
+            const size_t end = std::min(sweep_volumes.size(), (c + 1) * kChunk);
+            for (size_t k = c * kChunk; k < end; ++k)
+            {
+                sweep_volumes[k]->updateTextureVirtualSize(false, &sweep_results[k]);
+            }
+        };
+        const size_t chunks = (count + kChunk - 1) / kChunk;
+        RKForkJoinPool::Handle handle;
+        if (pool && count >= 32)
+        {
+            RKForkJoinPool::Label label("objects: face sizes");
+            handle = pool->launch(chunks, job, true);       // (the jobs read faces and drawable flags only: none of the pipeline's queues; the main thread's share below writes them)
+        }
+        // the main thread's share, beside the jobs: the visible rigged volumes (their faces read the avatar's joints)
+        for (LLVOVolume* volume : main_volumes)
+        {
+            volume->updateTextures();
+        }
+        if (handle.valid())
+        {
+            pool->join(handle);
+        }
+        else
+        {
+            for (size_t c = 0; c < chunks; ++c)
+            {
+                job(c);
+            }
+        }
+        static U64 sweeps = 0, swept = 0, kept_main = 0, handed_back = 0, crossed = 0;
+        ++sweeps;
+        swept += count;
+        kept_main += main_volumes.size();
+        for (size_t k = 0; k < count; ++k)
+        {
+            if (sweep_results[k] & 1)
+            {
+                ++handed_back;
+                sweep_volumes[k]->updateTextureVirtualSize();       // (the main thread's, whole)
+            }
+            if (sweep_results[k] & 2)
+            {
+                ++crossed;
+                sweep_volumes[k]->markTextureAnimSizeCrossed();
+            }
+        }
+        if (rk_diag_on() && sweeps % 600 == 0)
+        {
+            RK_DIAG("FaceSweep") << "object face sizes as pool jobs: " << (double)swept / sweeps << " volumes a pass, kept on the main thread (visible rigged) " << (double)kept_main / sweeps << " a pass, handed back by the jobs " << (double)handed_back / std::max<U64>(swept, 1) * 100.0
+                                 << " percent, texture animation size crossings " << crossed << " in " << sweeps << " passes" << LL_ENDL;
         }
     }
 

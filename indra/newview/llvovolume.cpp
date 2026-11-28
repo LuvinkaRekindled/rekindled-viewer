@@ -35,6 +35,7 @@
 #include "rkdiag.h"        // <FS> RK_DIAG: the rigged fill counters
 
 #include <sstream>
+#include <memory>
 
 #include "llviewercontrol.h"
 #include "lldir.h"
@@ -1252,10 +1253,33 @@ bool LLVOVolume::isVisible() const
     return false ;
 }
 
-void LLVOVolume::updateTextureVirtualSize(bool forced)
+// <FS> a face has gotten small enough to turn off texture animation (or big enough to turn it on): the render batch of its group is rebuilt (the main thread: the rebuild queue and the group's flags are shared state)
+void LLVOVolume::markTextureAnimSizeCrossed()
+{
+    gPipeline.markRebuild(mDrawable, LLDrawable::REBUILD_TCOORD);
+    // dirtyGeom+markRebuild tells the engine to call
+    // LLVolumeGeometryManager::rebuildGeom, which rebuilds the
+    // RKDrawBatch for the spatial group containing this LLFace,
+    // safely copying the mTextureMatrix from the LLFace the the
+    // RKDrawBatch. While it's not ideal to call it here, prims with
+    // animated faces get moved to a smaller partition to reduce
+    // side-effects of their updates (see shrinkWrap in
+    // LLVOVolume::animateTextures).
+    if (mDrawable->getSpatialGroup())
+    {
+        mDrawable->getSpatialGroup()->dirtyGeom();
+        gPipeline.markRebuild(mDrawable->getSpatialGroup());
+    }
+}
+
+void LLVOVolume::updateTextureVirtualSize(bool forced, U8* sweep)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VOLUME;
     // Update the pixel area of all faces
+    if (sweep)
+    {
+        *sweep = 0;
+    }
 
     if (mDrawable.isNull() || gCubeSnapshot)
     {
@@ -1286,11 +1310,25 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
         }
     }
 
-    static LLCachedControl<bool> dont_load_textures(gSavedSettings,"TextureDisable", false);
-
-    if (dont_load_textures || LLAppViewer::getTextureFetch()->mDebugPause) // || !mDrawable->isVisible())
+    if (sweep)
     {
-        return;
+        // (the sweep: the setting and the texture fetch's pause are asked by the caller, on the main thread, before the jobs run.) What the tail of this function and the HUD / rigged cases write is shared state:
+        // the object goes back to the main thread whole.
+        // (isSculpted() is true for a mesh too: the sculpt parameter block carries the mesh type. For a mesh that holds no sculpt texture the sculpt part of the tail does nothing, updateSculptTexture only sets the texture to null again.)
+        if (isHUDAttachment() || (isSculpted() && !(mSculptTexture.isNull() && isMesh())) || getLightTextureID().notNull() || mDrawable->isState(LLDrawable::RIGGED | LLDrawable::RIGGED_CHILD))
+        {
+            *sweep = 1;
+            return;
+        }
+    }
+    else
+    {
+        static LLCachedControl<bool> dont_load_textures(gSavedSettings,"TextureDisable", false);
+
+        if (dont_load_textures || LLAppViewer::getTextureFetch()->mDebugPause) // || !mDrawable->isVisible())
+        {
+            return;
+        }
     }
 
     mTextureUpdateTimer.reset();
@@ -1301,11 +1339,21 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
     const S32 num_faces = mDrawable->getNumFaces();
     F32 min_vsize=999999999.f, max_vsize=0.f;
     LLViewerCamera* camera = LLViewerCamera::getInstance();
-    std::stringstream debug_text;
+    // (made only when the debug view that prints it is on: a string stream for every volume every pass was a cost of its own)
+    std::unique_ptr<std::stringstream> debug_text;
+    if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TEXTURE_PRIORITY))
+    {
+        debug_text.reset(new std::stringstream);
+    }
     for (S32 i = 0; i < num_faces; i++)
     {
         LLFace* face = mDrawable->getFace(i);
         if (!face || face->row().extents[0].equals3(face->row().extents[1])) continue;
+        if (sweep && face->isState(LLFace::RIGGED))
+        {
+            *sweep |= 1;     // (a rigged face reads the avatar's joints: the main thread's; a crossing seen before it is still marked)
+            return;
+        }
         const LLTextureEntry *te = face->getTextureEntry();
         if (!te) continue;
 
@@ -1361,19 +1409,13 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
         {
             if ((vsize > MIN_TEX_ANIM_SIZE) != (old_size > MIN_TEX_ANIM_SIZE))
             {
-                gPipeline.markRebuild(mDrawable, LLDrawable::REBUILD_TCOORD);
-                // dirtyGeom+markRebuild tells the engine to call
-                // LLVolumeGeometryManager::rebuildGeom, which rebuilds the
-                // RKDrawBatch for the spatial group containing this LLFace,
-                // safely copying the mTextureMatrix from the LLFace the the
-                // RKDrawBatch. While it's not ideal to call it here, prims with
-                // animated faces get moved to a smaller partition to reduce
-                // side-effects of their updates (see shrinkWrap in
-                // LLVOVolume::animateTextures).
-                if (mDrawable->getSpatialGroup())
+                if (sweep)
                 {
-                    mDrawable->getSpatialGroup()->dirtyGeom();
-                    gPipeline.markRebuild(mDrawable->getSpatialGroup());
+                    *sweep |= 2;     // (the rebuild marks below are shared state: the sweep's caller makes them on the main thread, see LLViewerObjectList::updateApparentAngles)
+                }
+                else
+                {
+                    markTextureAnimSizeCrossed();
                 }
             }
         }
@@ -1383,7 +1425,7 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
             LLViewerFetchedTexture* img = LLViewerTextureManager::staticCastToFetchedTexture(imagep) ;
             if(img)
             {
-                debug_text << img->getDiscardLevel() << ":" << img->getDesiredDiscardLevel() << ":" << img->getWidth() << ":" << (S32) sqrtf(vsize) << ":" << (S32) sqrtf(img->getMaxVirtualSize()) << "\n";
+                *debug_text << img->getDiscardLevel() << ":" << img->getDesiredDiscardLevel() << ":" << img->getWidth() << ":" << (S32) sqrtf(vsize) << ":" << (S32) sqrtf(img->getMaxVirtualSize()) << "\n";
                 /*F32 pri = img->getDecodePriority();
                 pri = llmax(pri, 0.0f);
                 if (pri < min_vsize) min_vsize = pri;
@@ -1396,6 +1438,16 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
             if (pri < min_vsize) min_vsize = pri;
             if (pri > max_vsize) max_vsize = pri;
         }
+    }
+
+    if (sweep)
+    {
+        // (what follows, the sculpt, the light's texture and the debug text, is the main thread's: the sweep only takes objects that have none of it; the last rule of this function stays)
+        if (mPixelArea == 0)
+        {   //flexi phasing issues make this happen
+            mPixelArea = old_area;
+        }
+        return;
     }
 
     if (isSculpted())
@@ -1464,7 +1516,7 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
     else if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TEXTURE_PRIORITY))
     {
         //setDebugText(llformat("%.0f:%.0f", (F32) sqrt(min_vsize),(F32) sqrt(max_vsize)));
-        setDebugText(debug_text.str());
+        setDebugText(debug_text ? debug_text->str() : std::string());
     }
     else if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_FACE_AREA))
     {
