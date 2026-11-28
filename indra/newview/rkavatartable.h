@@ -69,6 +69,7 @@ public:
         // <FS> ownership map step B: who runs what this frame, decided once here (LLVOAvatar::planPoolJob) and read by idleUpdate and updateCharacter, which used to decide it each for itself
         bool mRootJob = false;          // the root position and rotation (and the below water fact) are made at the start of the avatar's pool job
         bool mFrontJob = false;         // and so are the moves the avatar's idleUpdate used to make first (the drawable's move, the object's interpolation): the job's writes to shared state are one ledger replayed in the completion
+        U8 mWave = 0;                   // <FS> the frame order by parents: 0 = nothing it waits for; an animated object worn by an avatar is one wave after that avatar (its placement reads the host's final pose). Made once a frame in beginFrame; every reader takes it from here, not from the live question
         U8 mEvents = EV_ALL;            // step C
         S8 mCanDefer = -1;              // canDeferMotionUpdate() when it was asked for the plan (-1: not asked: the live answer is used)
     };
@@ -86,7 +87,8 @@ public:
     static bool voiceShowSpeaking(const LLVOAvatar* av);                             // step 27 (D): speaking and not muted (or own), from the row
     static F32 voicePower(const LLVOAvatar* av);                                     // step 27 (D): the voice power from the row
     static bool voiceVisualizerOn();                                                 // step 27: the VoiceVisualizerEnabled setting, read once a frame
-    static U8 events(const LLVOAvatar* av);                                          // step C: the row's event bits (all of them without a row)
+    static U8 wave(const LLVOAvatar* av);                                            // the frame order by parents: the avatar's wave from the row (0 without a row: placed where it always was)
+    static U8 events(const LLVOAvatar* av);                                        // step C: the row's event bits (all of them without a row)
     static bool rootJob(const LLVOAvatar* av);                                       // step B: the row's plan
     static bool frontJob(const LLVOAvatar* av);
     static S8 canDefer(const LLVOAvatar* av);

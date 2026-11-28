@@ -62,6 +62,7 @@
 #include "llviewerwindow.h"
 #include "llvocache.h"
 #include "llcontrolavatar.h"
+#include "rkavatartable.h"     // <FS> the frame order by parents: RKAvatarTable::wave
 #include "lldrawpoolavatar.h"
 
 // <FS:ND> Tentatively ignoring mismatched new/delete from the MemTrackableNonVirtual. I think according to the docs
@@ -839,7 +840,7 @@ F32 LLDrawable::updateXform(bool undamped)
         if (cav)
         {
             // <FS> stage C5d: an animated object worn by an avatar is placed in its own pool job, from the host's array (not here, from another avatar's thread)
-            if (!cav->hostJobOwned())
+            if (!(RKAvatarTable::wave(cav) > 0))      // (the frame order by parents: the row's wave, made once a frame)
             {
                 cav->matchVolumeTransform();
             }
@@ -946,7 +947,7 @@ bool LLDrawable::updateMove()
 static bool animesh_fast(LLViewerObject* o)
 {
     LLControlAvatar* cav = o->getControlAvatar();
-    return cav && cav->hostJobOwned();
+    return cav && RKAvatarTable::wave(cav) > 0;
 }
 
 bool LLDrawable::updateMoveFast(const LLVector3* parent_pos, const LLQuaternion* parent_rot, const LLVector3* parent_scale, bool parent_sco)

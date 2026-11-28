@@ -3275,7 +3275,7 @@ inline bool att_plain(const LLViewerObject* root)
 static bool animesh_rowable(const LLViewerObject* o)
 {
     const LLControlAvatar* cav = o->getControlAvatar();
-    return cav && cav->hostJobOwned();
+    return cav && RKAvatarTable::wave(cav) > 0;      // (the frame order by parents: the wave of the row, made once a frame)
 }
 // <FS> stage C5a: an attachment the avatar's rows can hold: it only follows its joint and what else reads it pulls its world position
 // (a light: calc_light_dist; a sound: the audio source's object position; a particle emitter: the source's getRenderPosition) from the drawable the row keeps up to date, none of them through the moved list. Not rowable:
@@ -7805,6 +7805,8 @@ void RKAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     sAvatarRows.clear();
+    static std::vector<size_t> worn_slots;      // the rows of the animated objects worn by an avatar (the frame order by parents, below)
+    worn_slots.clear();
     const U32 frame = LLFrameTimer::getFrameCount();
     // B3d: the voice facts, once a frame: the participants of the voice channels (empty without voice: then nothing is asked per avatar), and whether they speak
     static std::set<LLUUID> voice_participants, voice_speaking;
@@ -7867,7 +7869,33 @@ void RKAvatarTable::beginFrame(const std::vector<LLViewerObject*>& list, size_t 
             }
         }
         av->mAvTableSlot = (S32)sAvatarRows.size();
+        if (av->isControlAvatar() && static_cast<const LLControlAvatar*>(av)->hostJobOwned())
+        {
+            worn_slots.push_back(sAvatarRows.size());
+        }
         sAvatarRows.emplace_back(av, r);
+    }
+    // <FS> the frame order by parents: an animated object worn by an avatar is one wave after that avatar (its placement reads the host's final pose, which the host's job makes). Made here once, from the
+    // rows of the frame, so the motion batch, the avatar's own update, the overlap launcher and the drawable's move all take the same answer; a host that has no row (not in the list this frame) is wave 0.
+    // Only the worn objects are visited (noted as the rows were made). The host's wave is final before the worn object's is taken: the passes repeat until nothing changes (a chain of links is at most 4 long).
+    for (int pass = 0; pass < 4 && !worn_slots.empty(); ++pass)
+    {
+        bool changed = false;
+        for (const size_t slot : worn_slots)
+        {
+            Row& worn_row = sAvatarRows[slot].second;
+            const Row* host_row = row(static_cast<const LLControlAvatar*>(sAvatarRows[slot].first)->getAttachedAvatar());
+            const U8 wave = (U8)((host_row ? host_row->mWave : 0) + 1);
+            if (worn_row.mWave != wave)
+            {
+                worn_row.mWave = wave;
+                changed = true;
+            }
+        }
+        if (!changed)
+        {
+            break;
+        }
     }
 }
 
@@ -7891,6 +7919,12 @@ bool RKAvatarTable::attachmentLoop(const LLVOAvatar* av, bool from_update)
         reads = different = 0;
     }
     return bit;
+}
+
+U8 RKAvatarTable::wave(const LLVOAvatar* av)
+{
+    const Row* r = row(av);
+    return r ? r->mWave : (U8)0;
 }
 
 U8 RKAvatarTable::events(const LLVOAvatar* av)
@@ -8229,7 +8263,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     // <FS> ownership map, animesh: an animated object worn by an avatar that is going to join the motion batch is placed by the batch's second phase, from its host's final pose (LLControlAvatar::placeFromHost), after the
     // host's pose job: the placement made here read the host's joint on this thread while the host's job could still be running, and the second phase made it again. The rest of the root update stays here.
     bool worn_in_batch = false;
-    if (!root_in_job && isControlAvatar() && static_cast<LLControlAvatar*>(this)->hostJobOwned())
+    if (!root_in_job && RKAvatarTable::wave(this) > 0)       // (an animated object worn by an avatar: the frame order by parents, the row's wave)
     {
         if (!visible && !isSelf())
         {
