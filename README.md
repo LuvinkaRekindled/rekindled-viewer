@@ -10,7 +10,7 @@
 
 ## Donate to Luvinka
 
-Rekindled is free. If you'd like to chip in, donations go in-world: the Donate button on [sl-op.com/rekindled](https://sl-op.com/rekindled/#donate) opens the payment box in your Second Life viewer. Patreon coming soon.
+Rekindled is free. If you'd like to chip in, donations go in-world: the Donate button on [sl-op.com/rekindled](https://sl-op.com/rekindled/#donate) opens the payment box in your Second Life viewer. You can also support Luvinka on Patreon: [patreon.com/Luvinka](https://patreon.com/Luvinka).
 
 ## What is different from Firestorm
 
